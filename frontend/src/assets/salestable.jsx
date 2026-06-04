@@ -17,7 +17,7 @@ const Salestable = () => {
   const fetchSales = async () => {
     try {
       setLoading(true)
-      const res = await axios.get('http://localhost:5000/api/sales')
+      const res = await axios.get('https://expense-management-2-bsa7.onrender.com/api/sales')
       setSales(res.data)
     } catch (err) {
       showToast('error', 'Failed to load sales.')
@@ -34,7 +34,7 @@ const Salestable = () => {
     if (!window.confirm('Delete this sale record?')) return
     try {
       setDeletingId(id)
-      await axios.delete(`http://localhost:5000/api/sales/${id}`)
+      await axios.delete(`https://expense-management-2-bsa7.onrender.com/api/sales/${id}`)
       setSales((prev) => prev.filter((s) => s._id !== id))
       showToast('success', 'Sale deleted successfully.')
     } catch (err) {

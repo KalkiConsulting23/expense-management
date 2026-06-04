@@ -35,7 +35,7 @@ const Salesform = () => {
     }
     try {
       setLoading(true)
-      await axios.post('http://localhost:5000/api/sales', {
+      await axios.post('https://expense-management-2-bsa7.onrender.com/api/sales', {
         ...form,
         amount: Number(form.amount),
       })

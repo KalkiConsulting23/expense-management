@@ -360,7 +360,7 @@ const Salesanl = () => {
   const [error, setError] = useState(null)
 
   useEffect(() => {
-    fetch('/api/sales')
+   fetch('https://expense-management-2-bsa7.onrender.com/api/sales')
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(d => { setSales(Array.isArray(d) ? d : []); setLoading(false) })
       .catch(e => { setError(e.message); setLoading(false) })

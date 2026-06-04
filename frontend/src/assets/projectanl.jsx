@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as d3 from 'd3';
 
 // ─── CONFIG ───
-const API_BASE = '/api/project';
+const API_BASE = 'https://expense-management-2-bsa7.onrender.com/api/project';
 
 // ─── HELPERS ───
 const fmt = (n) => {

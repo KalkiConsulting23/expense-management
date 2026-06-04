@@ -635,7 +635,7 @@ const Expenseanl = () => {
   const [activeCategory, setCategory] = useState(null)  // null = overview
 
   useEffect(() => {
-    fetch('/api/employee/all')
+    fetch('https://expense-management-2-bsa7.onrender.com/api/employee/all')
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(d => { setExpenses(Array.isArray(d) ? d : []); setLoading(false) })
       .catch(e => { setError(e.message); setLoading(false) })

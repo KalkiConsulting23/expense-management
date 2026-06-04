@@ -515,7 +515,7 @@ const EmployeeTable = () => {
   useEffect(() => {
     const fetchExpenses = async () => {
       try {
-        const response = await axios.get('http://localhost:5000/api/employee/all')
+        const response = await axios.get('https://expense-management-2-bsa7.onrender.com/api/employee/all')
         const data = response.data
         const recurring = data.filter(e => e.type === 'recurring')
         setAllExpenses(data)

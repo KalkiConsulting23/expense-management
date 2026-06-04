@@ -84,7 +84,7 @@ const Employee = () => {
     }
 
     try {
-      const response = await fetch("http://localhost:5000/api/employee/add", {
+      const response = await fetch("https://expense-management-2-bsa7.onrender.com/api/employee/add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
