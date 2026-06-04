@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const Project = require('../models/Project'); // ✅ Backs out of the 'routes' folder first
+const Project = require('../models/project'); // ✅ Backs out of the 'routes' folder first
 
 // ─── ADD PROJECT ENDPOINT ───
 router.post('/add', async (req, res) => {
