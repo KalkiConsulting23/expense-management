@@ -244,7 +244,7 @@ const ProjectTable = () => {
     setModalConfig(null);
 
     try {
-      await axios.patch(`http://localhost:5000/api/project/sync-month/${project._id}`, {
+      await axios.patch(`https://expense-management-2-bsa7.onrender.com/api/project/sync-month/${project._id}`, {
         month, year, amt: calculatedAmt, metrics: payloadMetrics
       });
     } catch(e) { console.error("Database save failed.") }
@@ -272,7 +272,7 @@ const ProjectTable = () => {
     setEditingPayment(null);
 
     try {
-      await axios.patch(`http://localhost:5000/api/project/sync-month/${projectId}`, {
+      await axios.patch(`https://expense-management-2-bsa7.onrender.com/api/project/sync-month/${projectId}`, {
         month, year, paid: val
       });
     } catch (err) { console.error('Failed processing payment alignment.', err); }
