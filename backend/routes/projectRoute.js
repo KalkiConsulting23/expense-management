@@ -1,47 +1,47 @@
 const express = require('express');
 const router = express.Router();
-const Project = require('../models/project'); // ✅ Backs out of the 'routes' folder first
+const Project = require('../models/project');
 
-// ─── ADD PROJECT ENDPOINT ───
+// ─── ADD PROJECT ───
 router.post('/add', async (req, res) => {
   try {
     const { projectName, projectType, startDate, endDate, expectedAmount, currency } = req.body;
-    
+
     const newProject = new Project({
+      userId: req.userId,
       projectName,
       projectType,
       startDate,
       endDate,
       expectedAmount: expectedAmount || 0,
       currency: currency || 'INR',
-      monthlyBreakdowns: [] // Populated dynamically via grid configuration popups
+      monthlyBreakdowns: []
     });
 
     await newProject.save();
     res.status(201).json(newProject);
   } catch (err) {
-    res.status(400).json({ message: "Failed adding structural track asset item.", error: err.message });
+    res.status(400).json({ message: "Failed adding project.", error: err.message });
   }
 });
 
 // ─── GET ALL PROJECTS ───
 router.get('/all', async (req, res) => {
   try {
-    const projects = await Project.find({});
+    const projects = await Project.find({ userId: req.userId });
     res.status(200).json(projects);
   } catch (err) {
-    res.status(500).json({ message: "Server error reading workspace logs", error: err.message });
+    res.status(500).json({ message: "Server error", error: err.message });
   }
 });
 
-// ─── ATOMIC SYNC FOR CALCULATIONS & PAYMENTS FOR A GIVEN MONTH ───
+// ─── SYNC MONTH ───
 router.patch('/sync-month/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { month, year, amt, paid, metrics } = req.body;
 
-    // Look for existing breakdown entry matching this specific month/year
-    const project = await Project.findById(id);
+    const project = await Project.findOne({ _id: id, userId: req.userId });
     if (!project) return res.status(404).json({ message: "Project not found" });
 
     const existingIndex = project.monthlyBreakdowns.findIndex(
@@ -50,11 +50,9 @@ router.patch('/sync-month/:id', async (req, res) => {
 
     let updateQuery = {};
     if (existingIndex > -1) {
-      // Entry exists, update target elements fields conditionally
       const setFields = {};
       if (amt !== undefined) setFields[`monthlyBreakdowns.${existingIndex}.amt`] = amt;
       if (paid !== undefined) setFields[`monthlyBreakdowns.${existingIndex}.paid`] = paid;
-      
       if (metrics) {
         Object.keys(metrics).forEach(key => {
           setFields[`monthlyBreakdowns.${existingIndex}.${key}`] = metrics[key];
@@ -62,7 +60,6 @@ router.patch('/sync-month/:id', async (req, res) => {
       }
       updateQuery = { $set: setFields };
     } else {
-      // Entry does not exist, push a new breakdown object into the array
       const newBreakdown = {
         month,
         year: Number(year),
@@ -76,7 +73,30 @@ router.patch('/sync-month/:id', async (req, res) => {
     const updatedProject = await Project.findByIdAndUpdate(id, updateQuery, { new: true });
     res.status(200).json(updatedProject);
   } catch (err) {
-    res.status(500).json({ message: "Failed updating database breakdown index.", error: err.message });
+    res.status(500).json({ message: "Failed updating breakdown.", error: err.message });
+  }
+});
+
+// ─── DELETE PROJECT ───
+router.delete('/delete/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Guard against malformed IDs that would crash Mongoose
+    if (!id.match(/^[0-9a-fA-F]{24}$/)) {
+      return res.status(400).json({ message: "Invalid project ID." });
+    }
+
+    // findOneAndDelete verifies ownership (userId) before deleting
+    const deleted = await Project.findOneAndDelete({ _id: id, userId: req.userId });
+
+    if (!deleted) {
+      return res.status(404).json({ message: "Project not found or access denied." });
+    }
+
+    res.status(200).json({ message: "Project deleted successfully.", id });
+  } catch (err) {
+    res.status(500).json({ message: "Failed to delete project.", error: err.message });
   }
 });
 

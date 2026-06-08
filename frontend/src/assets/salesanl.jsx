@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import * as d3 from 'd3'
+import { useApi } from '../utils/api'
 
 const ACCENT = '#00ffe0'
 const ACCENT2 = '#ff6b6b'
@@ -358,9 +359,10 @@ const Salesanl = () => {
   const [sales, setSales] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const { apiFetch } = useApi()
 
   useEffect(() => {
-   fetch('https://expense-management-2-bsa7.onrender.com/api/sales')
+    apiFetch('https://expense-management-2-bsa7.onrender.com/api/sales')
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(d => { setSales(Array.isArray(d) ? d : []); setLoading(false) })
       .catch(e => { setError(e.message); setLoading(false) })
@@ -372,62 +374,39 @@ const Salesanl = () => {
 
   if (loading) return (
     <div style={{ background: BG, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ color: ACCENT, fontSize: 15, fontFamily: 'monospace', letterSpacing: '0.1em' }}>
-        Loading sales data…
-      </div>
+      <div style={{ color: ACCENT, fontSize: 15, fontFamily: 'monospace', letterSpacing: '0.1em' }}>Loading sales data…</div>
     </div>
   )
 
   if (error) return (
     <div style={{ background: BG, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ color: ACCENT2, fontSize: 14, fontFamily: 'monospace' }}>
-        Error: {error}
-      </div>
+      <div style={{ color: ACCENT2, fontSize: 14, fontFamily: 'monospace' }}>Error: {error}</div>
     </div>
   )
 
   return (
     <div style={{ background: BG, minHeight: '100vh', padding: '32px 24px', fontFamily: "'DM Sans', 'Segoe UI', sans-serif", color: TEXT }}>
-
-      {/* Header */}
       <div style={{ marginBottom: 28 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
           <div style={{ width: 6, height: 28, background: ACCENT, borderRadius: 3 }} />
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em' }}>Sales Analytics</h1>
         </div>
-        <p style={{ margin: 0, marginLeft: 16, fontSize: 13, color: MUTED }}>
-          {sales.length} records · All time
-        </p>
+        <p style={{ margin: 0, marginLeft: 16, fontSize: 13, color: MUTED }}>{sales.length} records · All time</p>
       </div>
-
-      {/* KPIs */}
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 24 }}>
         <KPI label="Total Revenue" value={fmt(totalRevenue)} accent={ACCENT} sub="All sales combined" />
         <KPI label="Total Sales" value={sales.length} accent={ACCENT3} sub="Records in DB" />
         <KPI label="Avg. Sale" value={fmt(Math.round(avgSale))} accent="#a78bfa" sub="Per transaction" />
         <KPI label="Highest Sale" value={fmt(maxSale)} accent={ACCENT2} sub="Single transaction" />
       </div>
-
-      {/* Charts Row 1 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
-        <ChartCard title="📈 Monthly Revenue">
-          <RevenueChart data={sales} />
-        </ChartCard>
-        <ChartCard title="📊 Sales Count by Month">
-          <SalesBarChart data={sales} />
-        </ChartCard>
+        <ChartCard title="📈 Monthly Revenue"><RevenueChart data={sales} /></ChartCard>
+        <ChartCard title="📊 Sales Count by Month"><SalesBarChart data={sales} /></ChartCard>
       </div>
-
-      {/* Charts Row 2 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-        <ChartCard title="🔵 Revenue by Category">
-          <DonutChart data={sales} />
-        </ChartCard>
-        <ChartCard title="⚡ Sale Amounts Over Time">
-          <ScatterChart data={sales} />
-        </ChartCard>
+        <ChartCard title="🔵 Revenue by Category"><DonutChart data={sales} /></ChartCard>
+        <ChartCard title="⚡ Sale Amounts Over Time"><ScatterChart data={sales} /></ChartCard>
       </div>
-
     </div>
   )
 }

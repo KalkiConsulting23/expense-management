@@ -2,6 +2,12 @@ const mongoose = require('mongoose')
 
 const salesSchema = new mongoose.Schema(
   {
+    userId: {          // ← ADD THIS
+      type: String,
+      required: true,
+      index: true,
+    },
+
     name: {
       type: String,
       required: true,

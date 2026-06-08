@@ -14,14 +14,13 @@ router.post("/add", async (req, res) => {
     if (!expenseType) {
       console.log("ERROR: expenseType is missing from req.body");
       return res.status(400).json({
-        message:
-          "expenseType is missing. Make sure express.json() middleware is added in server.js BEFORE your routes.",
+        message: "expenseType is missing.",
         receivedBody: req.body,
       });
     }
 
-    // ── Build payload explicitly ─────────────────────────────────────
     const data = {
+      userId: req.userId,        // ← ADD THIS
       expenseType: expenseType.trim(),
       expenseName: expenseName.trim(),
       type,
@@ -42,7 +41,6 @@ router.post("/add", async (req, res) => {
       }
 
       let parsedDate;
-
       if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(date)) {
         const [day, month, year] = date.split("/");
         parsedDate = new Date(`${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`);
@@ -62,18 +60,13 @@ router.post("/add", async (req, res) => {
       }
 
       data.date = parsedDate;
-      console.log("Parsed date:", data.date);
     }
-
-    console.log("Saving data:", data);
 
     const employee = new Employee(data);
     await employee.save();
 
-    console.log("Saved successfully:", employee._id);
     res.status(201).json({ message: "Employee added successfully", employee });
   } catch (err) {
-    console.log("Save error:", err.message);
     res.status(500).json({ message: err.message });
   }
 });
@@ -81,7 +74,7 @@ router.post("/add", async (req, res) => {
 // ── Get All Employees ────────────────────────────────────────────────────
 router.get("/all", async (req, res) => {
   try {
-    const employees = await Employee.find();
+    const employees = await Employee.find({ userId: req.userId })  // ← FILTER
     res.status(200).json(employees);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -92,8 +85,9 @@ router.get("/all", async (req, res) => {
 router.patch("/update-payment/:id", async (req, res) => {
   try {
     const { year, month, paid } = req.body;
-    const employee = await Employee.findById(req.params.id);
 
+    // ← verify ownership first
+    const employee = await Employee.findOne({ _id: req.params.id, userId: req.userId });
     if (!employee) return res.status(404).json({ message: "Employee not found" });
 
     const index = employee.payments.findIndex(
@@ -116,7 +110,9 @@ router.patch("/update-payment/:id", async (req, res) => {
 // ── Delete Employee ───────────────────────────────────────────────────────
 router.delete("/delete/:id", async (req, res) => {
   try {
-    await Employee.findByIdAndDelete(req.params.id);
+    // ← userId check prevents deleting another user's record
+    const deleted = await Employee.findOneAndDelete({ _id: req.params.id, userId: req.userId });
+    if (!deleted) return res.status(404).json({ message: "Employee not found" });
     res.status(200).json({ message: "Employee deleted successfully" });
   } catch (err) {
     res.status(500).json({ message: err.message });

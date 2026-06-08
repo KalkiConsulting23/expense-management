@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import * as d3 from 'd3';
-
+import { useApi } from '../utils/api'
 // ─── CONFIG ───
 const API_BASE = 'https://expense-management-2-bsa7.onrender.com/api/project';
 
@@ -36,13 +36,11 @@ function useProjects() {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState(null);
+  const { apiFetch } = useApi()
 
   useEffect(() => {
-    fetch(`${API_BASE}/all`)
-      .then(r => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
+    apiFetch(`${API_BASE}/all`)
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(data => { setProjects(data); setLoading(false); })
       .catch(err => { setError(err.message); setLoading(false); });
   }, []);

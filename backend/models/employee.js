@@ -8,23 +8,26 @@ const paymentSchema = new mongoose.Schema({
 
 const employeeSchema = new mongoose.Schema(
   {
+    userId: {          // ← ADD THIS
+      type: String,
+      required: true,
+      index: true,
+    },
+
     expenseType: {
       type: String,
       required: [true, "Expense type is required"],
     },
-
     expenseName: {
       type: String,
       required: [true, "Expense name is required"],
     },
-
     type: {
       type: String,
       enum: ["recurring", "one-time"],
       required: true,
       default: "recurring",
     },
-
     amount: {
       type: Number,
       required: true,
@@ -41,7 +44,6 @@ const employeeSchema = new mongoose.Schema(
       type: [paymentSchema],
       default: [],
     },
-
     date: {
       type: Date,
       required: [function () { return this.type === "one-time"; }, "Date is required"],

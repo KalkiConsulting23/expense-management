@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { useUser, useClerk } from '@clerk/clerk-react'
 
 const Navbar = () => {
   const navigate = useNavigate()
@@ -9,6 +10,20 @@ const Navbar = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const dropdownRef = useRef(null)
   const analyticsRef = useRef(null)
+
+  const { user } = useUser()
+  const { signOut } = useClerk()
+
+  const getInitials = (name) => {
+    if (!name) return '?'
+    const parts = name.trim().split(' ')
+    if (parts.length === 1) return parts[0][0].toUpperCase()
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+  }
+
+  const handleLogout = () => {
+    signOut(() => navigate('/login'))
+  }
 
   const navItems = [
     {
@@ -105,7 +120,6 @@ const Navbar = () => {
           border-color: #c97844;
           box-shadow: 0 2px 8px rgba(160,130,90,0.15);
         }
-
         .hamburger-lines {
           display: flex;
           flex-direction: column;
@@ -130,7 +144,6 @@ const Navbar = () => {
         .hamburger-btn.open .hamburger-lines span:nth-child(3) {
           transform: translateY(-7px) rotate(-45deg);
         }
-
         .sidebar-overlay {
           position: fixed;
           inset: 0;
@@ -143,7 +156,6 @@ const Navbar = () => {
           from { opacity: 0; }
           to   { opacity: 1; }
         }
-
         .navbar {
           position: fixed;
           top: 0; left: 0;
@@ -162,7 +174,6 @@ const Navbar = () => {
         .navbar.open {
           transform: translateX(0);
         }
-
         .navbar-brand {
           display: flex;
           align-items: center;
@@ -195,7 +206,6 @@ const Navbar = () => {
           text-transform: uppercase;
           margin-top: 2px;
         }
-
         .navbar-inner {
           flex: 1;
           overflow-y: auto;
@@ -206,7 +216,6 @@ const Navbar = () => {
           scrollbar-width: none;
         }
         .navbar-inner::-webkit-scrollbar { display: none; }
-
         .nav-section-label {
           font-size: 10px;
           font-weight: 500;
@@ -215,7 +224,6 @@ const Navbar = () => {
           text-transform: uppercase;
           padding: 10px 12px 6px;
         }
-
         .nav-btn {
           display: flex;
           align-items: center;
@@ -234,29 +242,23 @@ const Navbar = () => {
           text-align: left;
           transition: all 0.15s;
         }
-        .nav-btn:hover {
-          background: #f5ede0;
-          color: #2e2318;
-        }
+        .nav-btn:hover { background: #f5ede0; color: #2e2318; }
         .nav-btn.active {
           background: #fff2e8;
           color: #c97844;
           border-left-color: #c97844;
         }
-
         .nav-divider {
           height: 1px;
           background: linear-gradient(to right, #e8dece, transparent);
           margin: 8px 2px;
         }
-
         .year-badge {
           font-size: 10px; font-weight: 500;
           color: #c5b49e;
           padding: 0 12px 4px;
           letter-spacing: 0.8px;
         }
-
         .nav-add-wrapper { position: relative; margin-top: 2px; }
         .nav-add-btn {
           display: flex;
@@ -280,7 +282,6 @@ const Navbar = () => {
         .nav-add-btn-left { display: flex; align-items: center; gap: 8px; }
         .nav-add-chevron { color: rgba(255,255,255,0.7); transition: transform 0.15s ease; }
         .nav-add-chevron.open { transform: rotate(180deg); }
-
         .nav-analytics-wrapper { position: relative; margin-top: 6px; }
         .nav-analytics-btn {
           display: flex;
@@ -308,7 +309,6 @@ const Navbar = () => {
         .nav-analytics-btn-left { display: flex; align-items: center; gap: 8px; }
         .nav-analytics-chevron { color: #c5b49e; transition: transform 0.15s ease; }
         .nav-analytics-chevron.open { transform: rotate(180deg); }
-
         .nav-add-dropdown {
           background: #fffdf8;
           border: 1.5px solid #e0d4c0;
@@ -338,23 +338,16 @@ const Navbar = () => {
           text-align: left;
           transition: all 0.12s;
         }
-        .nav-add-dropdown-item:hover {
-          background: #f5ede0;
-          color: #2e2318;
-        }
+        .nav-add-dropdown-item:hover { background: #f5ede0; color: #2e2318; }
         .nav-add-dropdown-divider { height: 1px; background: #e8dece; }
-
         .sidebar-user {
           display: flex;
           align-items: center;
           gap: 10px;
           padding: 14px 16px;
           border-top: 1.5px solid #e8dece;
-          cursor: pointer;
-          transition: background 0.15s;
           flex-shrink: 0;
         }
-        .sidebar-user:hover { background: #f5ede0; }
         .user-avatar {
           width: 34px; height: 34px;
           border-radius: 50%;
@@ -365,6 +358,12 @@ const Navbar = () => {
           color: #c97844;
           flex-shrink: 0;
           font-family: 'DM Sans', sans-serif;
+          overflow: hidden;
+        }
+        .user-avatar img {
+          width: 100%; height: 100%;
+          object-fit: cover;
+          border-radius: 50%;
         }
         .user-info { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; flex: 1; }
         .user-name {
@@ -379,6 +378,22 @@ const Navbar = () => {
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
           text-transform: uppercase; letter-spacing: 0.8px;
           margin-top: 1px;
+        }
+        .logout-btn {
+          width: 30px; height: 30px;
+          border-radius: 8px;
+          border: 1.5px solid #e0d4c0;
+          background: #faf6ee;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer;
+          color: #b08a5e;
+          flex-shrink: 0;
+          transition: all 0.15s;
+        }
+        .logout-btn:hover {
+          background: #fff0f0;
+          border-color: #e07070;
+          color: #c0392b;
         }
       `}</style>
 
@@ -407,7 +422,6 @@ const Navbar = () => {
         </div>
 
         <div className="navbar-inner">
-
           <span className="nav-section-label">Navigation</span>
 
           {navItems.map((item) => (
@@ -510,15 +524,27 @@ const Navbar = () => {
               </div>
             )}
           </div>
-
         </div>
 
+        {/* ── User + Logout — Clerk powered ── */}
         <div className="sidebar-user">
-          <div className="user-avatar">PS</div>
-          <div className="user-info">
-            <span className="user-name">Prasang Sachdev</span>
-            <span className="user-role">Owner</span>
+          <div className="user-avatar">
+            {user?.imageUrl
+              ? <img src={user.imageUrl} alt="avatar" />
+              : getInitials(user?.fullName)
+            }
           </div>
+          <div className="user-info">
+            <span className="user-name">{user?.fullName || 'Loading...'}</span>
+            <span className="user-role">{user?.primaryEmailAddress?.emailAddress || ''}</span>
+          </div>
+          <button className="logout-btn" onClick={handleLogout} title="Logout">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+              <polyline points="16 17 21 12 16 7"/>
+              <line x1="21" y1="12" x2="9" y2="12"/>
+            </svg>
+          </button>
         </div>
 
       </nav>

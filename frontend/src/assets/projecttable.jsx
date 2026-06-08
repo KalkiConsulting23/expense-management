@@ -1,5 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
+import { useApi } from '../utils/api'
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
@@ -120,6 +122,8 @@ function ProjectAvatar({ name = '' }) {
 }
 
 const ProjectTable = () => {
+  const { apiFetch } = useApi();
+  const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [timelineData, setTimelineData] = useState({});
   const [loading, setLoading] = useState(true);
@@ -166,8 +170,8 @@ const ProjectTable = () => {
 
   const fetchProjects = async () => {
     try {
-      const response = await axios.get('https://expense-management-2-bsa7.onrender.com/api/project/all');
-      const data = response.data;
+      const res = await apiFetch('https://expense-management-2-bsa7.onrender.com/api/project/all')
+      const data = await res.json()
       setProjects(data);
 
       const initialOverrides = {};
@@ -244,9 +248,10 @@ const ProjectTable = () => {
     setModalConfig(null);
 
     try {
-      await axios.patch(`https://expense-management-2-bsa7.onrender.com/api/project/sync-month/${project._id}`, {
-        month, year, amt: calculatedAmt, metrics: payloadMetrics
-      });
+      await apiFetch(`https://expense-management-2-bsa7.onrender.com/api/project/sync-month/${project._id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ month, year, amt: calculatedAmt, metrics: payloadMetrics }),
+      })
     } catch(e) { console.error("Database save failed.") }
   };
 
@@ -272,9 +277,10 @@ const ProjectTable = () => {
     setEditingPayment(null);
 
     try {
-      await axios.patch(`https://expense-management-2-bsa7.onrender.com/api/project/sync-month/${projectId}`, {
-        month, year, paid: val
-      });
+      await apiFetch(`https://expense-management-2-bsa7.onrender.com/api/project/sync-month/${projectId}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ month, year, paid: val }),
+      })
     } catch (err) { console.error('Failed processing payment alignment.', err); }
   };
 
@@ -422,23 +428,48 @@ const ProjectTable = () => {
         ::-webkit-scrollbar { height: 5px; }
         ::-webkit-scrollbar-track { background: #f5f0e8; }
         ::-webkit-scrollbar-thumb { background: #e0d4c0; border-radius: 3px; }
+
+        .add-proj-btn {
+          display: flex; align-items: center; gap: 7px;
+          padding: 10px 18px; flex-shrink: 0; margin-top: 4px;
+          background: #c97844; border: none; border-radius: 10px;
+          font-size: 13px; font-weight: 600; color: #fff;
+          font-family: 'DM Sans', sans-serif;
+          cursor: pointer; box-shadow: 0 2px 0 #a05e2a;
+          transition: background 0.15s, transform 0.1s;
+        }
+        .add-proj-btn:hover { background: #b5672f; transform: translateY(-1px); }
+        .add-proj-btn:active { transform: translateY(0); }
       `}</style>
 
       {/* Page Header */}
-      <div style={{ marginBottom: 28 }}>
-        <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 2, textTransform: 'uppercase', color: '#b08a5e', marginBottom: 5, fontFamily: "'DM Sans', sans-serif" }}>
-          Project Tracker
+      <div style={{ marginBottom: 28, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 2, textTransform: 'uppercase', color: '#b08a5e', marginBottom: 5, fontFamily: "'DM Sans', sans-serif" }}>
+            Project Tracker
+          </div>
+          <h2 style={{ fontFamily: "'Lora', serif", fontSize: 26, fontWeight: 600, color: '#2e2318', margin: '0 0 4px' }}>
+            Financial Workspace Matrix
+          </h2>
+          <p style={{ fontSize: 13, color: '#9a8775', margin: 0, fontFamily: "'DM Sans', sans-serif" }}>
+            {projects.length} project{projects.length !== 1 ? 's' : ''} &nbsp;·&nbsp;
+            Click <span style={{ color: '#b5672f', fontWeight: 500 }}>Amount</span> to configure metrics &nbsp;·&nbsp;
+            Click <span style={{ color: '#7a9e5a', fontWeight: 500 }}>Paid</span> to track per month &nbsp;·&nbsp;
+            <span style={{ color: '#c97844' }}>Amber</span> = carry &nbsp;·&nbsp;
+            <span style={{ color: '#7a9e5a' }}>Green</span> = credit
+          </p>
         </div>
-        <h2 style={{ fontFamily: "'Lora', serif", fontSize: 26, fontWeight: 600, color: '#2e2318', margin: '0 0 4px' }}>
-          Financial Workspace Matrix
-        </h2>
-        <p style={{ fontSize: 13, color: '#9a8775', margin: 0, fontFamily: "'DM Sans', sans-serif" }}>
-          {projects.length} project{projects.length !== 1 ? 's' : ''} &nbsp;·&nbsp;
-          Click <span style={{ color: '#b5672f', fontWeight: 500 }}>Amount</span> to configure metrics &nbsp;·&nbsp;
-          Click <span style={{ color: '#7a9e5a', fontWeight: 500 }}>Paid</span> to track per month &nbsp;·&nbsp;
-          <span style={{ color: '#c97844' }}>Amber</span> = carry &nbsp;·&nbsp;
-          <span style={{ color: '#7a9e5a' }}>Green</span> = credit
-        </p>
+
+        <button
+          className="add-proj-btn"
+          onClick={() => navigate('/project')}
+          type="button"
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+            <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+          </svg>
+          Add Project
+        </button>
       </div>
 
       {/* Empty state */}

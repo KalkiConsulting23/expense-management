@@ -11,9 +11,13 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+const { requireAuth } = require("./middleware/authmiddleware");  // ← small m
+
 const employeeRoutes = require("./routes/employeeRoutes");
 const projectRoutes = require("./routes/projectRoute");
 const salesRoutes = require("./routes/salesRoute");
+
+app.use("/api", requireAuth);
 
 app.use("/api/employee", employeeRoutes);
 app.use("/api/project", projectRoutes);

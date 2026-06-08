@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react'
 import * as d3 from 'd3'
-
+import { useApi } from '../utils/api'
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const BG      = '#0b0f1a'
 const CARD    = '#111827'
@@ -628,6 +628,7 @@ function ExpenseTable({ data, accent }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 const Expenseanl = () => {
+  const { apiFetch } = useApi()
   const [expenses, setExpenses]       = useState([])
   const [loading, setLoading]         = useState(true)
   const [error, setError]             = useState(null)
@@ -635,11 +636,11 @@ const Expenseanl = () => {
   const [activeCategory, setCategory] = useState(null)  // null = overview
 
   useEffect(() => {
-    fetch('https://expense-management-2-bsa7.onrender.com/api/employee/all')
-      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
-      .then(d => { setExpenses(Array.isArray(d) ? d : []); setLoading(false) })
-      .catch(e => { setError(e.message); setLoading(false) })
-  }, [])
+  apiFetch('https://expense-management-2-bsa7.onrender.com/api/employee/all')
+    .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+    .then(d => { setExpenses(Array.isArray(d) ? d : []); setLoading(false) })
+    .catch(e => { setError(e.message); setLoading(false) })
+}, [])
 
   const allCategories = useMemo(() =>
     [...new Set(expenses.map(e => e.expenseType ?? 'Other'))].sort()
