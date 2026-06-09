@@ -1,8 +1,9 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as d3 from 'd3';
-import { useApi } from '../utils/api'
+
 // ─── CONFIG ───
-const API_BASE = 'https://expense-management-2-bsa7.onrender.com/api/project';
+const API_BASE = 'http://localhost:5000/api/project';
+const PROJECT_CACHE_KEY = 'local_project_data_cache';
 
 // ─── HELPERS ───
 const fmt = (n) => {
@@ -36,12 +37,24 @@ function useProjects() {
   const [projects, setProjects] = useState([]);
   const [loading, setLoading]   = useState(true);
   const [error, setError]       = useState(null);
-  const { apiFetch } = useApi()
 
   useEffect(() => {
-    apiFetch(`${API_BASE}/all`)
+    // SMART CACHE LOOKUP
+    const cachedData = sessionStorage.getItem(PROJECT_CACHE_KEY);
+    if (cachedData) {
+      setProjects(JSON.parse(cachedData));
+      setLoading(false);
+      return;
+    }
+
+    // Native fetch pipeline implementation directly targeting local port 5000
+    fetch(`${API_BASE}/all`)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
-      .then(data => { setProjects(data); setLoading(false); })
+      .then(data => {
+        sessionStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(data));
+        setProjects(data);
+        setLoading(false);
+      })
       .catch(err => { setError(err.message); setLoading(false); });
   }, []);
 
@@ -73,14 +86,12 @@ function GroupedBarChart({ data, keys, colors, height = 220 }) {
     const yMax = d3.max(data, d => d3.max(keys, k => d[k])) || 1;
     const y  = d3.scaleLinear().domain([0, yMax * 1.12]).range([iH, 0]);
 
-    // Grid lines
     svg.append('g').attr('class', 'grid')
       .call(d3.axisLeft(y).tickSize(-iW).tickFormat('').ticks(4))
       .call(g => g.select('.domain').remove())
       .call(g => g.selectAll('line').attr('stroke', '#2d3748').attr('stroke-dasharray', '3,3'));
 
-    // Bars
-    const groups = svg.selectAll('.group').data(data).join('g')
+    const groups = svg.append('g').selectAll('.group').data(data).join('g')
       .attr('class', 'group')
       .attr('transform', d => `translate(${x0(d.name)},0)`);
 
@@ -96,13 +107,11 @@ function GroupedBarChart({ data, keys, colors, height = 220 }) {
       .attr('y', d => y(d.value))
       .attr('height', d => iH - y(d.value));
 
-    // X Axis
     svg.append('g').attr('transform', `translate(0,${iH})`)
       .call(d3.axisBottom(x0).tickSize(0))
       .call(g => g.select('.domain').attr('stroke','#2d3748'))
       .call(g => g.selectAll('text').attr('fill','#a0aec0').attr('font-size', 11).attr('dy', 14));
 
-    // Y Axis
     svg.append('g')
       .call(d3.axisLeft(y).ticks(4).tickFormat(fmt))
       .call(g => g.select('.domain').remove())
@@ -199,7 +208,7 @@ function DonutChart({ data, colors, height = 200 }) {
     const pie = d3.pie().value(d => d.value).sort(null).padAngle(0.04);
     const arc = d3.arc().innerRadius(ir).outerRadius(r).cornerRadius(4);
 
-    const arcs = svg.selectAll('path').data(pie(data)).join('path')
+    svg.selectAll('path').data(pie(data)).join('path')
       .attr('fill', (_, i) => colors[i % colors.length])
       .attr('d', arc)
       .style('opacity', 0)
@@ -218,7 +227,7 @@ function DonutChart({ data, colors, height = 200 }) {
   return <svg ref={svgRef} style={{ width:'100%', height, display:'block' }} />;
 }
 
-// Horizontal Progress Bar (collection efficiency)
+// Horizontal Progress Bar
 function HBarChart({ data, height = 220 }) {
   const svgRef = useRef(null);
 
@@ -243,12 +252,10 @@ function HBarChart({ data, height = 220 }) {
         .attr('fill','#a0aec0').attr('font-size', 10)
         .text(d.name);
 
-      // bg track
       svg.append('rect').attr('x', 0).attr('y', y + 4)
         .attr('width', iW).attr('height', bh)
         .attr('fill','#2d3748').attr('rx', 4);
 
-      // fill
       svg.append('rect').attr('x', 0).attr('y', y + 4)
         .attr('width', 0).attr('height', bh)
         .attr('fill', PROJECT_COLORS[i % PROJECT_COLORS.length]).attr('rx', 4)
@@ -265,7 +272,6 @@ function HBarChart({ data, height = 220 }) {
   return <svg ref={svgRef} style={{ width:'100%', height, display:'block' }} />;
 }
 
-// ─── STAT CARD ───
 const StatCard = ({ label, value, sub, color }) => (
   <div style={{
     background: 'linear-gradient(135deg,#1a202c,#2d3748)',
@@ -283,7 +289,6 @@ const StatCard = ({ label, value, sub, color }) => (
   </div>
 );
 
-// ─── PANEL WRAPPER ───
 const Panel = ({ title, accent = '#f6ad55', children, style = {} }) => (
   <div style={{ background:'#1a202c', border:'1px solid #2d3748', borderRadius:12, padding:'20px 18px', ...style }}>
     <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16 }}>
@@ -294,7 +299,6 @@ const Panel = ({ title, accent = '#f6ad55', children, style = {} }) => (
   </div>
 );
 
-// ─── LEGEND ROW ───
 const LegendDot = ({ color, label }) => (
   <div style={{ display:'flex', alignItems:'center', gap:5 }}>
     <div style={{ width:8, height:8, borderRadius:'50%', background:color }} />
@@ -302,7 +306,6 @@ const LegendDot = ({ color, label }) => (
   </div>
 );
 
-// ─── MAIN COMPONENT ───
 const Projectanl = () => {
   const { projects, loading, error } = useProjects();
   const [selected, setSelected] = useState('all');
@@ -329,7 +332,6 @@ const Projectanl = () => {
     </div>
   );
 
-  // ─── DERIVED DATA ───
   const active = selected === 'all' ? projects : projects.filter(p => (p._id || p.id) === selected);
 
   const totalExpected  = active.reduce((s, p) => s + (p.expectedAmount || 0), 0);
@@ -337,7 +339,6 @@ const Projectanl = () => {
   const totalCollected = active.reduce((s, p) => s + p.monthlyBreakdowns.reduce((a, b) => a + (b.paid || 0), 0), 0);
   const totalOutstanding = totalBilled - totalCollected;
 
-  // Monthly trend
   const monthMap = {};
   active.forEach(p => {
     (p.monthlyBreakdowns || []).forEach(b => {
@@ -351,7 +352,6 @@ const Projectanl = () => {
     .sort((a, b) => a._sort - b._sort)
     .map(({ _sort, ...d }) => ({ ...d, outstanding: d.amt - d.paid }));
 
-  // Per project bar
   const barData = projects.map(p => ({
     name: p.projectName.split(' ').slice(0, 2).join(' '),
     Expected:  p.expectedAmount || 0,
@@ -359,14 +359,12 @@ const Projectanl = () => {
     Collected: p.monthlyBreakdowns.reduce((a, b) => a + (b.paid || 0), 0),
   }));
 
-  // Type donut
   const typeMap = {};
   projects.forEach(p => {
     typeMap[p.projectType] = (typeMap[p.projectType] || 0) + (p.expectedAmount || 0);
   });
   const donutData = Object.entries(typeMap).map(([name, value]) => ({ name, value }));
 
-  // Collection efficiency
   const effData = projects.map((p, i) => ({
     name: p.projectName.split(' ').slice(0, 2).join(' '),
     value: pct(
@@ -384,7 +382,6 @@ const Projectanl = () => {
       color: '#e2e8f0',
       padding: '28px 24px',
     }}>
-      {/* HEADER */}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:28, flexWrap:'wrap', gap:12 }}>
         <div>
           <p style={{ color:'#f6ad55', fontSize:10, letterSpacing:'0.25em', textTransform:'uppercase', margin:'0 0 6px' }}>Project Intelligence</p>
@@ -400,7 +397,6 @@ const Projectanl = () => {
         </select>
       </div>
 
-      {/* STAT CARDS */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap:14, marginBottom:24 }}>
         <StatCard label="Contract Value"   value={fmt(totalExpected)}   sub={`${active.length} project${active.length !== 1 ? 's' : ''}`} color={PALETTE.accent1} />
         <StatCard label="Total Billed"     value={fmt(totalBilled)}     sub={`${pct(totalBilled, totalExpected)}% of contract`}           color={PALETTE.accent3} />
@@ -408,7 +404,6 @@ const Projectanl = () => {
         <StatCard label="Outstanding"      value={fmt(totalOutstanding)} sub={totalOutstanding > 0 ? 'Pending recovery' : 'Fully cleared'} color={PALETTE.outstanding} />
       </div>
 
-      {/* ROW 1: Trend + Donut */}
       <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:16, marginBottom:16 }}>
         <Panel title="Monthly Revenue Trend" accent={PALETTE.accent3}>
           <div style={{ display:'flex', gap:16, marginBottom:10 }}>
@@ -431,7 +426,6 @@ const Projectanl = () => {
         </Panel>
       </div>
 
-      {/* ROW 2: Grouped Bar + Efficiency */}
       <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:16, marginBottom:16 }}>
         <Panel title="Project Revenue Comparison" accent={PALETTE.accent4}>
           <div style={{ display:'flex', gap:16, marginBottom:10 }}>
@@ -452,7 +446,6 @@ const Projectanl = () => {
         </Panel>
       </div>
 
-      {/* PROJECT TABLE */}
       <Panel title="Project Summary" accent={PALETTE.accent4}>
         <div style={{ overflowX:'auto' }}>
           <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>

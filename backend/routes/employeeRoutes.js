@@ -20,7 +20,7 @@ router.post("/add", async (req, res) => {
     }
 
     const data = {
-      userId: req.userId,        // ← ADD THIS
+      // userId removed entirely
       expenseType: expenseType.trim(),
       expenseName: expenseName.trim(),
       type,
@@ -74,7 +74,8 @@ router.post("/add", async (req, res) => {
 // ── Get All Employees ────────────────────────────────────────────────────
 router.get("/all", async (req, res) => {
   try {
-    const employees = await Employee.find({ userId: req.userId })  // ← FILTER
+    // Removed userId filtering to fetch all records locally
+    const employees = await Employee.find({}); 
     res.status(200).json(employees);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -86,8 +87,8 @@ router.patch("/update-payment/:id", async (req, res) => {
   try {
     const { year, month, paid } = req.body;
 
-    // ← verify ownership first
-    const employee = await Employee.findOne({ _id: req.params.id, userId: req.userId });
+    // Removed userId check so we find items purely by document ID
+    const employee = await Employee.findOne({ _id: req.params.id });
     if (!employee) return res.status(404).json({ message: "Employee not found" });
 
     const index = employee.payments.findIndex(
@@ -110,8 +111,8 @@ router.patch("/update-payment/:id", async (req, res) => {
 // ── Delete Employee ───────────────────────────────────────────────────────
 router.delete("/delete/:id", async (req, res) => {
   try {
-    // ← userId check prevents deleting another user's record
-    const deleted = await Employee.findOneAndDelete({ _id: req.params.id, userId: req.userId });
+    // Removed userId constraint to allow seamless deletion via ID
+    const deleted = await Employee.findOneAndDelete({ _id: req.params.id });
     if (!deleted) return res.status(404).json({ message: "Employee not found" });
     res.status(200).json({ message: "Employee deleted successfully" });
   } catch (err) {

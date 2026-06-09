@@ -8,11 +8,7 @@ const paymentSchema = new mongoose.Schema({
 
 const employeeSchema = new mongoose.Schema(
   {
-    userId: {          // ← ADD THIS
-      type: String,
-      required: true,
-      index: true,
-    },
+    // userId removed completely to bypass auth restrictions
 
     expenseType: {
       type: String,

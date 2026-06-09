@@ -1,21 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo, memo } from 'react'
+import React, { useEffect, useState, useCallback, useMemo, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useApi } from '../utils/api'
 
-// ─── In-Memory Cache ──────────────────────────────────────────────────────────
-const salesCache = {
-  data: null,
-  timestamp: 0,
-  TTL: 5 * 60 * 1000,
-  get() {
-    if (this.data && Date.now() - this.timestamp < this.TTL) return this.data
-    return null
-  },
-  set(data) { this.data = data; this.timestamp = Date.now() },
-  invalidate() { this.data = null },
-}
+const SALES_CACHE_KEY = 'local_sales_data_cache';
 
-// ─── Constants (stable references, never recreated) ───────────────────────────
 const SOURCE_CONFIG = {
   cash: { label: 'Cash', bg: '#fdf3e7', color: '#a05e2a', border: '#f0c490', icon: '💵' },
   upi:  { label: 'UPI',  bg: '#eef4fd', color: '#2a5ea0', border: '#a8c4f0', icon: '📱' },
@@ -35,7 +22,7 @@ const SaleRow = memo(({ sale, index, deletingId, onDelete }) => {
   )
 
   return (
-    <tr key={sale._id}>
+    <tr>
       <td className="st-num">{index + 1}</td>
       <td className="st-name">{sale.name}</td>
       <td className="st-contact">{sale.contactNumber}</td>
@@ -108,75 +95,71 @@ const StatsBar = memo(({ sales }) => {
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 const Salestable = () => {
-  const navigate     = useNavigate()
-  const { apiFetch } = useApi()
-  const [sales, setSales]           = useState(() => salesCache.get()?.sales || [])
-  const [loading, setLoading]       = useState(!salesCache.get())
+  const navigate = useNavigate()
+  
+  const [sales, setSales] = useState(() => {
+    const cached = sessionStorage.getItem(SALES_CACHE_KEY);
+    return cached ? JSON.parse(cached) : [];
+  })
+  
+  const [loading, setLoading]       = useState(() => !sessionStorage.getItem(SALES_CACHE_KEY))
   const [deletingId, setDeletingId] = useState(null)
   const [toast, setToast]           = useState(null)
 
-  // ── Toast helper ─────────────────────────────────────────────────────────
   const showToast = useCallback((type, msg) => {
     setToast({ type, msg })
     setTimeout(() => setToast(null), 3000)
   }, [])
 
-  // ── Backend wake-up ping ──────────────────────────────────────────────────
-  useEffect(() => {
-    fetch('https://expense-management-2-bsa7.onrender.com/api/sales', { method: 'HEAD' })
-      .catch(() => {})
-  }, [])
-
-  // ── Cache-first fetch ─────────────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
-      // 1. Serve cache instantly — no spinner on revisit
-      const cached = salesCache.get()
-      if (cached) {
-        setSales(cached.sales)
+      const cachedData = sessionStorage.getItem(SALES_CACHE_KEY)
+      if (cachedData) {
+        setSales(JSON.parse(cachedData))
         setLoading(false)
       }
 
-      // 2. Revalidate in background
       try {
-        const res  = await apiFetch('https://expense-management-2-bsa7.onrender.com/api/sales')
+        // Swapped custom API hook utility out for standard native JavaScript fetch calls
+        const res  = await fetch('http://localhost:5000/api/sales')
         const data = await res.json()
-        salesCache.set({ sales: data })
+        
+        sessionStorage.setItem(SALES_CACHE_KEY, JSON.stringify(data))
         setSales(data)
       } catch (err) {
-        if (!cached) showToast('error', 'Failed to load sales.')
+        if (!cachedData) showToast('error', 'Failed to load sales.')
       } finally {
         setLoading(false)
       }
     }
     load()
-  }, [apiFetch, showToast])
+  }, [showToast])
 
-  // ── Optimistic delete ─────────────────────────────────────────────────────
   const handleDelete = useCallback(async (id) => {
     if (!window.confirm('Delete this sale record?')) return
 
-    // Remove from UI immediately
-    setSales(prev => prev.filter(s => s._id !== id))
-    salesCache.invalidate()
+    setSales(prev => {
+      const updatedSales = prev.filter(s => s._id !== id);
+      sessionStorage.setItem(SALES_CACHE_KEY, JSON.stringify(updatedSales));
+      return updatedSales;
+    })
     setDeletingId(id)
 
     try {
-      await apiFetch(`https://expense-management-2-bsa7.onrender.com/api/sales/${id}`, { method: 'DELETE' })
+      await fetch(`http://localhost:5000/api/sales/${id}`, { method: 'DELETE' })
       showToast('success', 'Sale deleted successfully.')
     } catch (err) {
-      // Rollback: re-fetch to restore correct state
       showToast('error', 'Failed to delete sale.')
       try {
-        const res  = await apiFetch('https://expense-management-2-bsa7.onrender.com/api/sales')
+        const res  = await fetch('http://localhost:5000/api/sales')
         const data = await res.json()
-        salesCache.set({ sales: data })
+        sessionStorage.setItem(SALES_CACHE_KEY, JSON.stringify(data))
         setSales(data)
       } catch (_) {}
     } finally {
       setDeletingId(null)
     }
-  }, [apiFetch, showToast])
+  }, [showToast])
 
   return (
     <>
@@ -248,7 +231,6 @@ const Salestable = () => {
           </button>
         </div>
 
-        {/* Stats — only re-renders when sales array changes */}
         <StatsBar sales={sales} />
 
         <div className="st-table-wrap">

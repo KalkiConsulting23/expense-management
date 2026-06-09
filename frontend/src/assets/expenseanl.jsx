@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react'
 import * as d3 from 'd3'
-import { useApi } from '../utils/api'
+
 // ── Theme ─────────────────────────────────────────────────────────────────────
 const BG      = '#0b0f1a'
 const CARD    = '#111827'
@@ -13,6 +13,7 @@ const A3      = '#34d399'  // green
 const A4      = '#fb923c'  // orange
 const A5      = '#a78bfa'  // purple
 const COLORS  = [A1, A2, A3, A4, A5, '#facc15', '#f87171', '#2dd4bf']
+const CACHE_KEY = 'local_employee_data_cache'
 
 function fmt(n) {
   if (n >= 1e6) return `₹${(n / 1e6).toFixed(1)}M`
@@ -180,7 +181,6 @@ function TypeDonut({ data }) {
       .attr('fill', A1).style('font-size', '14px').style('font-weight', 700).text(fmt(total))
   }, [data])
 
-  // Build legend safely — never crashes on empty data
   const legendEntries = useMemo(() => {
     if (!data.length) return []
     const grouped = d3.rollup(data, v => d3.sum(v, d => d.amount ?? 0), d => d.type ?? 'unknown')
@@ -296,7 +296,7 @@ function CumulativeLine({ data }) {
     const series = points.map(d => ({ date: d.date, cumulative: (cum += d.amount) }))
 
     const x = d3.scaleTime().domain(d3.extent(series, d => d.date)).range([0, w]).nice()
-    const y = d3.scaleLinear().domain([0, series[series.length - 1]?.cumulative * 1.1 || 1]).range([h, 0])
+    const y = d3.scaleLinear().domain([0, d3.max(series, d => d.cumulative) * 1.1 || 1]).range([h, 0])
 
     const svg = d3.select(el).append('svg').attr('width', W).attr('height', H)
     const g = svg.append('g').attr('transform', `translate(${m.left},${m.top})`)
@@ -419,7 +419,6 @@ function PaymentHeatmap({ data }) {
   )
 }
 
-// ── KPI Card ──────────────────────────────────────────────────────────────────
 function KPI({ label, value, accent, sub }) {
   return (
     <div style={{
@@ -446,12 +445,10 @@ function ChartCard({ title, children }) {
   )
 }
 
-// ── Category Dropdown ─────────────────────────────────────────────────────────
 function CategoryDropdown({ categories, selected, onSelect }) {
   const [open, setOpen] = useState(false)
   const ref = useRef()
 
-  // close on outside click
   useEffect(() => {
     const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
     document.addEventListener('mousedown', handler)
@@ -491,7 +488,6 @@ function CategoryDropdown({ categories, selected, onSelect }) {
           boxShadow: '0 16px 40px rgba(0,0,0,0.6)',
           animation: 'dropIn .15s ease'
         }}>
-          {/* All option */}
           <div
             onClick={() => { onSelect(null); setOpen(false) }}
             style={{
@@ -508,7 +504,6 @@ function CategoryDropdown({ categories, selected, onSelect }) {
             <span>🌐</span> All Categories
           </div>
 
-          {/* Category list */}
           {categories.map((cat, i) => (
             <div
               key={cat}
@@ -537,7 +532,6 @@ function CategoryDropdown({ categories, selected, onSelect }) {
   )
 }
 
-// ── Category Drilldown View ───────────────────────────────────────────────────
 function CategoryDrilldown({ data, category, accentColor }) {
   const catData = data.filter(d => (d.expenseType ?? 'Other') === category)
 
@@ -549,9 +543,8 @@ function CategoryDrilldown({ data, category, accentColor }) {
 
   return (
     <div>
-      {/* Drilldown KPIs */}
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
-        <KPI label="Category Total"  value={fmt(total)}              accent={accentColor} sub={`All ${category} expenses`} />
+        <KPI label="Category Total"  value={fmt(total)}               accent={accentColor} sub={`All ${category} expenses`} />
         <KPI label="Records"         value={catData.length}          accent={A3}          sub="In this category" />
         <KPI label="Average"         value={fmt(Math.round(avg))}    accent={A5}          sub="Per entry" />
         <KPI label="Highest"         value={fmt(max)}                accent={A2}          sub="Single entry" />
@@ -559,7 +552,6 @@ function CategoryDrilldown({ data, category, accentColor }) {
         <KPI label="One-time"        value={oneTime}                 accent={A1}          sub="One-time entries" />
       </div>
 
-      {/* Row 1 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
         <ChartCard title={`📈 ${category} — Monthly Trend`}>
           <CumulativeLine data={catData} />
@@ -569,7 +561,6 @@ function CategoryDrilldown({ data, category, accentColor }) {
         </ChartCard>
       </div>
 
-      {/* Row 2 */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
         <ChartCard title={`🏆 ${category} — Top Expense Names`}>
           <TopExpenses data={catData} />
@@ -582,7 +573,6 @@ function CategoryDrilldown({ data, category, accentColor }) {
   )
 }
 
-// ── Expense Table (used inside drilldown) ─────────────────────────────────────
 function ExpenseTable({ data, accent }) {
   const sorted = [...data].sort((a, b) => (b.amount ?? 0) - (a.amount ?? 0))
   return (
@@ -626,27 +616,38 @@ function ExpenseTable({ data, accent }) {
   )
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
 const Expenseanl = () => {
-  const { apiFetch } = useApi()
   const [expenses, setExpenses]       = useState([])
   const [loading, setLoading]         = useState(true)
   const [error, setError]             = useState(null)
   const [filter, setFilter]           = useState('all')
-  const [activeCategory, setCategory] = useState(null)  // null = overview
+  const [activeCategory, setCategory] = useState(null)
 
   useEffect(() => {
-  apiFetch('https://expense-management-2-bsa7.onrender.com/api/employee/all')
-    .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
-    .then(d => { setExpenses(Array.isArray(d) ? d : []); setLoading(false) })
-    .catch(e => { setError(e.message); setLoading(false) })
-}, [])
+    const cachedData = sessionStorage.getItem(CACHE_KEY)
+    if (cachedData) {
+      const parsed = JSON.parse(cachedData)
+      setExpenses(Array.isArray(parsed) ? parsed : [])
+      setLoading(false)
+      return
+    }
+
+    // Rewritten with native JavaScript fetch instead of custom useApi hook wrappers
+    fetch('http://localhost:5000/api/employee/all')
+      .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
+      .then(d => { 
+        const verifiedData = Array.isArray(d) ? d : []
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(verifiedData))
+        setExpenses(verifiedData)
+        setLoading(false) 
+      })
+      .catch(e => { setError(e.message); setLoading(false) })
+  }, [])
 
   const allCategories = useMemo(() =>
     [...new Set(expenses.map(e => e.expenseType ?? 'Other'))].sort()
   , [expenses])
 
-  // type filter applies in both overview and drilldown
   const filtered = filter === 'all' ? expenses : expenses.filter(e => e.type === filter)
 
   const totalAmount = d3.sum(filtered, d => d.amount ?? 0)
@@ -675,11 +676,8 @@ const Expenseanl = () => {
 
   return (
     <div style={{ background: BG, minHeight: '100vh', padding: '32px 24px', fontFamily: "'DM Sans','Segoe UI',sans-serif", color: TEXT }}>
-
-      {/* inject dropdown animation keyframe */}
       <style>{`@keyframes dropIn { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:translateY(0) } }`}</style>
 
-      {/* ── Header ── */}
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 16, flexWrap: 'wrap' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
@@ -695,7 +693,6 @@ const Expenseanl = () => {
           </p>
         </div>
 
-        {/* ── Category Dropdown (top-right) ── */}
         <CategoryDropdown
           categories={allCategories}
           selected={activeCategory}
@@ -703,7 +700,6 @@ const Expenseanl = () => {
         />
       </div>
 
-      {/* ── Type Filter Tabs ── */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
         {['all', 'recurring', 'one-time'].map(f => (
           <button key={f} onClick={() => setFilter(f)} style={{
@@ -718,7 +714,6 @@ const Expenseanl = () => {
         ))}
       </div>
 
-      {/* ── DRILLDOWN VIEW ── */}
       {activeCategory ? (
         <CategoryDrilldown
           data={filtered}
@@ -726,9 +721,7 @@ const Expenseanl = () => {
           accentColor={catAccent}
         />
       ) : (
-        /* ── OVERVIEW VIEW ── */
         <>
-          {/* KPIs */}
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap', marginBottom: 20 }}>
             <KPI label="Total Expenses"  value={fmt(totalAmount)}           accent={A1} sub="All records combined" />
             <KPI label="Total Records"   value={filtered.length}            accent={A3} sub="In database" />
@@ -738,7 +731,6 @@ const Expenseanl = () => {
             <KPI label="One-time"        value={oneTime}                    accent={A3} sub="Single payments" />
           </div>
 
-          {/* Row 1 */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
             <ChartCard title="📊 Monthly Expenses by Type (Stacked)">
               <StackedBar data={filtered} />
@@ -748,7 +740,6 @@ const Expenseanl = () => {
             </ChartCard>
           </div>
 
-          {/* Row 2 */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 16 }}>
             <ChartCard title="📈 Cumulative Expense Over Time">
               <CumulativeLine data={filtered} />
@@ -758,13 +749,11 @@ const Expenseanl = () => {
             </ChartCard>
           </div>
 
-          {/* Row 3 – full width heatmap */}
           <ChartCard title="🌡️ Expense Heatmap — Month × Category">
             <PaymentHeatmap data={filtered} />
           </ChartCard>
         </>
       )}
-
     </div>
   )
 }

@@ -1,63 +1,66 @@
+import React, { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { SignedIn, SignedOut, useAuth } from '@clerk/clerk-react'
-import { ClerkLoaded } from '@clerk/clerk-react'  // ADD THIS
-// ADD this import at the top
-import { AuthenticateWithRedirectCallback } from '@clerk/clerk-react'
-import Navbar from './assets/Navbar'
-import LoginPage from './assets/LoginPage'
-import Employee from './assets/employee'
-import Project from './assets/project'
-import EmployeeTable from './assets/employeetable'
-import Projecttable from './assets/projecttable'
-import Salesform from './assets/salesform'
-import Salestable from './assets/salestable'
-import Salesanl from './assets/salesanl'
-import Projectanl from './assets/projectanl'
-import Expenseanl from './assets/expenseanl'
 
-function ProtectedLayout({ children }) {
-  return (
-    <>
-      <SignedIn>{children}</SignedIn>
-      <SignedOut><Navigate to="/login" /></SignedOut>
-    </>
-  )
-}
+// ─── LAZY LOADING COMPONENTS ─────────────────────────────────────────────────
+const Navbar        = lazy(() => import('./assets/Navbar'))
+const Employee      = lazy(() => import('./assets/employee'))
+const Project       = lazy(() => import('./assets/project'))
+const EmployeeTable = lazy(() => import('./assets/employeetable'))
+const Projecttable  = lazy(() => import('./assets/projecttable'))
+const Salesform     = lazy(() => import('./assets/salesform'))
+const Salestable    = lazy(() => import('./assets/salestable'))
+const Salesanl      = lazy(() => import('./assets/salesanl'))
+const Projectanl    = lazy(() => import('./assets/projectanl'))
+const Expenseanl    = lazy(() => import('./assets/expenseanl'))
 
-function PublicRoute({ children }) {
-  const { isSignedIn, isLoaded } = useAuth()
-  if (!isLoaded) return null
-  if (isSignedIn) return <Navigate to="/" />
-  return children
-}
+const PageLoader = () => (
+  <div style={{
+    background: '#f5f0e8', minHeight: '100vh', display: 'flex',
+    alignItems: 'center', justifyContent: 'center', gap: 12,
+    fontFamily: "system-ui, sans-serif", color: '#9a8775'
+  }}>
+    <div style={{
+      width: 24, height: 24, border: '2.5px solid #e8dece',
+      borderTopColor: '#c97844', borderRadius: '50%',
+      animation: 'spin 0.7s linear infinite'
+    }} />
+    Loading view…
+    <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+  </div>
+)
 
 function App() {
   return (
     <BrowserRouter>
-      <SignedIn>
+      <Suspense fallback={<PageLoader />}>
+        {/*
+          Layout: Navbar is a fixed overlay sidebar + floating hamburger.
+          Page content sits in a full-bleed div with NO top padding —
+          each page manages its own internal spacing.
+          The hamburger button is 42px and sits at top:0 left:0, fully
+          within the page's own padding zone (pages use padding: '36px 24px',
+          so the 42px button is contained without any wrapper gap).
+        */}
         <Navbar />
-        <div style={{ paddingTop: '70px' }}></div>
-      </SignedIn>
+        <div style={{ minHeight: '100vh', background: '#f5f0e8' }}>
+          <Routes>
+            <Route path="/"            element={<EmployeeTable />} />
+            <Route path="/employee"    element={<Employee />} />
 
-      <Routes>
-        {/* Public — login page */}
-        <Route path="/login" element={
-          <PublicRoute><LoginPage /></PublicRoute>
-        } />
+            <Route path="/projecttable" element={<Projecttable />} />
+            <Route path="/project"      element={<Project />} />
 
-        <Route path="/login/sso-callback" element={<AuthenticateWithRedirectCallback /> } /> 
-         <Route path="/login/factor-one" element={<LoginPage />} />
-        {/* Protected routes */}
-        <Route path="/" element={<ProtectedLayout><Employee /></ProtectedLayout>} />
-        <Route path="/projecttable" element={<ProtectedLayout><Projecttable /></ProtectedLayout>} />
-        <Route path="/employee" element={<ProtectedLayout><EmployeeTable /></ProtectedLayout>} />
-        <Route path="/project" element={<ProtectedLayout><Project /></ProtectedLayout>} />
-        <Route path="/salesform" element={<ProtectedLayout><Salesform /></ProtectedLayout>} />
-        <Route path="/salestable" element={<ProtectedLayout><Salestable /></ProtectedLayout>} />
-        <Route path="/salesanl" element={<ProtectedLayout><Salesanl /></ProtectedLayout>} />
-        <Route path="/projectanl" element={<ProtectedLayout><Projectanl /></ProtectedLayout>} />
-        <Route path="/expenseanl" element={<ProtectedLayout><Expenseanl /></ProtectedLayout>} />
-      </Routes>
+            <Route path="/salesform"   element={<Salesform />} />
+            <Route path="/salestable"  element={<Salestable />} />
+
+            <Route path="/salesanl"    element={<Salesanl />} />
+            <Route path="/projectanl"  element={<Projectanl />} />
+            <Route path="/expenseanl"  element={<Expenseanl />} />
+
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </div>
+      </Suspense>
     </BrowserRouter>
   )
 }

@@ -1,9 +1,8 @@
-import React, { useEffect, useState, useRef } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useApi } from '../utils/api'
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const PROJECT_CACHE_KEY = 'local_project_data_cache';
 
 const fmt = (n) => '₹' + Number(n).toLocaleString('en-IN');
 
@@ -103,7 +102,6 @@ function buildProjectTimeline(project, year, localizedOverrides = {}) {
   return result;
 }
 
-// ─── Project Avatar ────────────────────────────────────────────────────────
 function ProjectAvatar({ name = '' }) {
   const palette = ['#c97844','#b08a5e','#8c7a68','#a05e2a','#7a6050','#d4a070','#9a8775','#b5672f'];
   const color   = palette[name.charCodeAt(0) % palette.length];
@@ -122,7 +120,6 @@ function ProjectAvatar({ name = '' }) {
 }
 
 const ProjectTable = () => {
-  const { apiFetch } = useApi();
   const navigate = useNavigate();
   const [projects, setProjects] = useState([]);
   const [timelineData, setTimelineData] = useState({});
@@ -142,7 +139,11 @@ const ProjectTable = () => {
   const [totalMonthDays, setTotalMonthDays] = useState('30');
   const [daysWorkedMonthly, setDaysWorkedMonthly] = useState('20');
 
-  const rebuildMatrix = (allProjs, overrides) => {
+  // ─── DELETE STATE ───
+  const [deleteConfirm, setDeleteConfirm] = useState(null); // { project }
+  const [deleting, setDeleting] = useState(false);
+
+  const rebuildMatrix = useCallback((allProjs, overrides) => {
     const matrix = {};
     allProjs.forEach(p => {
       const uniqueYears = new Set();
@@ -166,36 +167,89 @@ const ProjectTable = () => {
       });
     });
     setTimelineData(matrix);
-  };
+  }, []);
 
-  const fetchProjects = async () => {
-    try {
-      const res = await apiFetch('https://expense-management-2-bsa7.onrender.com/api/project/all')
-      const data = await res.json()
-      setProjects(data);
-
-      const initialOverrides = {};
-      data.forEach(p => {
-        if (p.monthlyBreakdowns) {
-          p.monthlyBreakdowns.forEach(b => {
-            initialOverrides[`${p._id}_${b.month}_${b.year}`] = b;
-          });
-        }
-      });
-
-      setMonthlyOverrides(initialOverrides);
-      rebuildMatrix(data, initialOverrides);
-    } catch (err) {
-      setError('Failed to fetch structural project metrics.');
-    } finally {
-      setLoading(false);
-    }
-  };
+  const parseServerData = useCallback((data) => {
+    const initialOverrides = {};
+    data.forEach(p => {
+      if (p.monthlyBreakdowns) {
+        p.monthlyBreakdowns.forEach(b => {
+          initialOverrides[`${p._id}_${b.month}_${b.year}`] = b;
+        });
+      }
+    });
+    setMonthlyOverrides(initialOverrides);
+    rebuildMatrix(data, initialOverrides);
+  }, [rebuildMatrix]);
 
   useEffect(() => {
-    const load = async () => { await fetchProjects(); };
-    load();
-  }, []);
+    const fetchProjects = async () => {
+      try {
+        const cached = sessionStorage.getItem(PROJECT_CACHE_KEY);
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          setProjects(parsed);
+          parseServerData(parsed);
+          setLoading(false);
+          return;
+        }
+
+        const res = await fetch('http://localhost:5000/api/project/all');
+        const data = await res.json();
+        
+        sessionStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(data));
+        setProjects(data);
+        parseServerData(data);
+      } catch (err) {
+        setError('Failed to fetch structural project metrics.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchProjects();
+  }, [parseServerData]);
+
+  // ─── DELETE HANDLER ───
+  const confirmDelete = async () => {
+    if (!deleteConfirm) return;
+    const { project } = deleteConfirm;
+    setDeleting(true);
+
+    try {
+      const res = await fetch(`http://localhost:5000/api/project/delete/${project._id}`, {
+        method: 'DELETE',
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.message || 'Delete failed');
+      }
+
+      // Optimistic removal from state + cache
+      setProjects(prev => {
+        const updated = prev.filter(p => p._id !== project._id);
+        sessionStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(updated));
+
+        // Clean up overrides for this project
+        setMonthlyOverrides(prevOvr => {
+          const cleaned = { ...prevOvr };
+          Object.keys(cleaned).forEach(k => {
+            if (k.startsWith(`${project._id}_`)) delete cleaned[k];
+          });
+          rebuildMatrix(updated, cleaned);
+          return cleaned;
+        });
+
+        return updated;
+      });
+
+      setDeleteConfirm(null);
+    } catch (err) {
+      alert(`Failed to delete project: ${err.message}`);
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const openCalculatorModal = (project, month, year) => {
     const type = (project.projectType || 'monthly').toLowerCase().trim();
@@ -244,14 +298,34 @@ const ProjectTable = () => {
     };
 
     setMonthlyOverrides(updatedOverride);
-    rebuildMatrix(projects, updatedOverride);
+    
+    setProjects(prevProjects => {
+      const nextProjs = prevProjects.map(p => {
+        if (p._id !== project._id) return p;
+        const currentBreakdowns = [...(p.monthlyBreakdowns || [])];
+        const existingIdx = currentBreakdowns.findIndex(b => b.month === month && b.year === year);
+        const newBreakdownItem = { month, year, amt: calculatedAmt, paid: existingPaid, ...payloadMetrics };
+        
+        if (existingIdx > -1) {
+          currentBreakdowns[existingIdx] = { ...currentBreakdowns[existingIdx], ...newBreakdownItem };
+        } else {
+          currentBreakdowns.push(newBreakdownItem);
+        }
+        return { ...p, monthlyBreakdowns: currentBreakdowns };
+      });
+      sessionStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(nextProjs));
+      rebuildMatrix(nextProjs, updatedOverride);
+      return nextProjs;
+    });
+
     setModalConfig(null);
 
     try {
-      await apiFetch(`https://expense-management-2-bsa7.onrender.com/api/project/sync-month/${project._id}`, {
+      await fetch(`http://localhost:5000/api/project/sync-month/${project._id}`, {
         method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ month, year, amt: calculatedAmt, metrics: payloadMetrics }),
-      })
+      });
     } catch(e) { console.error("Database save failed.") }
   };
 
@@ -273,14 +347,33 @@ const ProjectTable = () => {
     };
     
     setMonthlyOverrides(updatedOverride);
-    rebuildMatrix(projects, updatedOverride);
+    
+    setProjects(prevProjects => {
+      const nextProjs = prevProjects.map(p => {
+        if (p._id !== projectId) return p;
+        const currentBreakdowns = [...(p.monthlyBreakdowns || [])];
+        const existingIdx = currentBreakdowns.findIndex(b => b.month === month && b.year === year);
+        
+        if (existingIdx > -1) {
+          currentBreakdowns[existingIdx] = { ...currentBreakdowns[existingIdx], paid: val };
+        } else {
+          currentBreakdowns.push({ month, year, amt: 0, paid: val });
+        }
+        return { ...p, monthlyBreakdowns: currentBreakdowns };
+      });
+      sessionStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(nextProjs));
+      rebuildMatrix(nextProjs, updatedOverride);
+      return nextProjs;
+    });
+
     setEditingPayment(null);
 
     try {
-      await apiFetch(`https://expense-management-2-bsa7.onrender.com/api/project/sync-month/${projectId}`, {
+      await fetch(`http://localhost:5000/api/project/sync-month/${projectId}`, {
         method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ month, year, paid: val }),
-      })
+      });
     } catch (err) { console.error('Failed processing payment alignment.', err); }
   };
 
@@ -327,7 +420,7 @@ const ProjectTable = () => {
         }
         .col-name {
           position: sticky; left: 0; z-index: 3; background: #fffdf8;
-          min-width: 230px; max-width: 230px; border-right: 1.5px solid #e8dece;
+          min-width: 255px; max-width: 255px; border-right: 1.5px solid #e8dece;
         }
         .col-name.head { background: #faf6ee; z-index: 4; }
 
@@ -440,6 +533,24 @@ const ProjectTable = () => {
         }
         .add-proj-btn:hover { background: #b5672f; transform: translateY(-1px); }
         .add-proj-btn:active { transform: translateY(0); }
+
+        .delete-proj-btn {
+          width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+          border: 1.5px solid transparent; background: transparent;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; color: #c5b49e;
+          transition: background 0.15s, border-color 0.15s, color 0.15s;
+          padding: 0;
+        }
+        .delete-proj-btn:hover {
+          background: #fdf0ea; border-color: #e8b89a; color: #c0522a;
+        }
+
+        .delete-modal-box {
+          background: #fffdf8; padding: 28px 26px; border-radius: 18px; width: 380px;
+          box-shadow: 0 20px 40px rgba(160,130,90,0.18), 0 2px 0 #e2d9c8;
+          border: 1.5px solid #e8dece;
+        }
       `}</style>
 
       {/* Page Header */}
@@ -472,7 +583,6 @@ const ProjectTable = () => {
         </button>
       </div>
 
-      {/* Empty state */}
       {projects.length === 0 && (
         <div style={{ textAlign: 'center', padding: '60px 0', color: '#b0a090' }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
@@ -512,7 +622,6 @@ const ProjectTable = () => {
             overflow: 'hidden',
             boxShadow: '0 2px 0 #e2d9c8, 0 6px 24px rgba(160,130,90,0.07)',
           }}>
-            {/* Year header */}
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '14px 22px',
@@ -555,7 +664,6 @@ const ProjectTable = () => {
               </div>
             </div>
 
-            {/* Table */}
             <div style={{ padding: 20, background: '#fffdf8' }}>
               <div className="proj-table-scroll">
                 <table className="proj-table">
@@ -607,11 +715,12 @@ const ProjectTable = () => {
 
                       return (
                         <tr key={project._id} className="proj-data-row" style={{ borderBottom: '1px solid #f0ebe0' }}>
+                          {/* ─── PROJECT NAME CELL with delete button ─── */}
                           <td className="col-name td-proj-name">
                             <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                               <ProjectAvatar name={project.projectName || '?'} />
-                              <div>
-                                <div style={{ fontSize: 13, fontWeight: 500, color: '#2e2318', fontFamily: "'DM Sans', sans-serif" }}>
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{ fontSize: 13, fontWeight: 500, color: '#2e2318', fontFamily: "'DM Sans', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                   {project.projectName}
                                 </div>
                                 <div style={{ fontSize: 10, color: '#b0a090', marginTop: 2, fontFamily: "'DM Sans', sans-serif" }}>
@@ -626,6 +735,22 @@ const ProjectTable = () => {
                                   </span>
                                 </div>
                               </div>
+                              {/* Delete button */}
+                              <button
+                                className="delete-proj-btn"
+                                title="Delete project"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteConfirm({ project });
+                                }}
+                              >
+                                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="3 6 5 6 21 6"/>
+                                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                                  <path d="M10 11v6M14 11v6"/>
+                                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                                </svg>
+                              </button>
                             </div>
                           </td>
 
@@ -679,7 +804,6 @@ const ProjectTable = () => {
                       );
                     })}
 
-                    {/* Monthly totals footer row */}
                     <tr className="proj-totals-row">
                       <td
                         className="col-name"
@@ -731,7 +855,7 @@ const ProjectTable = () => {
         Unpaid balance carries forward
       </p>
 
-      {/* Configuration Modal */}
+      {/* ─── CALCULATOR MODAL ─── */}
       {modalConfig && (
         <div className="proj-modal-overlay">
           <div className="proj-modal-box">
@@ -827,6 +951,116 @@ const ProjectTable = () => {
                 }}
               >
                 Save & Compute
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ─── DELETE CONFIRMATION MODAL ─── */}
+      {deleteConfirm && (
+        <div className="proj-modal-overlay" onClick={() => !deleting && setDeleteConfirm(null)}>
+          <div className="delete-modal-box" onClick={e => e.stopPropagation()}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+              <div style={{
+                width: 40, height: 40, borderRadius: 12, flexShrink: 0,
+                background: '#fdf0ea', border: '1.5px solid #e8b89a',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
+              }}>
+                🗑️
+              </div>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: '#2e2318', fontFamily: "'Lora', serif" }}>
+                  Delete Project
+                </div>
+                <div style={{ fontSize: 11, color: '#9a8775', marginTop: 2, fontFamily: "'DM Sans', sans-serif" }}>
+                  This action cannot be undone
+                </div>
+              </div>
+            </div>
+
+            {/* Project preview */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 10,
+              background: '#faf6ee', border: '1.5px solid #e8dece',
+              borderRadius: 10, padding: '10px 14px', marginBottom: 18,
+            }}>
+              <ProjectAvatar name={deleteConfirm.project.projectName || '?'} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 500, color: '#2e2318', fontFamily: "'DM Sans', sans-serif" }}>
+                  {deleteConfirm.project.projectName}
+                </div>
+                <div style={{ fontSize: 10, color: '#b0a090', marginTop: 2, fontFamily: "'DM Sans', sans-serif" }}>
+                  <span style={{
+                    background: '#fdf3e7', border: '1px solid #f0c490',
+                    color: '#a05e2a', borderRadius: 4, padding: '1px 5px',
+                    fontFamily: 'monospace', fontSize: 9, fontWeight: 600,
+                    textTransform: 'uppercase', display: 'inline-block',
+                  }}>
+                    {deleteConfirm.project.projectType || 'monthly'}
+                  </span>
+                  {deleteConfirm.project.expectedAmount > 0 && (
+                    <span style={{ marginLeft: 6 }}>
+                      {fmt(deleteConfirm.project.expectedAmount)} total
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <p style={{
+              fontSize: 12, color: '#9a8775', margin: '0 0 20px',
+              fontFamily: "'DM Sans', sans-serif", lineHeight: 1.6,
+            }}>
+              All monthly breakdowns and payment records for this project will be permanently removed.
+            </p>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                onClick={() => setDeleteConfirm(null)}
+                disabled={deleting}
+                style={{
+                  padding: '8px 16px', background: '#f5f0e8',
+                  border: '1.5px solid #e8dece', borderRadius: 8,
+                  fontSize: 12, cursor: deleting ? 'not-allowed' : 'pointer',
+                  fontWeight: 500, color: '#8c7a68',
+                  fontFamily: "'DM Sans', sans-serif",
+                  opacity: deleting ? 0.6 : 1,
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                disabled={deleting}
+                style={{
+                  padding: '8px 18px',
+                  background: deleting ? '#d4a090' : '#c0522a',
+                  border: 'none', borderRadius: 8,
+                  fontSize: 12, cursor: deleting ? 'not-allowed' : 'pointer',
+                  fontWeight: 600, color: '#fff',
+                  fontFamily: "'DM Sans', sans-serif",
+                  boxShadow: deleting ? 'none' : '0 2px 0 #8c3010',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  transition: 'background 0.15s',
+                }}
+              >
+                {deleting ? (
+                  <>
+                    <div style={{ width: 12, height: 12, border: '2px solid #fff6', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+                    Deleting…
+                  </>
+                ) : (
+                  <>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6"/>
+                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
+                      <path d="M10 11v6M14 11v6"/>
+                      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                    </svg>
+                    Delete Project
+                  </>
+                )}
               </button>
             </div>
           </div>

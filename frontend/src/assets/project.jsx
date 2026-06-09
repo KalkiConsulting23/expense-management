@@ -1,6 +1,5 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom"; // ← ADDED
-import { useApi } from "../utils/api";
+import { useNavigate } from "react-router-dom";
 
 const CURRENCIES = [
   { value: "INR", symbol: "₹", label: "INR (₹)" },
@@ -8,6 +7,7 @@ const CURRENCIES = [
 ];
 
 const USD_TO_INR = 83.5;
+const PROJECT_CACHE_KEY = 'local_project_data_cache';
 
 const typeConfig = {
   hourly:  { icon: "⏱", label: "Hourly" },
@@ -16,8 +16,7 @@ const typeConfig = {
 };
 
 const AddProject = () => {
-  const { apiFetch } = useApi();
-  const navigate = useNavigate(); // ← ADDED
+  const navigate = useNavigate();
   const [formData, setFormData] = useState({
     projectName: "", projectType: "", currency: "INR",
     startDate: "", endDate: "", expectedAmount: "",
@@ -75,8 +74,10 @@ const AddProject = () => {
 
     setLoading(true);
     try {
-      const res = await apiFetch("https://expense-management-2-bsa7.onrender.com/api/project/add", {
+      // Replaced old custom apiFetch hook layer with clean native fetch code
+      const res = await fetch("http://localhost:5000/api/project/add", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
       if (!res.ok) {
@@ -85,15 +86,19 @@ const AddProject = () => {
         return;
       }
       await res.json();
+
+      // SMART CACHE INVALIDATION
+      sessionStorage.removeItem(PROJECT_CACHE_KEY);
+
       setSuccess(true);
       setFormData({ projectName: "", projectType: "", currency: "INR", startDate: "", endDate: "", expectedAmount: "" });
       setErrors({});
       setTimeout(() => {
         setSuccess(false);
-        navigate("/projecttable"); // ← ADDED: redirect after toast
+        navigate("/projecttable");
       }, 3500);
     } catch (err) {
-      alert("Network error — is the server running?");
+      alert("Network error — is the server running locally on Port 5000?");
     } finally {
       setLoading(false);
     }
@@ -103,7 +108,7 @@ const AddProject = () => {
     setFormData({ projectName: "", projectType: "", currency: "INR", startDate: "", endDate: "", expectedAmount: "" });
     setErrors({});
     setSuccess(false);
-    navigate("/projecttable"); // ← ADDED: redirect on cancel
+    navigate("/projecttable");
   };
 
   const sym = formData.currency === "USD" ? "$" : "₹";
@@ -175,7 +180,7 @@ const AddProject = () => {
               <div className="ap-success-icon">✓</div>
               <div>
                 <div className="ap-success-title">Project added successfully!</div>
-                <div className="ap-success-sub">Redirecting to projects...</div> {/* ← UPDATED text */}
+                <div className="ap-success-sub">Redirecting to projects...</div>
               </div>
             </div>
           )}

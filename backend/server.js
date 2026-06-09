@@ -11,14 +11,14 @@ app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const { requireAuth } = require("./middleware/authmiddleware");  // ← small m
+// ── REMOVED AUTH MIDDLEWARE ──────────────────────────────
+// The old authmiddleware import and global app.use block have been removed
 
 const employeeRoutes = require("./routes/employeeRoutes");
 const projectRoutes = require("./routes/projectRoute");
 const salesRoutes = require("./routes/salesRoute");
 
-app.use("/api", requireAuth);
-
+// Routes are now completely direct and accessible without auth checks
 app.use("/api/employee", employeeRoutes);
 app.use("/api/project", projectRoutes);
 app.use("/api/sales", salesRoutes);

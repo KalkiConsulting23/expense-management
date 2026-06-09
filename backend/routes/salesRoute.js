@@ -1,13 +1,13 @@
 const express = require('express')
-const router = express.Router()
+const router = require('express').Router()
 const Sales = require('../models/sales')
 
 // ── CREATE ──────────────────────────────────────────────
 router.post('/', async (req, res) => {
   try {
+    // Removed userId assignment completely
     const sale = new Sales({ 
-      ...req.body, 
-      userId: req.userId   // ← ADD THIS
+      ...req.body
     })
     const saved = await sale.save()
     res.status(201).json(saved)
@@ -19,7 +19,8 @@ router.post('/', async (req, res) => {
 // ── READ ALL ─────────────────────────────────────────────
 router.get('/', async (req, res) => {
   try {
-    const sales = await Sales.find({ userId: req.userId }).sort({ createdAt: -1 })  // ← FILTER
+    // Removed userId filtering to fetch all sales locally
+    const sales = await Sales.find({}).sort({ createdAt: -1 })
     res.status(200).json(sales)
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -29,8 +30,8 @@ router.get('/', async (req, res) => {
 // ── READ ONE ─────────────────────────────────────────────
 router.get('/:id', async (req, res) => {
   try {
-    // ← userId check ensures you can only fetch your own sale
-    const sale = await Sales.findOne({ _id: req.params.id, userId: req.userId })
+    // Removed userId check, looking up purely via the document ID
+    const sale = await Sales.findOne({ _id: req.params.id })
     if (!sale) return res.status(404).json({ error: 'Sale not found' })
     res.status(200).json(sale)
   } catch (err) {
@@ -41,8 +42,9 @@ router.get('/:id', async (req, res) => {
 // ── UPDATE ───────────────────────────────────────────────
 router.put('/:id', async (req, res) => {
   try {
+    // Removed userId filter criteria
     const updated = await Sales.findOneAndUpdate(
-      { _id: req.params.id, userId: req.userId },  // ← FILTER
+      { _id: req.params.id },
       { ...req.body },
       { new: true, runValidators: true }
     )
@@ -56,8 +58,9 @@ router.put('/:id', async (req, res) => {
 // ── DELETE ───────────────────────────────────────────────
 router.delete('/:id', async (req, res) => {
   try {
+    // Removed userId check constraint layer
     const deleted = await Sales.findOneAndDelete(
-      { _id: req.params.id, userId: req.userId }  // ← FILTER
+      { _id: req.params.id }
     )
     if (!deleted) return res.status(404).json({ error: 'Sale not found' })
     res.status(200).json({ message: 'Sale deleted successfully' })

@@ -1,6 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { useUser, useClerk } from '@clerk/clerk-react'
 
 const Navbar = () => {
   const navigate = useNavigate()
@@ -10,20 +9,6 @@ const Navbar = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const dropdownRef = useRef(null)
   const analyticsRef = useRef(null)
-
-  const { user } = useUser()
-  const { signOut } = useClerk()
-
-  const getInitials = (name) => {
-    if (!name) return '?'
-    const parts = name.trim().split(' ')
-    if (parts.length === 1) return parts[0][0].toUpperCase()
-    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-  }
-
-  const handleLogout = () => {
-    signOut(() => navigate('/login'))
-  }
 
   const navItems = [
     {
@@ -62,12 +47,8 @@ const Navbar = () => {
 
   useEffect(() => {
     function handleClickOutside(e) {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
-        setDropdownOpen(false)
-      }
-      if (analyticsRef.current && !analyticsRef.current.contains(e.target)) {
-        setAnalyticsOpen(false)
-      }
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setDropdownOpen(false)
+      if (analyticsRef.current && !analyticsRef.current.contains(e.target)) setAnalyticsOpen(false)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
@@ -95,55 +76,55 @@ const Navbar = () => {
     <>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&display=swap');
-
         *, *::before, *::after { box-sizing: border-box; }
 
+        /*
+          Hamburger: position fixed, flush to top-left corner of viewport.
+          top/left are 0 so there's zero gap — the button itself provides
+          visual breathing room via its own padding and border-radius.
+          It sits at z-index 200 so it's always above the sidebar (z:100).
+        */
         .hamburger-btn {
           position: fixed;
-          top: 16px;
-          left: 16px;
+          top: 0;
+          left: 0;
           z-index: 200;
-          width: 42px;
-          height: 42px;
-          border-radius: 10px;
-          border: 1.5px solid #e8dece;
+          width: 40px;
+          height: 40px;
+          border-radius: 0 0 10px 0;
+          border: none;
+          border-right: 1.5px solid #e8dece;
+          border-bottom: 1.5px solid #e8dece;
           background: #fffdf8;
           display: flex;
           align-items: center;
           justify-content: center;
           cursor: pointer;
-          transition: all 0.2s ease;
-          box-shadow: 0 2px 0 #e2d9c8;
+          transition: background 0.18s ease;
+          box-shadow: 2px 2px 0 #e2d9c8;
         }
         .hamburger-btn:hover {
-          background: #f5ede0;
-          border-color: #c97844;
-          box-shadow: 0 2px 8px rgba(160,130,90,0.15);
+          background: #fdf0e0;
+        }
+        .hamburger-btn.open {
+          background: #fdf0e0;
+          border-color: #d4b090;
         }
         .hamburger-lines {
           display: flex;
           flex-direction: column;
-          gap: 5px;
-          width: 18px;
+          gap: 4px;
+          width: 16px;
         }
         .hamburger-lines span {
           display: block;
-          height: 2px;
+          height: 1.5px;
           border-radius: 2px;
           background: #c97844;
-          transition: all 0.25s ease;
-          transform-origin: center;
+          transition: none;
         }
-        .hamburger-btn.open .hamburger-lines span:nth-child(1) {
-          transform: translateY(7px) rotate(45deg);
-        }
-        .hamburger-btn.open .hamburger-lines span:nth-child(2) {
-          opacity: 0;
-          transform: scaleX(0);
-        }
-        .hamburger-btn.open .hamburger-lines span:nth-child(3) {
-          transform: translateY(-7px) rotate(-45deg);
-        }
+
+        /* Overlay covers everything except the hamburger (which is z:200) */
         .sidebar-overlay {
           position: fixed;
           inset: 0;
@@ -156,9 +137,12 @@ const Navbar = () => {
           from { opacity: 0; }
           to   { opacity: 1; }
         }
+
+        /* Sidebar slides in from the left, starts below the hamburger height */
         .navbar {
           position: fixed;
-          top: 0; left: 0;
+          top: 0;
+          left: 0;
           height: 100vh;
           width: 240px;
           background: #fffdf8;
@@ -174,21 +158,28 @@ const Navbar = () => {
         .navbar.open {
           transform: translateX(0);
         }
+
+        /*
+          Brand row sits at the very top of the sidebar.
+          Left-pad is 68px (58px hamburger + 10px gap) so the brand text
+          never sits under the hamburger button when sidebar is open.
+        */
         .navbar-brand {
           display: flex;
           align-items: center;
           gap: 11px;
-          padding: 22px 18px 20px;
+          padding: 0 18px 0 50px;
+          height: 40px;
           cursor: pointer;
           border-bottom: 1.5px solid #e8dece;
           flex-shrink: 0;
         }
         .brand-logo {
-          width: 36px; height: 36px;
-          border-radius: 10px;
+          width: 30px; height: 30px;
+          border-radius: 8px;
           background: #c97844;
           display: flex; align-items: center; justify-content: center;
-          font-size: 12px; font-weight: 700;
+          font-size: 11px; font-weight: 700;
           color: #fff;
           flex-shrink: 0;
           font-family: 'DM Sans', sans-serif;
@@ -196,7 +187,7 @@ const Navbar = () => {
         .brand-text { display: flex; flex-direction: column; line-height: 1.2; }
         .brand-name {
           font-family: 'Lora', serif;
-          font-size: 13px; font-weight: 600;
+          font-size: 12px; font-weight: 600;
           color: #2e2318;
         }
         .brand-sub {
@@ -206,6 +197,7 @@ const Navbar = () => {
           text-transform: uppercase;
           margin-top: 2px;
         }
+
         .navbar-inner {
           flex: 1;
           overflow-y: auto;
@@ -216,6 +208,7 @@ const Navbar = () => {
           scrollbar-width: none;
         }
         .navbar-inner::-webkit-scrollbar { display: none; }
+
         .nav-section-label {
           font-size: 10px;
           font-weight: 500;
@@ -282,6 +275,7 @@ const Navbar = () => {
         .nav-add-btn-left { display: flex; align-items: center; gap: 8px; }
         .nav-add-chevron { color: rgba(255,255,255,0.7); transition: transform 0.15s ease; }
         .nav-add-chevron.open { transform: rotate(180deg); }
+
         .nav-analytics-wrapper { position: relative; margin-top: 6px; }
         .nav-analytics-btn {
           display: flex;
@@ -309,6 +303,7 @@ const Navbar = () => {
         .nav-analytics-btn-left { display: flex; align-items: center; gap: 8px; }
         .nav-analytics-chevron { color: #c5b49e; transition: transform 0.15s ease; }
         .nav-analytics-chevron.open { transform: rotate(180deg); }
+
         .nav-add-dropdown {
           background: #fffdf8;
           border: 1.5px solid #e0d4c0;
@@ -340,32 +335,15 @@ const Navbar = () => {
         }
         .nav-add-dropdown-item:hover { background: #f5ede0; color: #2e2318; }
         .nav-add-dropdown-divider { height: 1px; background: #e8dece; }
+
         .sidebar-user {
           display: flex;
-          align-items: center;
-          gap: 10px;
-          padding: 14px 16px;
+          flex-direction: column;
+          gap: 4px;
+          padding: 16px 18px;
           border-top: 1.5px solid #e8dece;
           flex-shrink: 0;
         }
-        .user-avatar {
-          width: 34px; height: 34px;
-          border-radius: 50%;
-          background: #fff2e8;
-          border: 1.5px solid #e0d4c0;
-          display: flex; align-items: center; justify-content: center;
-          font-size: 11px; font-weight: 600;
-          color: #c97844;
-          flex-shrink: 0;
-          font-family: 'DM Sans', sans-serif;
-          overflow: hidden;
-        }
-        .user-avatar img {
-          width: 100%; height: 100%;
-          object-fit: cover;
-          border-radius: 50%;
-        }
-        .user-info { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; flex: 1; }
         .user-name {
           font-family: 'Lora', serif;
           font-size: 13px; font-weight: 600;
@@ -377,26 +355,10 @@ const Navbar = () => {
           color: #b08a5e;
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
           text-transform: uppercase; letter-spacing: 0.8px;
-          margin-top: 1px;
-        }
-        .logout-btn {
-          width: 30px; height: 30px;
-          border-radius: 8px;
-          border: 1.5px solid #e0d4c0;
-          background: #faf6ee;
-          display: flex; align-items: center; justify-content: center;
-          cursor: pointer;
-          color: #b08a5e;
-          flex-shrink: 0;
-          transition: all 0.15s;
-        }
-        .logout-btn:hover {
-          background: #fff0f0;
-          border-color: #e07070;
-          color: #c0392b;
         }
       `}</style>
 
+      {/* ─── HAMBURGER — snaps flush to top-left corner ─── */}
       <button
         className={`hamburger-btn${sidebarOpen ? ' open' : ''}`}
         onClick={() => setSidebarOpen(prev => !prev)}
@@ -413,6 +375,11 @@ const Navbar = () => {
 
       <nav className={`navbar${sidebarOpen ? ' open' : ''}`}>
 
+        {/*
+          Brand row height = 58px (same as hamburger).
+          Left padding = 68px so brand never sits under the hamburger chip.
+          This makes the top bar feel intentional rather than accidental.
+        */}
         <div className="navbar-brand" onClick={() => { navigate('/'); setSidebarOpen(false) }}>
           <div className="brand-logo">KC</div>
           <div className="brand-text">
@@ -526,25 +493,9 @@ const Navbar = () => {
           </div>
         </div>
 
-        {/* ── User + Logout — Clerk powered ── */}
         <div className="sidebar-user">
-          <div className="user-avatar">
-            {user?.imageUrl
-              ? <img src={user.imageUrl} alt="avatar" />
-              : getInitials(user?.fullName)
-            }
-          </div>
-          <div className="user-info">
-            <span className="user-name">{user?.fullName || 'Loading...'}</span>
-            <span className="user-role">{user?.primaryEmailAddress?.emailAddress || ''}</span>
-          </div>
-          <button className="logout-btn" onClick={handleLogout} title="Logout">
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-              <polyline points="16 17 21 12 16 7"/>
-              <line x1="21" y1="12" x2="9" y2="12"/>
-            </svg>
-          </button>
+          <span className="user-name">Deependra Singh Kushwah</span>
+          <span className="user-role">Administrator Portal</span>
         </div>
 
       </nav>

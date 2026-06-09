@@ -8,7 +8,7 @@ router.post('/add', async (req, res) => {
     const { projectName, projectType, startDate, endDate, expectedAmount, currency } = req.body;
 
     const newProject = new Project({
-      userId: req.userId,
+      // userId removed entirely
       projectName,
       projectType,
       startDate,
@@ -28,7 +28,8 @@ router.post('/add', async (req, res) => {
 // ─── GET ALL PROJECTS ───
 router.get('/all', async (req, res) => {
   try {
-    const projects = await Project.find({ userId: req.userId });
+    // Removed userId filtering to fetch all records locally
+    const projects = await Project.find({});
     res.status(200).json(projects);
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
@@ -41,7 +42,8 @@ router.patch('/sync-month/:id', async (req, res) => {
     const { id } = req.params;
     const { month, year, amt, paid, metrics } = req.body;
 
-    const project = await Project.findOne({ _id: id, userId: req.userId });
+    // Removed userId constraint check
+    const project = await Project.findOne({ _id: id });
     if (!project) return res.status(404).json({ message: "Project not found" });
 
     const existingIndex = project.monthlyBreakdowns.findIndex(
@@ -87,11 +89,11 @@ router.delete('/delete/:id', async (req, res) => {
       return res.status(400).json({ message: "Invalid project ID." });
     }
 
-    // findOneAndDelete verifies ownership (userId) before deleting
-    const deleted = await Project.findOneAndDelete({ _id: id, userId: req.userId });
+    // Removed userId requirement to look purely for the item ID
+    const deleted = await Project.findOneAndDelete({ _id: id });
 
     if (!deleted) {
-      return res.status(404).json({ message: "Project not found or access denied." });
+      return res.status(404).json({ message: "Project not found." });
     }
 
     res.status(200).json({ message: "Project deleted successfully.", id });

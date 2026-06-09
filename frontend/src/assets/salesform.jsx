@@ -1,6 +1,5 @@
 import React, { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useApi } from '../utils/api'
 
 const defaultForm = {
   name: '',
@@ -11,9 +10,10 @@ const defaultForm = {
   comment: '',
 }
 
+const SALES_CACHE_KEY = 'local_sales_data_cache';
+
 const Salesform = () => {
   const navigate = useNavigate()
-  const { apiFetch } = useApi()
   const [form, setForm] = useState(defaultForm)
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState(null)
@@ -36,11 +36,17 @@ const Salesform = () => {
     }
     try {
       setLoading(true)
-      const res = await apiFetch('https://expense-management-2-bsa7.onrender.com/api/sales', {
+      // Swapped out custom hook engine to route cleanly through a native javascript fetch loop
+      const res = await fetch('http://localhost:5000/api/sales', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, amount: Number(form.amount) }),
       })
       if (!res.ok) throw new Error('Failed')
+
+      // SMART CACHE INVALIDATION: Wipe sales cache footprint array values safely
+      sessionStorage.removeItem(SALES_CACHE_KEY);
+
       showToast('success', 'Sale recorded successfully!')
       setForm(defaultForm)
       setTimeout(() => navigate('/salestable'), 1500)
