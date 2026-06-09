@@ -37,11 +37,11 @@ const Salesform = () => {
     try {
       setLoading(true)
       // Swapped out custom hook engine to route cleanly through a native javascript fetch loop
-      const res = await fetch('http://localhost:5000/api/sales', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, amount: Number(form.amount) }),
-      })
+      const res = await fetch('https://expense-management-7.onrender.com/api/sales', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...form, amount: Number(form.amount) }),
+    });
       if (!res.ok) throw new Error('Failed')
 
       // SMART CACHE INVALIDATION: Wipe sales cache footprint array values safely

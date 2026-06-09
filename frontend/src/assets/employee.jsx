@@ -79,7 +79,7 @@ const Employee = () => {
 
     try {
       // Replaced old custom apiFetch hook layer with native structural fetch calls
-      const response = await fetch("http://localhost:5000/api/employee/add", {
+      const response = await fetch("https://expense-management-7.onrender.com/api/employee/add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

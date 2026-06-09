@@ -633,7 +633,7 @@ const Expenseanl = () => {
     }
 
     // Rewritten with native JavaScript fetch instead of custom useApi hook wrappers
-    fetch('http://localhost:5000/api/employee/all')
+    fetch('https://expense-management-7.onrender.com/api/employee/all')
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(d => { 
         const verifiedData = Array.isArray(d) ? d : []

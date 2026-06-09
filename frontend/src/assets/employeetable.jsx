@@ -582,7 +582,7 @@ const EmployeeTable = () => {
           return
         }
 
-        const res  = await fetch('http://localhost:5000/api/employee/all')
+        const res  = await fetch('https://expense-management-7.onrender.com/api/employee/all')
         const data = await res.json()
         
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(data))
@@ -637,7 +637,7 @@ const EmployeeTable = () => {
       })
 
       setSavingCell({ empId, month, year })
-      fetch(`http://localhost:5000/api/employee/update-payment/${empId}`, {
+      fetch(`https://expense-management-7.onrender.com/api/employee/update-payment/${empId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ year, month, paid: newVal }),
@@ -657,7 +657,7 @@ const EmployeeTable = () => {
     if (!deleteTarget) return
     setDeleting(true)
     try {
-      await fetch(`http://localhost:5000/api/employee/delete/${deleteTarget._id}`, {
+      await fetch(`https://expense-management-7.onrender.com/api/employee/delete/${deleteTarget._id}`, {
         method: 'DELETE'
       })
       
