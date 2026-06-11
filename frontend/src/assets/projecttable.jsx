@@ -323,7 +323,7 @@ const ProjectTable = () => {
       payloadMetrics = { totalMonthDays, daysWorkedMonthly, includeGst };
     }
 
-    const existingPaid = monthlyOverrides[key]?.paid !== undefined ? monthlyOverrides[key].paid : calculatedAmt;
+    const existingPaid = monthlyOverrides[key]?.paid !== undefined ? monthlyOverrides[key].paid : 0;
 
     const updatedOverride = {
       ...monthlyOverrides,
