@@ -1,7 +1,6 @@
 import React, { lazy, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 
-// ─── LAZY LOADING COMPONENTS ─────────────────────────────────────────────────
 const Navbar        = lazy(() => import('./assets/Navbar'))
 const Employee      = lazy(() => import('./assets/employee'))
 const Project       = lazy(() => import('./assets/project'))
@@ -12,6 +11,7 @@ const Salestable    = lazy(() => import('./assets/salestable'))
 const Salesanl      = lazy(() => import('./assets/salesanl'))
 const Projectanl    = lazy(() => import('./assets/projectanl'))
 const Expenseanl    = lazy(() => import('./assets/expenseanl'))
+const Expensemaster = lazy(() => import('./assets/expensemaster'))
 
 const PageLoader = () => (
   <div style={{
@@ -33,29 +33,23 @@ function App() {
   return (
     <BrowserRouter>
       <Suspense fallback={<PageLoader />}>
-        {/*
-          Layout: Navbar is a fixed overlay sidebar + floating hamburger.
-          Page content sits in a full-bleed div with NO top padding —
-          each page manages its own internal spacing.
-          The hamburger button is 42px and sits at top:0 left:0, fully
-          within the page's own padding zone (pages use padding: '36px 24px',
-          so the 42px button is contained without any wrapper gap).
-        */}
         <Navbar />
         <div style={{ minHeight: '100vh', background: '#f5f0e8' }}>
           <Routes>
-            <Route path="/"            element={<EmployeeTable />} />
-            <Route path="/employee"    element={<Employee />} />
+            <Route path="/"               element={<EmployeeTable />} />
+            <Route path="/employee"       element={<Employee />} />
 
-            <Route path="/projecttable" element={<Projecttable />} />
-            <Route path="/project"      element={<Project />} />
+            <Route path="/projecttable"   element={<Projecttable />} />
+            <Route path="/project"        element={<Project />} />
 
-            <Route path="/salesform"   element={<Salesform />} />
-            <Route path="/salestable"  element={<Salestable />} />
+            <Route path="/salesform"      element={<Salesform />} />
+            <Route path="/salestable"     element={<Salestable />} />
 
-            <Route path="/salesanl"    element={<Salesanl />} />
-            <Route path="/projectanl"  element={<Projectanl />} />
-            <Route path="/expenseanl"  element={<Expenseanl />} />
+            <Route path="/salesanl"       element={<Salesanl />} />
+            <Route path="/projectanl"     element={<Projectanl />} />
+            <Route path="/expenseanl"     element={<Expenseanl />} />
+
+            <Route path="/expensemaster"  element={<Expensemaster />} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

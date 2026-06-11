@@ -6,6 +6,107 @@ const CACHE_KEY = 'local_employee_data_cache'
 
 const fmt = (n) => '₹' + Number(n).toLocaleString('en-IN')
 
+// ─── Period filter config ────────────────────────────────────────────────────
+const PERIOD_OPTIONS = [
+  { label: 'Full Year', value: 'full', months: MONTHS },
+  { label: 'H1',        value: 'h1',   months: ['Jan','Feb','Mar','Apr','May','Jun'] },
+  { label: 'H2',        value: 'h2',   months: ['Jul','Aug','Sep','Oct','Nov','Dec'] },
+  { label: 'Q1',        value: 'q1',   months: ['Jan','Feb','Mar'] },
+  { label: 'Q2',        value: 'q2',   months: ['Apr','May','Jun'] },
+  { label: 'Q3',        value: 'q3',   months: ['Jul','Aug','Sep'] },
+  { label: 'Q4',        value: 'q4',   months: ['Oct','Nov','Dec'] },
+]
+
+function getMonthsForPeriod(periodValue) {
+  return PERIOD_OPTIONS.find(p => p.value === periodValue)?.months || MONTHS
+}
+
+function getMonthIndex(monthName) {
+  return MONTHS.indexOf(monthName)
+}
+
+// ─── Period Dropdown ─────────────────────────────────────────────────────────
+const PeriodDropdown = memo(function PeriodDropdown({ value, onChange, year }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const selected = PERIOD_OPTIONS.find(p => p.value === value) || PERIOD_OPTIONS[0]
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+      <button
+        onClick={(e) => { e.stopPropagation(); setOpen(p => !p) }}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          background: open ? '#f5ece0' : '#faf6ee',
+          border: '1.5px solid #e8dece', borderRadius: 10,
+          padding: '4px 11px 4px 12px', cursor: 'pointer',
+          fontFamily: "'DM Sans', sans-serif", fontSize: 11, fontWeight: 500,
+          color: '#7a6858', transition: 'all 0.15s',
+          boxShadow: open ? '0 2px 8px rgba(160,130,90,0.15)' : 'none',
+          whiteSpace: 'nowrap',
+        }}
+      >
+        <span style={{ fontSize: 10, color: '#b08a5e' }}>📅</span>
+        <span style={{ color: '#2e2318', fontWeight: 600 }}>{selected.label}</span>
+        <span style={{
+          fontSize: 8, color: '#c5b49e',
+          transform: open ? 'rotate(180deg)' : 'rotate(0deg)',
+          transition: 'transform 0.15s', display: 'inline-block',
+        }}>▼</span>
+      </button>
+
+      {open && (
+        <div
+          onClick={e => e.stopPropagation()}
+          style={{
+            position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 100,
+            background: '#fffdf8', border: '1.5px solid #e8dece', borderRadius: 14,
+            boxShadow: '0 8px 28px rgba(160,130,90,0.18)', overflow: 'hidden',
+            minWidth: 160, fontFamily: "'DM Sans', sans-serif",
+          }}
+        >
+          {/* header */}
+          <div style={{ padding: '8px 14px 6px', borderBottom: '1px solid #f0ebe0', fontSize: 10, color: '#b08a5e', letterSpacing: 1, textTransform: 'uppercase', fontWeight: 500 }}>
+            Filter · {year}
+          </div>
+          {PERIOD_OPTIONS.map((opt) => {
+            const isActive = opt.value === value
+            return (
+              <div
+                key={opt.value}
+                onClick={() => { onChange(opt.value); setOpen(false) }}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  padding: '8px 14px', cursor: 'pointer',
+                  background: isActive ? '#fdf3e7' : 'transparent',
+                  borderLeft: isActive ? '3px solid #c97844' : '3px solid transparent',
+                  transition: 'background 0.1s',
+                }}
+                onMouseEnter={e => { if (!isActive) e.currentTarget.style.background = '#faf6ee' }}
+                onMouseLeave={e => { if (!isActive) e.currentTarget.style.background = 'transparent' }}
+              >
+                <span style={{ fontSize: 12, fontWeight: isActive ? 600 : 400, color: isActive ? '#a05e2a' : '#4a3c30' }}>
+                  {opt.label}
+                </span>
+                <span style={{ fontSize: 10, color: '#c5b49e', marginLeft: 8 }}>
+                  {opt.months[0]}–{opt.months[opt.months.length - 1]}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+})
+
+// ─── Core helpers ─────────────────────────────────────────────────────────────
 function parseUTCDate(dateStr) {
   const d = new Date(dateStr)
   return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
@@ -30,7 +131,7 @@ function buildMonthData(emp, year, paidMap = {}) {
       return
     }
     const amt  = emp.amount + carry
-    const paid = paidMap[m] !== undefined ? paidMap[m] : Math.max(0, amt)
+    const paid = paidMap[m] !== undefined ? paidMap[m] : 0
     carry = amt - paid
     result[m] = { amt, paid, carry, active: true }
   })
@@ -69,6 +170,7 @@ function groupByExpenseType(expenses) {
   }, {})
 }
 
+// ─── Shared sub-components ────────────────────────────────────────────────────
 const Avatar = memo(function Avatar({ name = '' }) {
   const palette = ['#c97844','#b08a5e','#8c7a68','#a05e2a','#7a6050','#d4a070','#9a8775','#b5672f']
   const color   = palette[name.charCodeAt(0) % palette.length]
@@ -92,8 +194,7 @@ const DeleteModal = memo(function DeleteModal({ expense, onConfirm, onCancel, de
       style={{
         position: 'fixed', inset: 0, zIndex: 1000,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: 'rgba(46,35,24,0.35)',
-        backdropFilter: 'blur(3px)',
+        background: 'rgba(46,35,24,0.35)', backdropFilter: 'blur(3px)',
       }}
       onClick={onCancel}
     >
@@ -106,22 +207,10 @@ const DeleteModal = memo(function DeleteModal({ expense, onConfirm, onCancel, de
           fontFamily: "'DM Sans', sans-serif",
         }}
       >
-        <div style={{
-          width: 52, height: 52, borderRadius: 14, background: '#fff4f0',
-          border: '1.5px solid #f0c4b0', display: 'flex', alignItems: 'center',
-          justifyContent: 'center', fontSize: 22, marginBottom: 16,
-        }}>🗑️</div>
-
-        <div style={{ fontSize: 17, fontWeight: 600, color: '#2e2318', fontFamily: "'Lora', serif", marginBottom: 8 }}>
-          Delete Expense?
-        </div>
-        <div style={{ fontSize: 13, color: '#9a8775', marginBottom: 6, lineHeight: 1.5 }}>
-          You're about to delete:
-        </div>
-        <div style={{
-          background: '#faf6ee', border: '1.5px solid #e8dece',
-          borderRadius: 12, padding: '12px 16px', marginBottom: 20,
-        }}>
+        <div style={{ width: 52, height: 52, borderRadius: 14, background: '#fff4f0', border: '1.5px solid #f0c4b0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, marginBottom: 16 }}>🗑️</div>
+        <div style={{ fontSize: 17, fontWeight: 600, color: '#2e2318', fontFamily: "'Lora', serif", marginBottom: 8 }}>Delete Expense?</div>
+        <div style={{ fontSize: 13, color: '#9a8775', marginBottom: 6, lineHeight: 1.5 }}>You're about to delete:</div>
+        <div style={{ background: '#faf6ee', border: '1.5px solid #e8dece', borderRadius: 12, padding: '12px 16px', marginBottom: 20 }}>
           <div style={{ fontSize: 14, fontWeight: 600, color: '#2e2318' }}>{expense.expenseName}</div>
           <div style={{ fontSize: 12, color: '#b08a5e', marginTop: 4 }}>
             {expense.expenseType} &nbsp;·&nbsp;
@@ -129,42 +218,11 @@ const DeleteModal = memo(function DeleteModal({ expense, onConfirm, onCancel, de
             {expense.type === 'recurring' ? '/mo' : ' one-time'}
           </div>
         </div>
-        <div style={{ fontSize: 12, color: '#c97844', marginBottom: 22 }}>
-          ⚠️ This action cannot be undone. All payment history will be lost.
-        </div>
-
+        <div style={{ fontSize: 12, color: '#c97844', marginBottom: 22 }}>⚠️ This action cannot be undone. All payment history will be lost.</div>
         <div style={{ display: 'flex', gap: 10 }}>
-          <button
-            onClick={onCancel} disabled={deleting}
-            style={{
-              flex: 1, padding: '9px 0', borderRadius: 12,
-              border: '1.5px solid #e8dece', background: '#faf6ee',
-              color: '#8c7a68', fontSize: 13, fontWeight: 500,
-              cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
-            }}
-          >Cancel</button>
-          <button
-            onClick={onConfirm} disabled={deleting}
-            style={{
-              flex: 1, padding: '9px 0', borderRadius: 12,
-              border: 'none', background: deleting ? '#e0a090' : '#c0392b',
-              color: '#fff', fontSize: 13, fontWeight: 500,
-              cursor: deleting ? 'wait' : 'pointer',
-              fontFamily: "'DM Sans', sans-serif",
-              boxShadow: '0 2px 8px rgba(192,57,43,0.25)',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-            }}
-          >
-            {deleting ? (
-              <>
-                <div style={{
-                  width: 13, height: 13,
-                  border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff',
-                  borderRadius: '50%', animation: 'spin 0.7s linear infinite',
-                }} />
-                Deleting…
-              </>
-            ) : 'Delete'}
+          <button onClick={onCancel} disabled={deleting} style={{ flex: 1, padding: '9px 0', borderRadius: 12, border: '1.5px solid #e8dece', background: '#faf6ee', color: '#8c7a68', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}>Cancel</button>
+          <button onClick={onConfirm} disabled={deleting} style={{ flex: 1, padding: '9px 0', borderRadius: 12, border: 'none', background: deleting ? '#e0a090' : '#c0392b', color: '#fff', fontSize: 13, fontWeight: 500, cursor: deleting ? 'wait' : 'pointer', fontFamily: "'DM Sans', sans-serif", boxShadow: '0 2px 8px rgba(192,57,43,0.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            {deleting ? (<><div style={{ width: 13, height: 13, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />Deleting…</>) : 'Delete'}
           </button>
         </div>
       </div>
@@ -175,67 +233,45 @@ const DeleteModal = memo(function DeleteModal({ expense, onConfirm, onCancel, de
 const TrashBtn = memo(function TrashBtn({ onClick }) {
   const [hover, setHover] = useState(false)
   return (
-    <button
-      onClick={onClick}
-      onMouseEnter={() => setHover(true)}
-      onMouseLeave={() => setHover(false)}
-      title="Delete expense"
-      style={{
-        width: 28, height: 28, borderRadius: 8, flexShrink: 0,
-        border: hover ? '1.5px solid #f0c4b0' : '1.5px solid transparent',
-        background: hover ? '#fff4f0' : 'transparent',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        cursor: 'pointer', fontSize: 13, transition: 'all 0.15s',
-        color: hover ? '#c0392b' : '#c5b49e',
-      }}
-    >🗑️</button>
+    <button onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} title="Delete expense"
+      style={{ width: 28, height: 28, borderRadius: 8, flexShrink: 0, border: hover ? '1.5px solid #f0c4b0' : '1.5px solid transparent', background: hover ? '#fff4f0' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 13, transition: 'all 0.15s', color: hover ? '#c0392b' : '#c5b49e' }}>
+      🗑️
+    </button>
   )
 })
 
-const OneTimeExpensesTable = memo(function OneTimeExpensesTable({ expenses, onDeleteRequest }) {
-  if (!expenses || expenses.length === 0) return null
-  const total = expenses.reduce((s, e) => s + e.amount, 0)
+// ─── One-Time table (period-aware) ────────────────────────────────────────────
+const OneTimeExpensesTable = memo(function OneTimeExpensesTable({ expenses, onDeleteRequest, activePeriodMonths }) {
+  const filtered = useMemo(() => {
+    if (!activePeriodMonths) return expenses
+    return expenses.filter(exp => {
+      const d = parseUTCDate(exp.date)
+      const mName = MONTHS[d.getMonth()]
+      return activePeriodMonths.includes(mName)
+    })
+  }, [expenses, activePeriodMonths])
+
+  if (!filtered || filtered.length === 0) return null
+  const total = filtered.reduce((s, e) => s + e.amount, 0)
 
   return (
     <div style={{ marginBottom: 20 }}>
-      <div style={{
-        display: 'inline-flex', alignItems: 'center', gap: 7,
-        background: '#fdf3e7', color: '#a05e2a', border: '1.5px solid #f0c490',
-        padding: '4px 12px', borderRadius: 20, fontSize: 10, fontWeight: 500,
-        letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10,
-        fontFamily: "'DM Sans', sans-serif",
-      }}>
+      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fdf3e7', color: '#a05e2a', border: '1.5px solid #f0c490', padding: '4px 12px', borderRadius: 20, fontSize: 10, fontWeight: 500, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 10, fontFamily: "'DM Sans', sans-serif" }}>
         <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#c97844', display: 'inline-block' }} />
         One-Time
       </div>
-
-      <div style={{
-        overflowX: 'auto', borderRadius: 14,
-        border: '1.5px solid #e8dece', background: '#fffdf8',
-        boxShadow: '0 2px 0 #e2d9c8',
-      }}>
+      <div style={{ overflowX: 'auto', borderRadius: 14, border: '1.5px solid #e8dece', background: '#fffdf8', boxShadow: '0 2px 0 #e2d9c8' }}>
         <table style={{ borderCollapse: 'collapse', width: '100%', whiteSpace: 'nowrap' }}>
           <thead>
             <tr>
               {['#', 'Expense Name', 'Amount', 'Date', ''].map((h, i) => (
-                <th key={i} style={{
-                  background: '#faf6ee', color: '#b08a5e',
-                  padding: '10px 16px', textAlign: i === 2 ? 'right' : 'left',
-                  fontSize: 10, fontWeight: 500, letterSpacing: 1,
-                  textTransform: 'uppercase', borderBottom: '1.5px solid #e8dece',
-                  borderRight: i < 4 ? '1px solid #f0ebe0' : 'none',
-                  fontFamily: "'DM Sans', sans-serif",
-                  width: i === 4 ? 48 : undefined,
-                }} Mention={h}>{h}</th>
+                <th key={i} style={{ background: '#faf6ee', color: '#b08a5e', padding: '10px 16px', textAlign: i === 2 ? 'right' : 'left', fontSize: 10, fontWeight: 500, letterSpacing: 1, textTransform: 'uppercase', borderBottom: '1.5px solid #e8dece', borderRight: i < 4 ? '1px solid #f0ebe0' : 'none', fontFamily: "'DM Sans', sans-serif", width: i === 4 ? 48 : undefined }}>{h}</th>
               ))}
             </tr>
           </thead>
           <tbody>
-            {expenses.map((exp, idx) => (
-              <tr key={exp._id}
-                onMouseEnter={e => e.currentTarget.style.background = '#fdf8f0'}
-                onMouseLeave={e => e.currentTarget.style.background = ''}
-              >
+            {filtered.map((exp, idx) => (
+              <tr key={exp._id} onMouseEnter={e => e.currentTarget.style.background = '#fdf8f0'} onMouseLeave={e => e.currentTarget.style.background = ''}>
                 <td style={{ padding: '11px 16px', borderBottom: '1px solid #f0ebe0', fontSize: 11, color: '#c5b49e', fontFamily: 'monospace', width: 40, borderRight: '1px solid #f0ebe0' }}>{idx + 1}</td>
                 <td style={{ padding: '11px 16px', borderBottom: '1px solid #f0ebe0', fontSize: 13, fontWeight: 500, color: '#2e2318', borderRight: '1px solid #f0ebe0', fontFamily: "'DM Sans', sans-serif" }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -254,7 +290,7 @@ const OneTimeExpensesTable = memo(function OneTimeExpensesTable({ expenses, onDe
             ))}
             <tr>
               <td colSpan={2} style={{ padding: '10px 16px', background: '#faf6ee', fontSize: 10, fontWeight: 500, color: '#8c7a68', textTransform: 'uppercase', letterSpacing: 0.8, borderTop: '1.5px solid #e8dece', fontFamily: "'DM Sans', sans-serif" }}>
-                Total ({expenses.length} expense{expenses.length !== 1 ? 's' : ''})
+                Total ({filtered.length} expense{filtered.length !== 1 ? 's' : ''})
               </td>
               <td style={{ padding: '10px 16px', background: '#fdf3e7', textAlign: 'right', fontFamily: 'monospace', fontSize: 13, fontWeight: 700, color: '#a05e2a', borderTop: '1.5px solid #e8dece' }}>{fmt(total)}</td>
               <td colSpan={2} style={{ background: '#faf6ee', borderTop: '1.5px solid #e8dece' }} />
@@ -266,33 +302,34 @@ const OneTimeExpensesTable = memo(function OneTimeExpensesTable({ expenses, onDe
   )
 })
 
+// ─── Recurring Year Table (period-aware) ──────────────────────────────────────
 const RecurringYearTable = memo(function RecurringYearTable({
   year, activeEmps, monthData, editing, editVal, inputRef,
   setEditVal, handleEditStart, handleEditCommit, setEditing, savingCell, onDeleteRequest
 }) {
+  const [period, setPeriod] = useState('full')
+  const visibleMonths = useMemo(() => getMonthsForPeriod(period), [period])
+
   const empTotals = useMemo(() => {
     const map = {}
     activeEmps.forEach(emp => {
       const data = monthData[`${emp._id}_${year}`] || {}
-      map[emp._id] = {
-        paid: MONTHS.reduce((s, m) => s + (data[m]?.paid || 0), 0),
-        amt:  MONTHS.reduce((s, m) => s + (data[m]?.amt  || 0), 0),
-      }
+      const totalPaid = visibleMonths.reduce((s, m) => s + (data[m]?.paid || 0), 0)
+      const totalAmt  = visibleMonths.reduce((s, m) => s + (data[m]?.active ? emp.amount : 0), 0)
+      map[emp._id] = { paid: totalPaid, amt: totalAmt, due: Math.max(0, totalAmt - totalPaid) }
     })
     return map
-  }, [activeEmps, monthData, year])
+  }, [activeEmps, monthData, year, visibleMonths])
 
   return (
     <div style={{ marginBottom: 20 }}>
-      <div style={{
-        display: 'inline-flex', alignItems: 'center', gap: 7,
-        background: '#f5ece0', color: '#8c7a68', border: '1.5px solid #e8dece',
-        padding: '4px 12px', borderRadius: 20, fontSize: 10, fontWeight: 500,
-        letterSpacing: 1, marginBottom: 10, textTransform: 'uppercase',
-        fontFamily: "'DM Sans', sans-serif",
-      }}>
-        <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#b08a5e', display: 'inline-block' }} />
-        {year} · Recurring
+      {/* Row: label + period dropdown */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 10 }}>
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#f5ece0', color: '#8c7a68', border: '1.5px solid #e8dece', padding: '4px 12px', borderRadius: 20, fontSize: 10, fontWeight: 500, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'DM Sans', sans-serif" }}>
+          <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#b08a5e', display: 'inline-block' }} />
+          {year} · Recurring
+        </div>
+        <PeriodDropdown value={period} onChange={setPeriod} year={year} />
       </div>
 
       <div className="emp-table-scroll">
@@ -302,7 +339,8 @@ const RecurringYearTable = memo(function RecurringYearTable({
               <th className="col-name head" rowSpan={2} style={{ padding: '10px 16px', textAlign: 'left', fontSize: 10, fontWeight: 500, color: '#b08a5e', letterSpacing: 1, textTransform: 'uppercase', borderBottom: '1.5px solid #e8dece', background: '#faf6ee', fontFamily: "'DM Sans', sans-serif" }}>
                 Expense
               </th>
-              {MONTHS.map((m, i) => {
+              {visibleMonths.map((m) => {
+                const i = MONTHS.indexOf(m)
                 const anyActive = activeEmps.some(emp => isMonthActive(emp, i, year))
                 return (
                   <th key={m} colSpan={2} className={`th-month${!anyActive ? ' inactive-head' : ''}`}>{m}</th>
@@ -314,7 +352,7 @@ const RecurringYearTable = memo(function RecurringYearTable({
               <th rowSpan={2} style={{ background: '#faf6ee', padding: '10px 10px', borderBottom: '1.5px solid #e8dece', width: 48, borderLeft: '1px solid #f0ebe0' }} />
             </tr>
             <tr>
-              {MONTHS.map((m) => (
+              {visibleMonths.map((m) => (
                 <React.Fragment key={m}>
                   <th className="th-sub amt">Amt</th>
                   <th className="th-sub paid">Paid</th>
@@ -349,7 +387,7 @@ const RecurringYearTable = memo(function RecurringYearTable({
                     </div>
                   </td>
 
-                  {MONTHS.map((m) => {
+                  {visibleMonths.map((m) => {
                     const cell      = data[m]
                     const isEditing = editing?.empId === emp._id && editing?.month === m && editing?.year === year
                     const isSaving  = savingCell?.empId === emp._id && savingCell?.month === m && savingCell?.year === year
@@ -374,16 +412,10 @@ const RecurringYearTable = memo(function RecurringYearTable({
                           title={isSaving ? 'Saving...' : 'Click to edit paid amount'}
                         >
                           {isEditing ? (
-                            <input
-                              ref={inputRef}
-                              className="edit-inp"
-                              value={editVal}
+                            <input ref={inputRef} className="edit-inp" value={editVal}
                               onChange={(e) => setEditVal(e.target.value)}
                               onBlur={handleEditCommit}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter')  handleEditCommit()
-                                if (e.key === 'Escape') setEditing(null)
-                              }}
+                              onKeyDown={(e) => { if (e.key === 'Enter') handleEditCommit(); if (e.key === 'Escape') setEditing(null) }}
                             />
                           ) : (
                             <div>
@@ -399,7 +431,7 @@ const RecurringYearTable = memo(function RecurringYearTable({
                   })}
 
                   <td className="td-total-paid">{fmt(empTotals[emp._id]?.paid || 0)}</td>
-                  <td className="td-total-amt">{fmt(empTotals[emp._id]?.amt  || 0)}</td>
+                  <td className="td-total-amt">{fmt(empTotals[emp._id]?.due || 0)}</td>
                   <td style={{ borderBottom: '1px solid #f0ebe0', borderLeft: '1px solid #f0ebe0' }} />
                 </tr>
               )
@@ -409,7 +441,7 @@ const RecurringYearTable = memo(function RecurringYearTable({
               <td className="col-name" style={{ padding: '10px 16px', fontSize: 10, fontWeight: 500, color: '#8c7a68', textTransform: 'uppercase', letterSpacing: 0.8, borderTop: '1.5px solid #e8dece', background: '#faf6ee', textAlign: 'left', fontFamily: "'DM Sans', sans-serif" }}>
                 Grand Total
               </td>
-              {MONTHS.map((m) => {
+              {visibleMonths.map((m) => {
                 const tAmt  = activeEmps.reduce((s, e) => s + (monthData[`${e._id}_${year}`]?.[m]?.amt  || 0), 0)
                 const tPaid = activeEmps.reduce((s, e) => s + (monthData[`${e._id}_${year}`]?.[m]?.paid || 0), 0)
                 return (
@@ -423,7 +455,7 @@ const RecurringYearTable = memo(function RecurringYearTable({
                 {fmt(activeEmps.reduce((s, e) => s + (empTotals[e._id]?.paid || 0), 0))}
               </td>
               <td style={{ color: '#b0a090', background: '#faf6ee', fontFamily: 'monospace' }}>
-                {fmt(activeEmps.reduce((s, e) => s + (empTotals[e._id]?.amt || 0), 0))}
+                {fmt(activeEmps.reduce((s, e) => s + (empTotals[e._id]?.due || 0), 0))}
               </td>
               <td style={{ background: '#faf6ee', borderTop: '1.5px solid #e8dece', borderLeft: '1px solid #f0ebe0' }} />
             </tr>
@@ -434,11 +466,15 @@ const RecurringYearTable = memo(function RecurringYearTable({
   )
 })
 
+// ─── Expense Type Group ───────────────────────────────────────────────────────
 const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
   typeName, recurringEmps, oneTimeEmps, monthData, editing, editVal, inputRef,
   setEditVal, handleEditStart, handleEditCommit, setEditing, savingCell, onDeleteRequest, defaultOpen = true
 }) {
   const [open, setOpen] = useState(defaultOpen)
+  // One-time has its own period state (not year-specific, uses current year)
+  const [oneTimePeriod, setOneTimePeriod] = useState('full')
+  const oneTimePeriodMonths = useMemo(() => getMonthsForPeriod(oneTimePeriod), [oneTimePeriod])
 
   const allYears       = useMemo(() => getAllYears(recurringEmps), [recurringEmps])
   const recurringTotal = useMemo(() => recurringEmps.reduce((s, e) => s + e.amount, 0), [recurringEmps])
@@ -459,7 +495,6 @@ const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
             </div>
           </div>
         </div>
-
         <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
           {recurringEmps.length > 0 && <div style={{ background: '#fdf3e7', border: '1.5px solid #f0c490', color: '#a05e2a', padding: '3px 11px', borderRadius: 20, fontSize: 11, fontWeight: 500, fontFamily: "'DM Sans', sans-serif" }}>🔁 {recurringEmps.length} Recurring</div>}
           {oneTimeEmps.length  > 0 && <div style={{ background: '#faf6ee', border: '1.5px solid #e8dece', color: '#8c7a68', padding: '3px 11px', borderRadius: 20, fontSize: 11, fontWeight: 500, fontFamily: "'DM Sans', sans-serif" }}>⚡ {oneTimeEmps.length} One-Time</div>}
@@ -469,6 +504,7 @@ const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
 
       {open && (
         <div style={{ padding: '22px', background: '#fffdf8' }}>
+          {/* Recurring: each year gets its own RecurringYearTable with its own PeriodDropdown */}
           {recurringEmps.length > 0 && allYears.map(year => {
             const activeEmps = recurringEmps.filter(emp => getEmployeeYears(emp).includes(year))
             if (activeEmps.length === 0) return null
@@ -482,7 +518,26 @@ const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
               />
             )
           })}
-          <OneTimeExpensesTable expenses={oneTimeEmps} onDeleteRequest={onDeleteRequest} />
+
+          {/* One-time: single period dropdown shared across all one-time entries */}
+          {oneTimeEmps.length > 0 && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 10 }}>
+                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#fdf3e7', color: '#a05e2a', border: '1.5px solid #f0c490', padding: '4px 12px', borderRadius: 20, fontSize: 10, fontWeight: 500, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'DM Sans', sans-serif" }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#c97844', display: 'inline-block' }} />
+                  One-Time · Filter
+                </div>
+                <PeriodDropdown value={oneTimePeriod} onChange={setOneTimePeriod} year="All" />
+              </div>
+              {/* Pass the label pill=false since OneTimeExpensesTable already has its own internal label; we'll suppress it by passing filtered data */}
+              <OneTimeExpensesTable
+                expenses={oneTimeEmps}
+                onDeleteRequest={onDeleteRequest}
+                activePeriodMonths={oneTimePeriod === 'full' ? null : oneTimePeriodMonths}
+              />
+            </div>
+          )}
+
           {recurringEmps.length === 0 && oneTimeEmps.length === 0 && (
             <p style={{ color: '#b0a090', fontSize: 13, textAlign: 'center', padding: '20px 0', fontFamily: "'DM Sans', sans-serif" }}>No expenses in this group.</p>
           )}
@@ -492,6 +547,336 @@ const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
   )
 })
 
+// ─── Month Picker Dropdown ────────────────────────────────────────────────────
+const MONTH_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December']
+
+const MonthPickerDropdown = memo(function MonthPickerDropdown({ onSelect }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  const currentMonth = new Date().getMonth()
+
+  useEffect(() => {
+    const handler = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [])
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block', flexShrink: 0 }}>
+      <button
+        onClick={() => setOpen(p => !p)}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 7,
+          padding: '9px 18px', borderRadius: 12,
+          border: '1.5px solid #e8dece',
+          background: open ? '#f5ece0' : '#faf6ee',
+          color: '#5a4a38', fontFamily: "'DM Sans', sans-serif",
+          fontSize: 13, fontWeight: 500, cursor: 'pointer',
+          transition: 'all 0.15s', whiteSpace: 'nowrap', flexShrink: 0,
+          boxShadow: open ? '0 3px 12px rgba(160,130,90,0.18)' : 'none',
+        }}
+      >
+        <span style={{ fontSize: 14 }}>🗓️</span>
+        Month View
+        <span style={{ fontSize: 9, color: '#b08a5e', display: 'inline-block', transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}>▼</span>
+      </button>
+
+      {open && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 8px)', right: 0, zIndex: 200,
+          background: '#fffdf8', border: '1.5px solid #e8dece', borderRadius: 16,
+          boxShadow: '0 12px 40px rgba(160,130,90,0.22)', overflow: 'hidden',
+          minWidth: 220, fontFamily: "'DM Sans', sans-serif",
+        }}>
+          <div style={{ padding: '10px 16px 8px', borderBottom: '1px solid #f0ebe0', fontSize: 10, color: '#b08a5e', letterSpacing: 1, textTransform: 'uppercase', fontWeight: 500 }}>
+            View by Month
+          </div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 0 }}>
+            {MONTHS.map((m, i) => {
+              const isCurrentMonth = i === currentMonth
+              return (
+                <div
+                  key={m}
+                  onClick={() => { onSelect(i); setOpen(false) }}
+                  style={{
+                    padding: '10px 8px', textAlign: 'center', cursor: 'pointer',
+                    fontSize: 12, fontWeight: isCurrentMonth ? 600 : 400,
+                    color: isCurrentMonth ? '#a05e2a' : '#4a3c30',
+                    background: isCurrentMonth ? '#fdf3e7' : 'transparent',
+                    borderRight: (i % 3 !== 2) ? '1px solid #f5f0e8' : 'none',
+                    borderBottom: i < 9 ? '1px solid #f5f0e8' : 'none',
+                    transition: 'background 0.1s',
+                    position: 'relative',
+                  }}
+                  onMouseEnter={e => { if (!isCurrentMonth) e.currentTarget.style.background = '#faf6ee' }}
+                  onMouseLeave={e => { if (!isCurrentMonth) e.currentTarget.style.background = 'transparent' }}
+                >
+                  {m}
+                  {isCurrentMonth && (
+                    <div style={{ position: 'absolute', bottom: 4, left: '50%', transform: 'translateX(-50%)', width: 4, height: 4, borderRadius: '50%', background: '#c97844' }} />
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+})
+
+// ─── Month View Modal ─────────────────────────────────────────────────────────
+const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, monthData, onClose }) {
+  const monthName = MONTHS[monthIndex]
+  const monthFull = MONTH_FULL[monthIndex]
+  const currentYear = new Date().getFullYear()
+
+  // Collect all years present in data
+  const allYears = useMemo(() => {
+    const set = new Set()
+    allExpenses.forEach(emp => getEmployeeYears(emp).forEach(y => set.add(y)))
+    return Array.from(set).sort((a, b) => b - a) // newest first
+  }, [allExpenses])
+
+  const [selectedYear, setSelectedYear] = useState(() => {
+    // default to current year if present, else latest
+    return allYears.includes(currentYear) ? currentYear : (allYears[0] || currentYear)
+  })
+
+  // Recurring expenses active in this month+year
+  const recurringRows = useMemo(() => {
+    return allExpenses
+      .filter(e => e.type === 'recurring' && isMonthActive(e, monthIndex, selectedYear))
+      .map(emp => {
+        const key  = `${emp._id}_${selectedYear}`
+        const cell = monthData[key]?.[monthName] || { amt: 0, paid: 0, carry: 0, active: false }
+        return { ...emp, cell, _sortDate: parseUTCDate(emp.startDate) }
+      })
+      .sort((a, b) => a._sortDate - b._sortDate)
+  }, [allExpenses, monthData, monthIndex, selectedYear, monthName])
+
+  // One-time expenses whose date falls in this month+year
+  const oneTimeRows = useMemo(() => {
+    return allExpenses
+      .filter(e => {
+        if (e.type !== 'one-time') return false
+        const d = parseUTCDate(e.date)
+        return d.getMonth() === monthIndex && d.getFullYear() === selectedYear
+      })
+      .map(e => ({ ...e, _sortDate: parseUTCDate(e.date) }))
+      .sort((a, b) => a._sortDate - b._sortDate)
+  }, [allExpenses, monthIndex, selectedYear])
+
+  const recurringTotal   = recurringRows.reduce((s, r) => s + (r.cell.amt || 0), 0)
+  const recurringPaid    = recurringRows.reduce((s, r) => s + (r.cell.paid || 0), 0)
+  const recurringDue     = Math.max(0, recurringTotal - recurringPaid)
+  const oneTimeTotal     = oneTimeRows.reduce((s, r) => s + r.amount, 0)
+  const grandTotal       = recurringTotal + oneTimeTotal
+
+  // Trap scroll behind modal
+  useEffect(() => {
+    document.body.style.overflow = 'hidden'
+    return () => { document.body.style.overflow = '' }
+  }, [])
+
+  const tdBase = { padding: '11px 14px', borderBottom: '1px solid #f0ebe0', fontSize: 13, fontFamily: "'DM Sans', sans-serif", verticalAlign: 'middle' }
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 500, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(46,35,24,0.4)', backdropFilter: 'blur(4px)' }}
+      onClick={onClose}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#fffdf8', border: '1.5px solid #e8dece', borderRadius: 22,
+          boxShadow: '0 16px 60px rgba(120,90,50,0.25)',
+          width: '92vw', maxWidth: 760, maxHeight: '88vh',
+          display: 'flex', flexDirection: 'column',
+          fontFamily: "'DM Sans', sans-serif", overflow: 'hidden',
+        }}
+      >
+        {/* Header */}
+        <div style={{ padding: '22px 26px 18px', borderBottom: '1.5px solid #e8dece', background: '#faf6ee', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+            <div>
+              <div style={{ fontSize: 10, letterSpacing: 2, textTransform: 'uppercase', color: '#b08a5e', marginBottom: 4, fontWeight: 500 }}>Monthly View</div>
+              <div style={{ fontFamily: "'Lora', serif", fontSize: 22, fontWeight: 600, color: '#2e2318' }}>{monthFull}</div>
+              <div style={{ fontSize: 12, color: '#9a8775', marginTop: 3 }}>
+                {recurringRows.length} recurring &nbsp;·&nbsp; {oneTimeRows.length} one-time &nbsp;·&nbsp;
+                <span style={{ color: '#b5672f', fontFamily: 'monospace' }}>{fmt(grandTotal)}</span> total
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+              {/* Year selector */}
+              <div style={{ display: 'flex', gap: 4 }}>
+                {allYears.map(y => (
+                  <button
+                    key={y}
+                    onClick={() => setSelectedYear(y)}
+                    style={{
+                      padding: '4px 12px', borderRadius: 8, border: '1.5px solid',
+                      borderColor: selectedYear === y ? '#c97844' : '#e8dece',
+                      background: selectedYear === y ? '#fdf3e7' : 'transparent',
+                      color: selectedYear === y ? '#a05e2a' : '#8c7a68',
+                      fontSize: 12, fontWeight: selectedYear === y ? 600 : 400,
+                      cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
+                      transition: 'all 0.15s',
+                    }}
+                  >{y}</button>
+                ))}
+              </div>
+              {/* Close */}
+              <button
+                onClick={onClose}
+                style={{ width: 32, height: 32, borderRadius: 10, border: '1.5px solid #e8dece', background: '#faf6ee', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, color: '#9a8775', flexShrink: 0 }}
+              >✕</button>
+            </div>
+          </div>
+
+          {/* Summary pills */}
+          <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
+            {[
+              { label: 'Recurring Due', value: fmt(recurringTotal), color: '#b5672f', bg: '#fdf3e7', border: '#f0c490' },
+              { label: 'Recurring Paid', value: fmt(recurringPaid), color: '#7a9e5a', bg: '#f5f8f0', border: '#c8deb0' },
+              { label: 'Recurring Balance', value: fmt(recurringDue), color: recurringDue > 0 ? '#c97844' : '#7a9e5a', bg: recurringDue > 0 ? '#fff8f4' : '#f5f8f0', border: recurringDue > 0 ? '#f0c490' : '#c8deb0' },
+              { label: 'One-Time', value: fmt(oneTimeTotal), color: '#a05e2a', bg: '#fdf3e7', border: '#f0c490' },
+            ].map(p => (
+              <div key={p.label} style={{ background: p.bg, border: `1.5px solid ${p.border}`, borderRadius: 10, padding: '6px 14px', display: 'flex', flexDirection: 'column', gap: 1 }}>
+                <span style={{ fontSize: 9, letterSpacing: 0.8, textTransform: 'uppercase', color: '#b08a5e', fontWeight: 500 }}>{p.label}</span>
+                <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'monospace', color: p.color }}>{p.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div style={{ overflowY: 'auto', flex: 1, padding: '20px 26px 24px' }}>
+
+          {/* Recurring section */}
+          {recurringRows.length > 0 && (
+            <div style={{ marginBottom: 24 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 1, textTransform: 'uppercase', color: '#b08a5e', background: '#f5ece0', border: '1.5px solid #e8dece', padding: '3px 12px', borderRadius: 20 }}>🔁 Recurring · {selectedYear}</div>
+              </div>
+              <div style={{ borderRadius: 14, border: '1.5px solid #e8dece', overflow: 'hidden', boxShadow: '0 2px 0 #e2d9c8' }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                  <thead>
+                    <tr style={{ background: '#faf6ee' }}>
+                      {['#', 'Expense Name', 'Type', 'Monthly Amt', 'Paid', 'Balance'].map((h, i) => (
+                        <th key={h} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, letterSpacing: 0.9, textTransform: 'uppercase', color: '#b08a5e', textAlign: i >= 3 ? 'right' : 'left', borderBottom: '1.5px solid #e8dece', borderRight: i < 5 ? '1px solid #f0ebe0' : 'none', fontFamily: "'DM Sans', sans-serif" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {recurringRows.map((emp, idx) => {
+                      const { cell } = emp
+                      const due = Math.max(0, cell.amt - cell.paid)
+                      return (
+                        <tr key={emp._id}
+                          onMouseEnter={e => e.currentTarget.style.background = '#fdf8f0'}
+                          onMouseLeave={e => e.currentTarget.style.background = ''}
+                        >
+                          <td style={{ ...tdBase, width: 36, color: '#c5b49e', fontFamily: 'monospace', fontSize: 11, borderRight: '1px solid #f0ebe0' }}>{idx + 1}</td>
+                          <td style={{ ...tdBase, borderRight: '1px solid #f0ebe0' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <Avatar name={emp.expenseName || emp.name || '?'} />
+                              <div>
+                                <div style={{ fontWeight: 500, color: '#2e2318', fontSize: 13 }}>{emp.expenseName || emp.name}</div>
+                                <div style={{ fontSize: 10, color: '#b0a090', marginTop: 1 }}>
+                                  since {parseUTCDate(emp.startDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                                </div>
+                              </div>
+                            </div>
+                          </td>
+                          <td style={{ ...tdBase, fontSize: 11, color: '#9a8775', borderRight: '1px solid #f0ebe0' }}>{emp.expenseType || '—'}</td>
+                          <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: '#b5672f', borderRight: '1px solid #f0ebe0' }}>{fmt(cell.amt)}</td>
+                          <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', color: '#7a9e5a', borderRight: '1px solid #f0ebe0' }}>{fmt(cell.paid)}</td>
+                          <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: due > 0 ? '#c97844' : '#7a9e5a' }}>
+                            {due > 0 ? fmt(due) : <span style={{ color: '#7a9e5a', fontSize: 11 }}>✓ Paid</span>}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: '#faf6ee' }}>
+                      <td colSpan={3} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, color: '#8c7a68', textTransform: 'uppercase', letterSpacing: 0.8, borderTop: '1.5px solid #e8dece', fontFamily: "'DM Sans', sans-serif" }}>
+                        Total ({recurringRows.length})
+                      </td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: '#b5672f', borderTop: '1.5px solid #e8dece', borderRight: '1px solid #f0ebe0' }}>{fmt(recurringTotal)}</td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: '#7a9e5a', borderTop: '1.5px solid #e8dece', borderRight: '1px solid #f0ebe0' }}>{fmt(recurringPaid)}</td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: recurringDue > 0 ? '#c97844' : '#7a9e5a', borderTop: '1.5px solid #e8dece' }}>{fmt(recurringDue)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* One-time section */}
+          {oneTimeRows.length > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 1, textTransform: 'uppercase', color: '#a05e2a', background: '#fdf3e7', border: '1.5px solid #f0c490', padding: '3px 12px', borderRadius: 20 }}>⚡ One-Time · {selectedYear}</div>
+              </div>
+              <div style={{ borderRadius: 14, border: '1.5px solid #e8dece', overflow: 'hidden', boxShadow: '0 2px 0 #e2d9c8' }}>
+                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+                  <thead>
+                    <tr style={{ background: '#faf6ee' }}>
+                      {['#', 'Expense Name', 'Type', 'Date', 'Amount'].map((h, i) => (
+                        <th key={h} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, letterSpacing: 0.9, textTransform: 'uppercase', color: '#b08a5e', textAlign: i === 4 ? 'right' : 'left', borderBottom: '1.5px solid #e8dece', borderRight: i < 4 ? '1px solid #f0ebe0' : 'none', fontFamily: "'DM Sans', sans-serif" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {oneTimeRows.map((exp, idx) => (
+                      <tr key={exp._id}
+                        onMouseEnter={e => e.currentTarget.style.background = '#fdf8f0'}
+                        onMouseLeave={e => e.currentTarget.style.background = ''}
+                      >
+                        <td style={{ ...tdBase, width: 36, color: '#c5b49e', fontFamily: 'monospace', fontSize: 11, borderRight: '1px solid #f0ebe0' }}>{idx + 1}</td>
+                        <td style={{ ...tdBase, borderRight: '1px solid #f0ebe0' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ width: 28, height: 28, borderRadius: 8, background: '#fdf3e7', border: '1.5px solid #f0c490', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>⚡</span>
+                            <span style={{ fontWeight: 500, color: '#2e2318', fontSize: 13 }}>{exp.expenseName}</span>
+                          </div>
+                        </td>
+                        <td style={{ ...tdBase, fontSize: 11, color: '#9a8775', borderRight: '1px solid #f0ebe0' }}>{exp.expenseType || '—'}</td>
+                        <td style={{ ...tdBase, fontSize: 12, color: '#9a8775', borderRight: '1px solid #f0ebe0' }}>
+                          {parseUTCDate(exp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                        </td>
+                        <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: '#b5672f' }}>{fmt(exp.amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: '#fdf3e7' }}>
+                      <td colSpan={4} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, color: '#8c7a68', textTransform: 'uppercase', letterSpacing: 0.8, borderTop: '1.5px solid #e8dece', fontFamily: "'DM Sans', sans-serif" }}>
+                        Total ({oneTimeRows.length})
+                      </td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: '#a05e2a', borderTop: '1.5px solid #e8dece' }}>{fmt(oneTimeTotal)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {recurringRows.length === 0 && oneTimeRows.length === 0 && (
+            <div style={{ textAlign: 'center', padding: '40px 0', color: '#b0a090' }}>
+              <div style={{ fontSize: 32, marginBottom: 10 }}>📭</div>
+              <div style={{ fontSize: 14, fontWeight: 600, fontFamily: "'Lora', serif", color: '#8c7a68' }}>No expenses in {monthFull} {selectedYear}</div>
+              <div style={{ fontSize: 12, marginTop: 4 }}>Try selecting a different year above.</div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+})
+
+// ─── Global CSS ───────────────────────────────────────────────────────────────
 const GLOBAL_STYLES = `
   @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&display=swap');
   * { box-sizing: border-box; }
@@ -538,6 +923,7 @@ if (typeof document !== 'undefined' && !document.getElementById('employee-table-
   document.head.appendChild(style)
 }
 
+// ─── Main component ───────────────────────────────────────────────────────────
 const EmployeeTable = () => {
   const navigate = useNavigate()
 
@@ -550,8 +936,9 @@ const EmployeeTable = () => {
   const [editVal,     setEditVal]     = useState('')
   const inputRef = useRef(null)
 
-  const [deleteTarget, setDeleteTarget] = useState(null)
-  const [deleting,     setDeleting]     = useState(false)
+  const [deleteTarget,    setDeleteTarget]    = useState(null)
+  const [deleting,        setDeleting]        = useState(false)
+  const [monthViewIndex,  setMonthViewIndex]  = useState(null) // null = closed
 
   const parseServerData = useCallback((data) => {
     const recurring = data.filter(e => e.type === 'recurring')
@@ -560,9 +947,7 @@ const EmployeeTable = () => {
       getEmployeeYears(emp).forEach(year => {
         const paidMap = {}
         if (emp.payments?.length > 0) {
-          emp.payments
-            .filter(p => p.year === year)
-            .forEach(p => { paidMap[p.month] = p.paid })
+          emp.payments.filter(p => p.year === year).forEach(p => { paidMap[p.month] = p.paid })
         }
         initial[`${emp._id}_${year}`] = buildMonthData(emp, year, paidMap)
       })
@@ -581,10 +966,8 @@ const EmployeeTable = () => {
           setLoading(false)
           return
         }
-
         const res  = await fetch('https://expense-management-7.onrender.com/api/employee/all')
         const data = await res.json()
-        
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(data))
         setAllExpenses(data)
         setMonthData(parseServerData(data))
@@ -608,13 +991,11 @@ const EmployeeTable = () => {
       if (!prev) return prev
       const { empId, month, year } = prev
       const newVal = Math.max(0, parseInt(editVal) || 0)
-
       setAllExpenses(exps => {
         const updatedExps = exps.map(e => {
           if (e._id !== empId) return e
           const existingPaymentIdx = (e.payments || []).findIndex(p => p.year === year && p.month === month)
           const updatedPayments = [...(e.payments || [])]
-          
           if (existingPaymentIdx > -1) {
             updatedPayments[existingPaymentIdx] = { ...updatedPayments[existingPaymentIdx], paid: newVal }
           } else {
@@ -622,56 +1003,39 @@ const EmployeeTable = () => {
           }
           return { ...e, payments: updatedPayments }
         })
-
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(updatedExps))
-        
         const emp = updatedExps.find(e => e._id === empId)
         if (emp) {
           const key = `${empId}_${year}`
-          setMonthData(md => ({
-            ...md,
-            [key]: recalcEmployee(emp, year, md[key], month, newVal),
-          }))
+          setMonthData(md => ({ ...md, [key]: recalcEmployee(emp, year, md[key], month, newVal) }))
         }
         return updatedExps
       })
-
       setSavingCell({ empId, month, year })
       fetch(`https://expense-management-7.onrender.com/api/employee/update-payment/${empId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ year, month, paid: newVal }),
-      })
-        .catch(err => console.error('Failed to save payment:', err))
-        .finally(() => setSavingCell(null))
-
+      }).catch(err => console.error('Failed to save payment:', err)).finally(() => setSavingCell(null))
       return null
     })
   }, [editVal])
 
-  const handleDeleteRequest = useCallback((expense) => {
-    setDeleteTarget(expense)
-  }, [])
+  const handleDeleteRequest = useCallback((expense) => { setDeleteTarget(expense) }, [])
 
   const handleDeleteConfirm = useCallback(async () => {
     if (!deleteTarget) return
     setDeleting(true)
     try {
-      await fetch(`https://expense-management-7.onrender.com/api/employee/delete/${deleteTarget._id}`, {
-        method: 'DELETE'
-      })
-      
+      await fetch(`https://expense-management-7.onrender.com/api/employee/delete/${deleteTarget._id}`, { method: 'DELETE' })
       setAllExpenses(prev => {
         const remaining = prev.filter(e => e._id !== deleteTarget._id)
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(remaining))
         return remaining
       })
-
       setMonthData(prev => {
         const next = { ...prev }
-        Object.keys(next).forEach(k => {
-          if (k.startsWith(`${deleteTarget._id}_`)) delete next[k]
-        })
+        Object.keys(next).forEach(k => { if (k.startsWith(`${deleteTarget._id}_`)) delete next[k] })
         return next
       })
       setDeleteTarget(null)
@@ -682,13 +1046,11 @@ const EmployeeTable = () => {
     }
   }, [deleteTarget])
 
-  const handleDeleteCancel = useCallback(() => {
-    if (!deleting) setDeleteTarget(null)
-  }, [deleting])
+  const handleDeleteCancel = useCallback(() => { if (!deleting) setDeleteTarget(null) }, [deleting])
 
   const { grouped, groupNames, totalRecurring, totalOneTime } = useMemo(() => {
-    const grouped       = groupByExpenseType(allExpenses)
-    const groupNames    = Object.keys(grouped).sort((a, b) => a.localeCompare(b))
+    const grouped        = groupByExpenseType(allExpenses)
+    const groupNames     = Object.keys(grouped).sort((a, b) => a.localeCompare(b))
     const totalRecurring = allExpenses.filter(e => e.type === 'recurring').length
     const totalOneTime   = allExpenses.filter(e => e.type === 'one-time').length
     return { grouped, groupNames, totalRecurring, totalOneTime }
@@ -707,24 +1069,22 @@ const EmployeeTable = () => {
 
   return (
     <div style={{ padding: '36px 24px 60px', background: '#f5f0e8', minHeight: '100vh', fontFamily: "'DM Sans', sans-serif" }}>
-
       {deleteTarget && (
-        <DeleteModal
-          expense={deleteTarget}
-          onConfirm={handleDeleteConfirm}
-          onCancel={handleDeleteCancel}
-          deleting={deleting}
+        <DeleteModal expense={deleteTarget} onConfirm={handleDeleteConfirm} onCancel={handleDeleteCancel} deleting={deleting} />
+      )}
+      {monthViewIndex !== null && (
+        <MonthViewModal
+          monthIndex={monthViewIndex}
+          allExpenses={allExpenses}
+          monthData={monthData}
+          onClose={() => setMonthViewIndex(null)}
         />
       )}
 
       <div style={{ marginBottom: 28, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div>
-          <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 2, textTransform: 'uppercase', color: '#b08a5e', marginBottom: 5 }}>
-            Expense Tracker
-          </div>
-          <h2 style={{ fontFamily: "'Lora', serif", fontSize: 26, fontWeight: 600, color: '#2e2318', margin: '0 0 4px' }}>
-            All Expenses
-          </h2>
+          <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 2, textTransform: 'uppercase', color: '#b08a5e', marginBottom: 5 }}>Expense Tracker</div>
+          <h2 style={{ fontFamily: "'Lora', serif", fontSize: 26, fontWeight: 600, color: '#2e2318', margin: '0 0 4px' }}>All Expenses</h2>
           <p style={{ fontSize: 13, color: '#9a8775', margin: 0 }}>
             {groupNames.length} group{groupNames.length !== 1 ? 's' : ''} &nbsp;·&nbsp;
             {totalRecurring} recurring &nbsp;·&nbsp;
@@ -734,10 +1094,13 @@ const EmployeeTable = () => {
             <span style={{ color: '#7a9e5a' }}>Green</span> = credit
           </p>
         </div>
-        <button className="add-expense-btn" onClick={() => navigate('/employee')}>
-          <span className="add-expense-btn-icon">+</span>
-          Add Expense
-        </button>
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <MonthPickerDropdown onSelect={(i) => setMonthViewIndex(i)} />
+          <button className="add-expense-btn" onClick={() => navigate('/employee')}>
+            <span className="add-expense-btn-icon">+</span>
+            Add Expense
+          </button>
+        </div>
       </div>
 
       {groupNames.length === 0 && (
@@ -754,21 +1117,13 @@ const EmployeeTable = () => {
         const oneTimeEmps   = groupExps.filter(e => e.type === 'one-time')
         return (
           <ExpenseTypeGroup
-            key={typeName}
-            typeName={typeName}
-            recurringEmps={recurringEmps}
-            oneTimeEmps={oneTimeEmps}
-            monthData={monthData}
-            editing={editing}
-            editVal={editVal}
-            inputRef={inputRef}
-            setEditVal={setEditVal}
-            handleEditStart={handleEditStart}
-            handleEditCommit={handleEditCommit}
-            setEditing={setEditing}
-            savingCell={savingCell}
-            onDeleteRequest={handleDeleteRequest}
-            defaultOpen={idx === 0}
+            key={typeName} typeName={typeName}
+            recurringEmps={recurringEmps} oneTimeEmps={oneTimeEmps}
+            monthData={monthData} editing={editing} editVal={editVal}
+            inputRef={inputRef} setEditVal={setEditVal}
+            handleEditStart={handleEditStart} handleEditCommit={handleEditCommit}
+            setEditing={setEditing} savingCell={savingCell}
+            onDeleteRequest={handleDeleteRequest} defaultOpen={idx === 0}
           />
         )
       })}

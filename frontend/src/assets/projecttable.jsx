@@ -59,14 +59,13 @@ function countTotalActiveMonths(project) {
 }
 
 function buildProjectTimeline(project, year, localizedOverrides = {}) {
-  let carry = 0;
   const result = {};
 
   const totalActiveMonths = countTotalActiveMonths(project);
 
   MONTHS.forEach((m, i) => {
     if (!isMonthActive(project, i, year)) {
-      result[m] = { amt: 0, paid: 0, carry: 0, active: false };
+      result[m] = { amt: 0, paid: 0, active: false };
       return;
     }
 
@@ -84,17 +83,12 @@ function buildProjectTimeline(project, year, localizedOverrides = {}) {
       } else {
         calculatedBase = 0;
       }
-      savedPaid = Math.max(0, calculatedBase);
+      savedPaid = 0;
     }
 
-    const amt = calculatedBase + carry;
-    const paid = savedPaid;
-    
-    carry = amt - paid;
     result[m] = { 
-      amt, 
-      paid, 
-      carry, 
+      amt: calculatedBase, 
+      paid: savedPaid, 
       active: true,
       metrics: localizedOverrides[overrideKey] || null 
     };
@@ -138,6 +132,26 @@ const ProjectTable = () => {
   const [daysWorked, setDaysWorked] = useState('');
   const [totalMonthDays, setTotalMonthDays] = useState('30');
   const [daysWorkedMonthly, setDaysWorkedMonthly] = useState('20');
+  const [includeGst, setIncludeGst] = useState(false);
+  const [currency, setCurrency] = useState('INR');
+  const [usdRate, setUsdRate] = useState(84); // fallback rate
+  const [usdRateLoading, setUsdRateLoading] = useState(false);
+
+  // ─── QUARTER FILTER STATE ───
+  const [quarterFilter, setQuarterFilter] = useState({});
+  const [quarterDropdownOpen, setQuarterDropdownOpen] = useState({});
+
+  const QUARTERS = {
+    Q1: ['Jan','Feb','Mar'],
+    Q2: ['Apr','May','Jun'],
+    Q3: ['Jul','Aug','Sep'],
+    Q4: ['Oct','Nov','Dec'],
+  };
+
+  const getVisibleMonths = (year) => {
+    const q = quarterFilter[year];
+    return q ? QUARTERS[q] : MONTHS;
+  };
 
   // ─── DELETE STATE ───
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { project }
@@ -266,8 +280,22 @@ const ProjectTable = () => {
       setTotalMonthDays(existing?.totalMonthDays || '30');
       setDaysWorkedMonthly(existing?.daysWorkedMonthly || '0');
     }
-
+    setIncludeGst(existing?.includeGst || false);
+    setCurrency(existing?.currency || 'INR');
     setModalConfig({ project, month, year, type });
+  };
+
+  const fetchUsdRate = async () => {
+    setUsdRateLoading(true);
+    try {
+      const res = await fetch('https://api.frankfurter.app/latest?from=USD&to=INR');
+      const data = await res.json();
+      if (data?.rates?.INR) setUsdRate(data.rates.INR);
+    } catch (e) {
+      // keep fallback rate
+    } finally {
+      setUsdRateLoading(false);
+    }
   };
 
   const saveModalCalculation = async () => {
@@ -278,16 +306,21 @@ const ProjectTable = () => {
     let payloadMetrics = {};
 
     if (type === 'hourly') {
-      calculatedAmt = (parseFloat(hourlyRate) || 0) * (parseFloat(hoursWorked) || 0);
-      payloadMetrics = { hourlyRate, hoursWorked };
+      const rateInINR = currency === 'USD' ? (parseFloat(hourlyRate) || 0) * usdRate : (parseFloat(hourlyRate) || 0);
+      const base = rateInINR * (parseFloat(hoursWorked) || 0);
+      calculatedAmt = includeGst ? base * 1.18 : base;
+      payloadMetrics = { hourlyRate, hoursWorked, includeGst, currency, usdRate: currency === 'USD' ? usdRate : null };
     } else if (type === 'daily') {
-      calculatedAmt = (parseFloat(dailyRate) || 0) * (parseFloat(daysWorked) || 0);
-      payloadMetrics = { dailyRate, daysWorked };
+      const rateInINR = currency === 'USD' ? (parseFloat(dailyRate) || 0) * usdRate : (parseFloat(dailyRate) || 0);
+      const base = rateInINR * (parseFloat(daysWorked) || 0);
+      calculatedAmt = includeGst ? base * 1.18 : base;
+      payloadMetrics = { dailyRate, daysWorked, includeGst, currency, usdRate: currency === 'USD' ? usdRate : null };
     } else {
       const totalActiveMonths = countTotalActiveMonths(project);
       const monthlyInstallment = Number(project.expectedAmount || 0) / totalActiveMonths;
-      calculatedAmt = (monthlyInstallment / (parseFloat(totalMonthDays) || 1)) * (parseFloat(daysWorkedMonthly) || 0);
-      payloadMetrics = { totalMonthDays, daysWorkedMonthly };
+      const base = (monthlyInstallment / (parseFloat(totalMonthDays) || 1)) * (parseFloat(daysWorkedMonthly) || 0);
+      calculatedAmt = includeGst ? base * 1.18 : base;
+      payloadMetrics = { totalMonthDays, daysWorkedMonthly, includeGst };
     }
 
     const existingPaid = monthlyOverrides[key]?.paid !== undefined ? monthlyOverrides[key].paid : calculatedAmt;
@@ -477,16 +510,6 @@ const ProjectTable = () => {
           border-bottom: 1px solid #f0ebe0; border-right: 1.5px solid #e8dece; padding: 10px 6px;
         }
 
-        .proj-carry-badge {
-          display: inline-block; background: #fff8f4; border: 1px solid #f0c490;
-          border-radius: 4px; padding: 1px 5px; font-size: 10px; color: #c97844;
-          font-family: monospace;
-        }
-        .proj-credit-badge {
-          display: inline-block; background: #f5f8f0; border: 1px solid #c8deb0;
-          border-radius: 4px; padding: 1px 5px; font-size: 10px; color: #7a9e5a;
-          font-family: monospace;
-        }
         .proj-edit-inp {
           width: 85px; background: #fffdf8; border: 1.5px solid #c97844;
           border-radius: 8px; padding: 3px 7px;
@@ -551,6 +574,56 @@ const ProjectTable = () => {
           box-shadow: 0 20px 40px rgba(160,130,90,0.18), 0 2px 0 #e2d9c8;
           border: 1.5px solid #e8dece;
         }
+
+        .quarter-btn {
+          display: flex; align-items: center; gap: 6px;
+          padding: 4px 11px; border-radius: 20px; cursor: pointer;
+          font-size: 11px; font-weight: 500; font-family: 'DM Sans', sans-serif;
+          border: 1.5px solid #e8dece; background: #fffdf8; color: #8c7a68;
+          transition: all 0.15s; white-space: nowrap;
+        }
+        .quarter-btn:hover { background: #fdf3e7; border-color: #f0c490; color: #a05e2a; }
+        .quarter-btn.active { background: #fdf3e7; border-color: #f0c490; color: #a05e2a; }
+
+        .quarter-dropdown {
+          position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
+          background: #fffdf8; border: 1.5px solid #e8dece; border-radius: 12px;
+          box-shadow: 0 8px 24px rgba(160,130,90,0.15);
+          padding: 6px; min-width: 110px;
+        }
+        .quarter-option {
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 7px 10px; border-radius: 8px; cursor: pointer;
+          font-size: 12px; font-weight: 500; color: #5a4535;
+          font-family: 'DM Sans', sans-serif; transition: background 0.12s;
+          gap: 8px;
+        }
+        .quarter-option:hover { background: #fdf3e7; }
+        .quarter-option.selected { background: #fdf3e7; color: #a05e2a; }
+        .quarter-option .q-months { font-size: 9px; color: #b0a090; font-weight: 400; }
+        .quarter-option.selected .q-months { color: #c97844; }
+
+        .currency-toggle {
+          display: flex; align-items: center; background: #f5f0e8;
+          border: 1.5px solid #e8dece; border-radius: 10px; padding: 3px; gap: 3px;
+          margin-bottom: 14px;
+        }
+        .currency-pill {
+          flex: 1; text-align: center; padding: 6px 0; border-radius: 7px;
+          font-size: 12px; font-weight: 600; cursor: pointer;
+          font-family: 'DM Sans', sans-serif; transition: all 0.15s;
+          color: #9a8775; border: 1.5px solid transparent;
+          user-select: none;
+        }
+        .currency-pill.inr.active {
+          background: #fffdf8; color: #b5672f;
+          border-color: #f0c490; box-shadow: 0 1px 4px rgba(160,100,40,0.10);
+        }
+        .currency-pill.usd.active {
+          background: #fffdf8; color: #4a7abf;
+          border-color: #a8c4e8; box-shadow: 0 1px 4px rgba(60,100,180,0.10);
+        }
+        .currency-pill:hover:not(.active) { background: #faf6ee; color: #5a4535; }
       `}</style>
 
       {/* Page Header */}
@@ -564,10 +637,8 @@ const ProjectTable = () => {
           </h2>
           <p style={{ fontSize: 13, color: '#9a8775', margin: 0, fontFamily: "'DM Sans', sans-serif" }}>
             {projects.length} project{projects.length !== 1 ? 's' : ''} &nbsp;·&nbsp;
-            Click <span style={{ color: '#b5672f', fontWeight: 500 }}>Amount</span> to configure metrics &nbsp;·&nbsp;
-            Click <span style={{ color: '#7a9e5a', fontWeight: 500 }}>Paid</span> to track per month &nbsp;·&nbsp;
-            <span style={{ color: '#c97844' }}>Amber</span> = carry &nbsp;·&nbsp;
-            <span style={{ color: '#7a9e5a' }}>Green</span> = credit
+            Click <span style={{ color: '#b5672f', fontWeight: 500 }}>To Receive</span> to configure metrics &nbsp;·&nbsp;
+            Click <span style={{ color: '#7a9e5a', fontWeight: 500 }}>Received</span> to track per month
           </p>
         </div>
 
@@ -595,8 +666,10 @@ const ProjectTable = () => {
         const filteredProjects = projects.filter(p => isProjectActiveInYear(p, year));
         if (filteredProjects.length === 0) return null;
 
+        const visibleMonths = getVisibleMonths(year);
+
         const monthColTotals = {};
-        MONTHS.forEach(m => {
+        visibleMonths.forEach(m => {
           let totalAmt = 0;
           let totalPaid = 0;
           filteredProjects.forEach(project => {
@@ -611,8 +684,8 @@ const ProjectTable = () => {
           monthColTotals[m] = { totalAmt, totalPaid };
         });
 
-        const grandYearPaid = MONTHS.reduce((s, m) => s + monthColTotals[m].totalPaid, 0);
-        const grandYearAmt  = MONTHS.reduce((s, m) => s + monthColTotals[m].totalAmt,  0);
+        const grandYearPaid = visibleMonths.reduce((s, m) => s + monthColTotals[m].totalPaid, 0);
+        const grandYearAmt  = visibleMonths.reduce((s, m) => s + monthColTotals[m].totalAmt,  0);
 
         return (
           <div key={year} style={{
@@ -652,14 +725,67 @@ const ProjectTable = () => {
                   color: '#a05e2a', padding: '3px 12px', borderRadius: 20,
                   fontSize: 11, fontWeight: 500, fontFamily: "'DM Sans', sans-serif",
                 }}>
-                  Due: {fmt(grandYearAmt)}
+                  To Receive: {fmt(grandYearAmt)}
                 </div>
                 <div style={{
                   background: '#f5f8f0', border: '1.5px solid #c8deb0',
                   color: '#7a9e5a', padding: '3px 12px', borderRadius: 20,
                   fontSize: 11, fontWeight: 500, fontFamily: "'DM Sans', sans-serif",
                 }}>
-                  Paid: {fmt(grandYearPaid)}
+                  Received: {fmt(grandYearPaid)}
+                </div>
+
+                {/* ─── Quarter Filter Dropdown ─── */}
+                <div style={{ position: 'relative' }}>
+                  <button
+                    className={`quarter-btn${quarterFilter[year] ? ' active' : ''}`}
+                    onClick={() => setQuarterDropdownOpen(prev => ({ ...prev, [year]: !prev[year] }))}
+                  >
+                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+                      <rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/>
+                    </svg>
+                    {quarterFilter[year] || 'Quarter'}
+                    <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                      <polyline points="6 9 12 15 18 9"/>
+                    </svg>
+                  </button>
+
+                  {quarterDropdownOpen[year] && (
+                    <>
+                      {/* backdrop to close */}
+                      <div
+                        style={{ position: 'fixed', inset: 0, zIndex: 19 }}
+                        onClick={() => setQuarterDropdownOpen(prev => ({ ...prev, [year]: false }))}
+                      />
+                      <div className="quarter-dropdown">
+                        {/* All option */}
+                        <div
+                          className={`quarter-option${!quarterFilter[year] ? ' selected' : ''}`}
+                          onClick={() => {
+                            setQuarterFilter(prev => ({ ...prev, [year]: null }));
+                            setQuarterDropdownOpen(prev => ({ ...prev, [year]: false }));
+                          }}
+                        >
+                          <span>All Year</span>
+                          <span className="q-months">Jan–Dec</span>
+                        </div>
+                        {Object.entries(QUARTERS).map(([q, months]) => (
+                          <div
+                            key={q}
+                            className={`quarter-option${quarterFilter[year] === q ? ' selected' : ''}`}
+                            onClick={() => {
+                              setQuarterFilter(prev => ({ ...prev, [year]: q }));
+                              setQuarterDropdownOpen(prev => ({ ...prev, [year]: false }));
+                            }}
+                          >
+                            <span>{q}</span>
+                            <span className="q-months">{months[0]}–{months[2]}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
                 </div>
               </div>
             </div>
@@ -681,7 +807,7 @@ const ProjectTable = () => {
                       >
                         Project Track
                       </th>
-                      {MONTHS.map(m => (
+                      {visibleMonths.map(m => (
                         <th key={m} colSpan={2} className="th-month">{m}</th>
                       ))}
                       <th colSpan={2} style={{
@@ -690,18 +816,18 @@ const ProjectTable = () => {
                         padding: '10px 8px', borderBottom: '1px solid #e8dece',
                         fontFamily: "'DM Sans', sans-serif",
                       }}>
-                        Year Total
+                        {quarterFilter[year] ? `${quarterFilter[year]} Total` : 'Year Total'}
                       </th>
                     </tr>
                     <tr>
-                      {MONTHS.map(m => (
+                      {visibleMonths.map(m => (
                         <React.Fragment key={m}>
-                          <th className="th-sub-proj amt">Amt</th>
-                          <th className="th-sub-proj paid">Paid</th>
+                          <th className="th-sub-proj amt">To Receive</th>
+                          <th className="th-sub-proj paid">Received</th>
                         </React.Fragment>
                       ))}
-                      <th className="th-total-proj" style={{ borderRight: '1px solid #f0ebe0' }}>Paid</th>
-                      <th className="th-total-proj" style={{ color: '#9a8775', background: '#faf6ee' }}>Due</th>
+                      <th className="th-total-proj" style={{ borderRight: '1px solid #f0ebe0' }}>Received</th>
+                      <th className="th-total-proj" style={{ color: '#9a8775', background: '#faf6ee' }}>To Receive</th>
                     </tr>
                   </thead>
 
@@ -710,8 +836,8 @@ const ProjectTable = () => {
                       const matrixKey = `${project._id}_${year}`;
                       const data = timelineData[matrixKey] || {};
 
-                      const yrTotalPaid = MONTHS.reduce((s, m) => s + (data[m]?.paid || 0), 0);
-                      const yrTotalAmt  = MONTHS.reduce((s, m) => s + (data[m]?.amt  || 0), 0);
+                      const yrTotalPaid = visibleMonths.reduce((s, m) => s + (data[m]?.paid || 0), 0);
+                      const yrTotalAmt  = visibleMonths.reduce((s, m) => s + (data[m]?.amt  || 0), 0);
 
                       return (
                         <tr key={project._id} className="proj-data-row" style={{ borderBottom: '1px solid #f0ebe0' }}>
@@ -754,16 +880,13 @@ const ProjectTable = () => {
                             </div>
                           </td>
 
-                          {MONTHS.map(m => {
+                          {visibleMonths.map(m => {
                             const cell = data[m];
                             const isEditingPay = editingPayment?.projectId === project._id && editingPayment?.month === m && editingPayment?.year === year;
 
                             if (!cell || !cell.active) {
                               return <td key={m} className="td-proj-inactive" colSpan={2}>—</td>;
                             }
-
-                            const hasCarry  = cell.carry > 0;
-                            const hasCredit = cell.carry < 0;
 
                             return (
                               <React.Fragment key={m}>
@@ -783,11 +906,7 @@ const ProjectTable = () => {
                                       onKeyDown={e => { if(e.key === 'Enter') commitPaymentEdit(); if(e.key === 'Escape') setEditingPayment(null); }}
                                     />
                                   ) : (
-                                    <div>
-                                      <div>{fmt(cell.paid)}</div>
-                                      {hasCarry  && <span className="proj-carry-badge">+{fmt(cell.carry)}</span>}
-                                      {hasCredit && <span className="proj-credit-badge">-{fmt(Math.abs(cell.carry))}</span>}
-                                    </div>
+                                    <div>{fmt(cell.paid)}</div>
                                   )}
                                 </td>
                               </React.Fragment>
@@ -815,10 +934,10 @@ const ProjectTable = () => {
                         }}
                       >
                         Monthly Totals
-                        <div style={{ fontSize: 9, color: '#c5b49e', marginTop: 2, fontWeight: 400 }}>All projects combined</div>
+                        <div style={{ fontSize: 9, color: '#c5b49e', marginTop: 2, fontWeight: 400 }}>{quarterFilter[year] ? `${quarterFilter[year]}: ${QUARTERS[quarterFilter[year]].join(', ')}` : 'All projects combined'}</div>
                       </td>
 
-                      {MONTHS.map(m => {
+                      {visibleMonths.map(m => {
                         const { totalAmt, totalPaid } = monthColTotals[m];
                         const hasActivity = totalAmt > 0 || totalPaid > 0;
                         return (
@@ -850,9 +969,8 @@ const ProjectTable = () => {
 
       <p style={{ marginTop: 8, fontSize: 11, color: '#c5b49e', textAlign: 'center', fontFamily: "'DM Sans', sans-serif" }}>
         Scroll right to see all months &nbsp;·&nbsp;
-        Click <span style={{ color: '#b5672f' }}>Amount</span> to configure &nbsp;·&nbsp;
-        Click <span style={{ color: '#7a9e5a' }}>Paid</span> to edit &nbsp;·&nbsp;
-        Unpaid balance carries forward
+        Click <span style={{ color: '#b5672f' }}>To Receive</span> to configure &nbsp;·&nbsp;
+        Click <span style={{ color: '#7a9e5a' }}>Received</span> to edit
       </p>
 
       {/* ─── CALCULATOR MODAL ─── */}
@@ -879,10 +997,53 @@ const ProjectTable = () => {
 
             {modalConfig.type === 'hourly' && (
               <>
+                {/* Currency Toggle */}
+                <div style={{ marginBottom: 4 }}>
+                  <div style={{ fontSize: 11, color: '#8c7a68', fontWeight: 500, letterSpacing: '0.8px', textTransform: 'uppercase', marginBottom: 6, fontFamily: "'DM Sans', sans-serif" }}>Rate Currency</div>
+                  <div className="currency-toggle">
+                    <div
+                      className={`currency-pill inr${currency === 'INR' ? ' active' : ''}`}
+                      onClick={() => setCurrency('INR')}
+                    >
+                      ₹ INR
+                    </div>
+                    <div
+                      className={`currency-pill usd${currency === 'USD' ? ' active' : ''}`}
+                      onClick={() => { setCurrency('USD'); fetchUsdRate(); }}
+                    >
+                      $ USD
+                    </div>
+                  </div>
+                </div>
+
+                {currency === 'USD' && (
+                  <div style={{
+                    background: '#f0f4ff', border: '1.5px solid #a8c4e8',
+                    borderRadius: 8, padding: '8px 12px', marginBottom: 12,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    fontFamily: "'DM Sans', sans-serif",
+                  }}>
+                    <div style={{ fontSize: 11, color: '#4a7abf' }}>
+                      {usdRateLoading ? 'Fetching live rate…' : `1 USD = ₹${usdRate.toFixed(2)}`}
+                    </div>
+                    <div
+                      onClick={fetchUsdRate}
+                      style={{ fontSize: 10, color: '#4a7abf', cursor: 'pointer', textDecoration: 'underline', opacity: usdRateLoading ? 0.5 : 1 }}
+                    >
+                      Refresh
+                    </div>
+                  </div>
+                )}
+
                 <div className="proj-modal-field">
-                  <label>Hourly Rate (₹)</label>
+                  <label>Hourly Rate ({currency === 'USD' ? '$' : '₹'})</label>
                   <input type="number" value={hourlyRate} onChange={e => setHourlyRate(e.target.value)} />
                 </div>
+                {currency === 'USD' && hourlyRate && (
+                  <div style={{ fontSize: 10, color: '#7a9e5a', fontFamily: 'monospace', marginTop: -8, marginBottom: 10, textAlign: 'right' }}>
+                    = ₹{((parseFloat(hourlyRate) || 0) * usdRate).toLocaleString('en-IN', { maximumFractionDigits: 0 })} / hr
+                  </div>
+                )}
                 <div className="proj-modal-field">
                   <label>Hours Worked This Month</label>
                   <input type="number" value={hoursWorked} onChange={e => setHoursWorked(e.target.value)} />
@@ -892,10 +1053,53 @@ const ProjectTable = () => {
 
             {modalConfig.type === 'daily' && (
               <>
+                {/* Currency Toggle */}
+                <div style={{ marginBottom: 4 }}>
+                  <div style={{ fontSize: 11, color: '#8c7a68', fontWeight: 500, letterSpacing: '0.8px', textTransform: 'uppercase', marginBottom: 6, fontFamily: "'DM Sans', sans-serif" }}>Rate Currency</div>
+                  <div className="currency-toggle">
+                    <div
+                      className={`currency-pill inr${currency === 'INR' ? ' active' : ''}`}
+                      onClick={() => setCurrency('INR')}
+                    >
+                      ₹ INR
+                    </div>
+                    <div
+                      className={`currency-pill usd${currency === 'USD' ? ' active' : ''}`}
+                      onClick={() => { setCurrency('USD'); fetchUsdRate(); }}
+                    >
+                      $ USD
+                    </div>
+                  </div>
+                </div>
+
+                {currency === 'USD' && (
+                  <div style={{
+                    background: '#f0f4ff', border: '1.5px solid #a8c4e8',
+                    borderRadius: 8, padding: '8px 12px', marginBottom: 12,
+                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                    fontFamily: "'DM Sans', sans-serif",
+                  }}>
+                    <div style={{ fontSize: 11, color: '#4a7abf' }}>
+                      {usdRateLoading ? 'Fetching live rate…' : `1 USD = ₹${usdRate.toFixed(2)}`}
+                    </div>
+                    <div
+                      onClick={fetchUsdRate}
+                      style={{ fontSize: 10, color: '#4a7abf', cursor: 'pointer', textDecoration: 'underline', opacity: usdRateLoading ? 0.5 : 1 }}
+                    >
+                      Refresh
+                    </div>
+                  </div>
+                )}
+
                 <div className="proj-modal-field">
-                  <label>Daily Rate (₹)</label>
+                  <label>Daily Rate ({currency === 'USD' ? '$' : '₹'})</label>
                   <input type="number" value={dailyRate} onChange={e => setDailyRate(e.target.value)} />
                 </div>
+                {currency === 'USD' && dailyRate && (
+                  <div style={{ fontSize: 10, color: '#7a9e5a', fontFamily: 'monospace', marginTop: -8, marginBottom: 10, textAlign: 'right' }}>
+                    = ₹{((parseFloat(dailyRate) || 0) * usdRate).toLocaleString('en-IN', { maximumFractionDigits: 0 })} / day
+                  </div>
+                )}
                 <div className="proj-modal-field">
                   <label>Days Worked This Month</label>
                   <input type="number" value={daysWorked} onChange={e => setDaysWorked(e.target.value)} />
@@ -903,7 +1107,7 @@ const ProjectTable = () => {
               </>
             )}
 
-            {modalConfig.type === 'monthly' && (
+           {modalConfig.type === 'monthly' && (
               <>
                 <div style={{
                   background: '#faf6ee', border: '1.5px solid #e8dece',
@@ -927,6 +1131,72 @@ const ProjectTable = () => {
                 </div>
               </>
             )}
+
+          {/* GST Toggle */}
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            background: includeGst ? '#f5f8f0' : '#faf6ee',
+            border: `1.5px solid ${includeGst ? '#c8deb0' : '#e8dece'}`,
+            borderRadius: 10, padding: '10px 14px', marginBottom: 16,
+            cursor: 'pointer', transition: 'all 0.15s',
+          }} onClick={() => setIncludeGst(v => !v)}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{
+                width: 28, height: 28, borderRadius: 8,
+                background: includeGst ? '#e8f4d8' : '#f0ebe0',
+                border: `1.5px solid ${includeGst ? '#c8deb0' : '#e8dece'}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 13, flexShrink: 0, transition: 'all 0.15s',
+              }}>
+                {includeGst ? '✓' : '%'}
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: includeGst ? '#5a8a3a' : '#8c7a68', fontFamily: "'DM Sans', sans-serif" }}>
+                  Include GST (18%)
+                </div>
+                <div style={{ fontSize: 10, color: '#b0a090', marginTop: 1, fontFamily: "'DM Sans', sans-serif" }}>
+                  {includeGst ? 'GST will be added to the final amount' : 'Click to add 18% GST on top'}
+                </div>
+              </div>
+            </div>
+            {(() => {
+              let base = 0;
+              const { type, project } = modalConfig;
+              if (type === 'hourly') {
+                const rateInINR = currency === 'USD' ? (parseFloat(hourlyRate) || 0) * usdRate : (parseFloat(hourlyRate) || 0);
+                base = rateInINR * (parseFloat(hoursWorked) || 0);
+              } else if (type === 'daily') {
+                const rateInINR = currency === 'USD' ? (parseFloat(dailyRate) || 0) * usdRate : (parseFloat(dailyRate) || 0);
+                base = rateInINR * (parseFloat(daysWorked) || 0);
+              } else {
+                const totalActiveMonths = countTotalActiveMonths(project);
+                const inst = Number(project.expectedAmount || 0) / totalActiveMonths;
+                base = (inst / (parseFloat(totalMonthDays) || 1)) * (parseFloat(daysWorkedMonthly) || 0);
+              }
+              const gstAmt = base * 0.18;
+              const final = includeGst ? base + gstAmt : base;
+              return (
+                <div style={{ textAlign: 'right' }}>
+                  {currency === 'USD' && (type === 'hourly' || type === 'daily') && (
+                    <div style={{ fontSize: 9, color: '#4a7abf', fontFamily: 'monospace', marginBottom: 2 }}>
+                      @ ₹{usdRate.toFixed(2)}/USD
+                    </div>
+                  )}
+                  {includeGst && (
+                    <div style={{ fontSize: 9, color: '#7a9e5a', fontFamily: 'monospace', marginBottom: 2 }}>
+                      +{fmt(gstAmt)} GST
+                    </div>
+                  )}
+                  <div style={{
+                    fontSize: 13, fontWeight: 700, fontFamily: 'monospace',
+                    color: includeGst ? '#5a8a3a' : '#9a8775',
+                  }}>
+                    {fmt(final)}
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20 }}>
               <button

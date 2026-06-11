@@ -104,7 +104,7 @@ const Employee = () => {
   };
 
   const handleCancel = () => {
-    navigate("/employee");
+    navigate("/");
   };
 
   return (
