@@ -21,8 +21,32 @@ function getMonthsForPeriod(periodValue) {
   return PERIOD_OPTIONS.find(p => p.value === periodValue)?.months || MONTHS
 }
 
-function getMonthIndex(monthName) {
-  return MONTHS.indexOf(monthName)
+// ─── Amount override helpers ─────────────────────────────────────────────────
+/**
+ * Returns the effective amount for a given month+year, considering overrides.
+ * An override at month M applies from M onwards until the next override.
+ * overrides: [{ year, month, amount }]
+ */
+function getEffectiveAmount(baseAmount, overrides = [], monthIndex, year) {
+  if (!overrides || overrides.length === 0) return baseAmount
+
+  // Build a sorted list of all override points up to and including this month
+  // An override at (year2, monthIdx2) applies if year2 < year
+  //   OR (year2 === year AND monthIdx2 <= monthIndex)
+  const applicable = overrides.filter(ov => {
+    const ovIdx = MONTHS.indexOf(ov.month)
+    return (ov.year < year) || (ov.year === year && ovIdx <= monthIndex)
+  })
+
+  if (applicable.length === 0) return baseAmount
+
+  // The most recent override wins: sort by year asc, then month asc, take last
+  applicable.sort((a, b) => {
+    if (a.year !== b.year) return a.year - b.year
+    return MONTHS.indexOf(a.month) - MONTHS.indexOf(b.month)
+  })
+
+  return applicable[applicable.length - 1].amount
 }
 
 // ─── Period Dropdown ─────────────────────────────────────────────────────────
@@ -71,7 +95,6 @@ const PeriodDropdown = memo(function PeriodDropdown({ value, onChange, year }) {
             minWidth: 160, fontFamily: "'DM Sans', sans-serif",
           }}
         >
-          {/* header */}
           <div style={{ padding: '8px 14px 6px', borderBottom: '1px solid #f0ebe0', fontSize: 10, color: '#b08a5e', letterSpacing: 1, textTransform: 'uppercase', fontWeight: 500 }}>
             Filter · {year}
           </div>
@@ -130,10 +153,11 @@ function buildMonthData(emp, year, paidMap = {}) {
       result[m] = { amt: 0, paid: 0, carry: 0, active: false }
       return
     }
-    const amt  = emp.amount + carry
-    const paid = paidMap[m] !== undefined ? paidMap[m] : 0
-    carry = amt - paid
-    result[m] = { amt, paid, carry, active: true }
+    const baseAmt  = getEffectiveAmount(emp.amount, emp.amountOverrides, i, year)
+    const paid     = paidMap[m] !== undefined ? paidMap[m] : 0
+    const totalDue = baseAmt + carry
+    carry          = totalDue - paid
+    result[m]      = { amt: baseAmt, paid, carry, active: true }
   })
   return result
 }
@@ -143,6 +167,22 @@ function recalcEmployee(emp, year, oldData, changedMonth, newPaidValue) {
   MONTHS.forEach((m) => { paidMap[m] = oldData[m]?.paid })
   paidMap[changedMonth] = newPaidValue
   return buildMonthData(emp, year, paidMap)
+}
+
+/**
+ * Full recalc of all years for an employee — needed after an override change
+ * because overrides can cascade across year boundaries.
+ */
+function rebuildAllYearsForEmp(emp) {
+  const result = {}
+  getEmployeeYears(emp).forEach(year => {
+    const paidMap = {}
+    if (emp.payments?.length > 0) {
+      emp.payments.filter(p => p.year === year).forEach(p => { paidMap[p.month] = p.paid })
+    }
+    result[`${emp._id}_${year}`] = buildMonthData(emp, year, paidMap)
+  })
+  return result
 }
 
 function getEmployeeYears(emp) {
@@ -240,6 +280,145 @@ const TrashBtn = memo(function TrashBtn({ onClick }) {
   )
 })
 
+// ─── Amount Override Modal ────────────────────────────────────────────────────
+/**
+ * Shown when the user clicks "Edit amount from [Month]".
+ * Lets them set a new amount that applies from that month onwards,
+ * or remove an existing override for that month.
+ */
+const AmountOverrideModal = memo(function AmountOverrideModal({
+  emp, month, year, currentAmt, existingOverride, onSave, onRemove, onCancel, saving
+}) {
+  const [val, setVal] = useState(String(existingOverride ? existingOverride.amount : currentAmt))
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select() }, 30)
+  }, [])
+
+  const handleSave = () => {
+    const parsed = parseInt(val)
+    if (isNaN(parsed) || parsed <= 0) return
+    onSave(parsed)
+  }
+
+  const monthIdx   = MONTHS.indexOf(month)
+  const remaining  = MONTHS.slice(monthIdx)
+  const isBaseAmt  = !existingOverride && parseInt(val) === emp.amount
+  const noChange   = existingOverride && parseInt(val) === existingOverride.amount
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(46,35,24,0.45)', backdropFilter: 'blur(4px)' }}
+      onClick={onCancel}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ background: '#fffdf8', border: '1.5px solid #e8dece', borderRadius: 22, boxShadow: '0 12px 50px rgba(120,90,50,0.28)', padding: '30px 30px 24px', maxWidth: 400, width: '92vw', fontFamily: "'DM Sans', sans-serif" }}
+      >
+        {/* Header */}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 20 }}>
+          <div style={{ width: 46, height: 46, borderRadius: 12, background: '#fdf3e7', border: '1.5px solid #f0c490', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>✏️</div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: '#2e2318', fontFamily: "'Lora', serif" }}>
+              Change Amount from {month} {year}
+            </div>
+            <div style={{ fontSize: 12, color: '#9a8775', marginTop: 3 }}>
+              {emp.expenseName || emp.name}
+            </div>
+          </div>
+        </div>
+
+        {/* Context pills */}
+        <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
+          <div style={{ background: '#faf6ee', border: '1.5px solid #e8dece', borderRadius: 8, padding: '5px 12px', fontSize: 11, color: '#8c7a68' }}>
+            Base: <span style={{ fontFamily: 'monospace', color: '#b5672f', fontWeight: 600 }}>{fmt(emp.amount)}/mo</span>
+          </div>
+          <div style={{ background: '#faf6ee', border: '1.5px solid #e8dece', borderRadius: 8, padding: '5px 12px', fontSize: 11, color: '#8c7a68' }}>
+            Current: <span style={{ fontFamily: 'monospace', color: '#c97844', fontWeight: 600 }}>{fmt(currentAmt)}/mo</span>
+          </div>
+        </div>
+
+        {/* Input */}
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 11, fontWeight: 500, color: '#9a8775', letterSpacing: 0.8, textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
+            New monthly amount from {month} {year}
+          </label>
+          <div style={{ position: 'relative' }}>
+            <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#b08a5e', fontFamily: 'monospace', fontSize: 15, fontWeight: 600 }}>₹</span>
+            <input
+              ref={inputRef}
+              type="number"
+              value={val}
+              onChange={e => setVal(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleSave(); if (e.key === 'Escape') onCancel() }}
+              style={{ width: '100%', padding: '11px 12px 11px 28px', border: '1.5px solid #c97844', borderRadius: 12, background: '#fffdf8', fontFamily: 'monospace', fontSize: 16, fontWeight: 600, color: '#2e2318', outline: 'none', boxShadow: '0 0 0 3px rgba(201,120,68,0.1)' }}
+            />
+          </div>
+        </div>
+
+        {/* Impact preview */}
+        <div style={{ background: '#faf6ee', border: '1.5px solid #e8dece', borderRadius: 12, padding: '10px 14px', marginBottom: 20, fontSize: 11, color: '#8c7a68', lineHeight: 1.7 }}>
+          <div style={{ fontWeight: 600, color: '#6a5848', marginBottom: 4 }}>Impact preview</div>
+          <div>
+            {month} – Dec {year}: &nbsp;
+            <span style={{ fontFamily: 'monospace', color: '#b5672f', fontWeight: 600 }}>
+              {parseInt(val) > 0 ? fmt(parseInt(val)) : '—'}/mo
+            </span>
+          </div>
+          <div style={{ color: '#c5b49e', fontSize: 10, marginTop: 2 }}>
+            Jan – {MONTHS[monthIdx > 0 ? monthIdx - 1 : 0]} {year}: &nbsp;
+            <span style={{ fontFamily: 'monospace' }}>{fmt(currentAmt)}/mo (unchanged)</span>
+          </div>
+          <div style={{ color: '#c5b49e', fontSize: 10, marginTop: 1 }}>
+            Carry-forward recalculated from {month} {year} onwards
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <button onClick={onCancel} style={{ flex: 1, minWidth: 80, padding: '9px 0', borderRadius: 12, border: '1.5px solid #e8dece', background: '#faf6ee', color: '#8c7a68', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}>
+            Cancel
+          </button>
+          {existingOverride && (
+            <button
+              onClick={onRemove}
+              disabled={saving}
+              style={{ flex: 1, minWidth: 80, padding: '9px 0', borderRadius: 12, border: '1.5px solid #f0c4b0', background: '#fff4f0', color: '#c0392b', fontSize: 13, fontWeight: 500, cursor: saving ? 'wait' : 'pointer', fontFamily: "'DM Sans', sans-serif" }}
+            >
+              Remove Override
+            </button>
+          )}
+          <button
+            onClick={handleSave}
+            disabled={saving || isBaseAmt || noChange || !val || parseInt(val) <= 0}
+            style={{
+              flex: 2, minWidth: 120, padding: '9px 0', borderRadius: 12, border: 'none',
+              background: (saving || isBaseAmt || noChange || !val || parseInt(val) <= 0) ? '#e8dece' : '#c97844',
+              color: (saving || isBaseAmt || noChange || !val || parseInt(val) <= 0) ? '#b0a090' : '#fff',
+              fontSize: 13, fontWeight: 600, cursor: (saving || isBaseAmt || noChange) ? 'not-allowed' : 'pointer',
+              fontFamily: "'DM Sans', sans-serif", display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              boxShadow: (saving || isBaseAmt || noChange) ? 'none' : '0 2px 8px rgba(201,120,68,0.28)',
+              transition: 'all 0.15s',
+            }}
+          >
+            {saving
+              ? <><div style={{ width: 13, height: 13, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />Saving…</>
+              : `Apply from ${month}`
+            }
+          </button>
+        </div>
+
+        {(isBaseAmt || noChange) && !saving && (
+          <div style={{ marginTop: 10, fontSize: 11, color: '#b08a5e', textAlign: 'center' }}>
+            {isBaseAmt ? 'This matches the base amount — no override needed.' : 'No change from existing override.'}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+})
+
 // ─── One-Time table (period-aware) ────────────────────────────────────────────
 const OneTimeExpensesTable = memo(function OneTimeExpensesTable({ expenses, onDeleteRequest, activePeriodMonths }) {
   const filtered = useMemo(() => {
@@ -302,12 +481,14 @@ const OneTimeExpensesTable = memo(function OneTimeExpensesTable({ expenses, onDe
   )
 })
 
-// ─── Recurring Year Table (period-aware) ──────────────────────────────────────
+// ─── Recurring Year Table (period-aware, with amount-edit mode) ───────────────
 const RecurringYearTable = memo(function RecurringYearTable({
   year, activeEmps, monthData, editing, editVal, inputRef,
-  setEditVal, handleEditStart, handleEditCommit, setEditing, savingCell, onDeleteRequest
+  setEditVal, handleEditStart, handleEditCommit, setEditing, savingCell,
+  onDeleteRequest, onAmountOverrideRequest
 }) {
   const [period, setPeriod] = useState('full')
+  const [amtEditMode, setAmtEditMode] = useState(false) // toggles the "edit amount" checkboxes
   const visibleMonths = useMemo(() => getMonthsForPeriod(period), [period])
 
   const empTotals = useMemo(() => {
@@ -315,22 +496,53 @@ const RecurringYearTable = memo(function RecurringYearTable({
     activeEmps.forEach(emp => {
       const data = monthData[`${emp._id}_${year}`] || {}
       const totalPaid = visibleMonths.reduce((s, m) => s + (data[m]?.paid || 0), 0)
-      const totalAmt  = visibleMonths.reduce((s, m) => s + (data[m]?.active ? emp.amount : 0), 0)
-      map[emp._id] = { paid: totalPaid, amt: totalAmt, due: Math.max(0, totalAmt - totalPaid) }
+      const totalAmt  = visibleMonths.reduce((s, m) => s + (data[m]?.active ? (data[m]?.amt || 0) : 0), 0)
+      const lastActiveMonth = [...visibleMonths].reverse().find(m => data[m]?.active)
+      const endCarry = lastActiveMonth ? (data[lastActiveMonth]?.carry || 0) : 0
+      map[emp._id] = { paid: totalPaid, amt: totalAmt, due: Math.max(0, endCarry) }
     })
     return map
   }, [activeEmps, monthData, year, visibleMonths])
 
   return (
     <div style={{ marginBottom: 20 }}>
-      {/* Row: label + period dropdown */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 10 }}>
+      {/* Row: label + controls */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#f5ece0', color: '#8c7a68', border: '1.5px solid #e8dece', padding: '4px 12px', borderRadius: 20, fontSize: 10, fontWeight: 500, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'DM Sans', sans-serif" }}>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#b08a5e', display: 'inline-block' }} />
           {year} · Recurring
         </div>
-        <PeriodDropdown value={period} onChange={setPeriod} year={year} />
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          {/* Edit Amount toggle */}
+          <button
+            onClick={() => setAmtEditMode(p => !p)}
+            title="Toggle per-month amount editing"
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              padding: '4px 12px', borderRadius: 10, cursor: 'pointer',
+              border: '1.5px solid',
+              borderColor: amtEditMode ? '#c97844' : '#e8dece',
+              background: amtEditMode ? '#fdf3e7' : '#faf6ee',
+              color: amtEditMode ? '#a05e2a' : '#8c7a68',
+              fontSize: 11, fontWeight: amtEditMode ? 600 : 500,
+              fontFamily: "'DM Sans', sans-serif",
+              transition: 'all 0.15s',
+              boxShadow: amtEditMode ? '0 1px 6px rgba(201,120,68,0.18)' : 'none',
+            }}
+          >
+            <span style={{ fontSize: 12 }}>✏️</span>
+            {amtEditMode ? 'Done editing amounts' : 'Edit amounts'}
+          </button>
+          <PeriodDropdown value={period} onChange={setPeriod} year={year} />
+        </div>
       </div>
+
+      {amtEditMode && (
+        <div style={{ marginBottom: 10, background: '#fdf8f0', border: '1.5px solid #f0c490', borderRadius: 10, padding: '8px 14px', fontSize: 11, color: '#a05e2a', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 14 }}>💡</span>
+          Click any <strong>Amt</strong> cell to change the monthly amount from that month onwards. Carry-forward will recalculate automatically.
+        </div>
+      )}
 
       <div className="emp-table-scroll">
         <table className="emp-table">
@@ -354,7 +566,7 @@ const RecurringYearTable = memo(function RecurringYearTable({
             <tr>
               {visibleMonths.map((m) => (
                 <React.Fragment key={m}>
-                  <th className="th-sub amt">Amt</th>
+                  <th className={`th-sub amt${amtEditMode ? ' amt-edit-mode' : ''}`}>Amt</th>
                   <th className="th-sub paid">Paid</th>
                 </React.Fragment>
               ))}
@@ -378,10 +590,21 @@ const RecurringYearTable = memo(function RecurringYearTable({
                           {emp.expenseName || emp.name}
                         </div>
                         <div style={{ fontSize: 10, color: '#b0a090', marginTop: 2, fontFamily: "'DM Sans', sans-serif" }}>
-                          <span style={{ color: '#b5672f', fontFamily: 'monospace' }}>{fmt(emp.amount)}/mo</span>
-                          &nbsp;·&nbsp;
-                          {parseUTCDate(emp.startDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                        </div>
+                        <span style={{ color: '#b5672f', fontFamily: 'monospace' }}>{fmt(emp.amount)}/mo base</span>
+                          {emp.amountOverrides?.length > 0 && (
+                          <span style={{
+                            display: 'inline-flex', alignItems: 'center', gap: 3,
+                            marginLeft: 6,
+                            background: '#fdf3e7', border: '1px solid #f0c490',
+                            color: '#a05e2a', borderRadius: 4,
+                            padding: '1px 5px', fontSize: 9, fontWeight: 600,
+                            fontFamily: "'DM Sans', sans-serif",
+                            verticalAlign: 'middle',
+                          }}>
+                             ✏️ {emp.amountOverrides.length}
+                             </span>
+                             )}
+                      </div>
                       </div>
                       <TrashBtn onClick={() => onDeleteRequest(emp)} />
                     </div>
@@ -391,6 +614,12 @@ const RecurringYearTable = memo(function RecurringYearTable({
                     const cell      = data[m]
                     const isEditing = editing?.empId === emp._id && editing?.month === m && editing?.year === year
                     const isSaving  = savingCell?.empId === emp._id && savingCell?.month === m && savingCell?.year === year
+                    const monthIdx  = MONTHS.indexOf(m)
+
+                    // Check if this month has an override
+                    const hasOverrideHere = emp.amountOverrides?.some(
+                      ov => ov.year === year && ov.month === m
+                    )
 
                     if (!cell || !cell.active) {
                       return <React.Fragment key={m}><td className="td-inactive" colSpan={2}>—</td></React.Fragment>
@@ -401,11 +630,28 @@ const RecurringYearTable = memo(function RecurringYearTable({
 
                     return (
                       <React.Fragment key={m}>
-                        <td className="td-amt">
-                          <div>{fmt(cell.amt)}</div>
+                        {/* AMT cell — clickable in edit-amount mode */}
+                        <td
+                          className={`td-amt${amtEditMode ? ' td-amt-editable' : ''}${hasOverrideHere ? ' td-amt-overridden' : ''}`}
+                          onClick={() => {
+                            if (!amtEditMode) return
+                            onAmountOverrideRequest(emp, m, year, cell.amt)
+                          }}
+                          title={amtEditMode ? `Click to change amount from ${m} ${year}` : undefined}
+                        >
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 4 }}>
+                            {hasOverrideHere && (
+                              <span title="Amount overridden this month" style={{ fontSize: 9, color: '#c97844', lineHeight: 1 }}>●</span>
+                            )}
+                            {amtEditMode && (
+                              <span style={{ fontSize: 10, color: '#c5b49e', marginRight: 2 }}>✏️</span>
+                            )}
+                            <span>{fmt(cell.amt)}</span>
+                          </div>
                           {hasCarry  && <div style={{ fontSize: 10, color: '#c97844', marginTop: 2 }}>carry: {fmt(cell.carry)} →</div>}
                           {hasCredit && <div style={{ fontSize: 10, color: '#7a9e5a', marginTop: 2 }}>credit: {fmt(Math.abs(cell.carry))} →</div>}
                         </td>
+                        {/* PAID cell — always clickable */}
                         <td
                           className={`td-paid${hasCarry ? ' has-carry' : ''}${isSaving ? ' saving' : ''}`}
                           onClick={() => !isEditing && !isSaving && handleEditStart(emp._id, m, year, cell.paid)}
@@ -469,10 +715,10 @@ const RecurringYearTable = memo(function RecurringYearTable({
 // ─── Expense Type Group ───────────────────────────────────────────────────────
 const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
   typeName, recurringEmps, oneTimeEmps, monthData, editing, editVal, inputRef,
-  setEditVal, handleEditStart, handleEditCommit, setEditing, savingCell, onDeleteRequest, defaultOpen = true
+  setEditVal, handleEditStart, handleEditCommit, setEditing, savingCell,
+  onDeleteRequest, onAmountOverrideRequest, defaultOpen = true
 }) {
   const [open, setOpen] = useState(defaultOpen)
-  // One-time has its own period state (not year-specific, uses current year)
   const [oneTimePeriod, setOneTimePeriod] = useState('full')
   const oneTimePeriodMonths = useMemo(() => getMonthsForPeriod(oneTimePeriod), [oneTimePeriod])
 
@@ -504,7 +750,6 @@ const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
 
       {open && (
         <div style={{ padding: '22px', background: '#fffdf8' }}>
-          {/* Recurring: each year gets its own RecurringYearTable with its own PeriodDropdown */}
           {recurringEmps.length > 0 && allYears.map(year => {
             const activeEmps = recurringEmps.filter(emp => getEmployeeYears(emp).includes(year))
             if (activeEmps.length === 0) return null
@@ -515,11 +760,11 @@ const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
                 setEditVal={setEditVal} handleEditStart={handleEditStart}
                 handleEditCommit={handleEditCommit} setEditing={setEditing}
                 savingCell={savingCell} onDeleteRequest={onDeleteRequest}
+                onAmountOverrideRequest={onAmountOverrideRequest}
               />
             )
           })}
 
-          {/* One-time: single period dropdown shared across all one-time entries */}
           {oneTimeEmps.length > 0 && (
             <div style={{ marginBottom: 10 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 10 }}>
@@ -529,7 +774,6 @@ const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
                 </div>
                 <PeriodDropdown value={oneTimePeriod} onChange={setOneTimePeriod} year="All" />
               </div>
-              {/* Pass the label pill=false since OneTimeExpensesTable already has its own internal label; we'll suppress it by passing filtered data */}
               <OneTimeExpensesTable
                 expenses={oneTimeEmps}
                 onDeleteRequest={onDeleteRequest}
@@ -631,19 +875,16 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
   const monthFull = MONTH_FULL[monthIndex]
   const currentYear = new Date().getFullYear()
 
-  // Collect all years present in data
   const allYears = useMemo(() => {
     const set = new Set()
     allExpenses.forEach(emp => getEmployeeYears(emp).forEach(y => set.add(y)))
-    return Array.from(set).sort((a, b) => b - a) // newest first
+    return Array.from(set).sort((a, b) => b - a)
   }, [allExpenses])
 
   const [selectedYear, setSelectedYear] = useState(() => {
-    // default to current year if present, else latest
     return allYears.includes(currentYear) ? currentYear : (allYears[0] || currentYear)
   })
 
-  // Recurring expenses active in this month+year
   const recurringRows = useMemo(() => {
     return allExpenses
       .filter(e => e.type === 'recurring' && isMonthActive(e, monthIndex, selectedYear))
@@ -655,7 +896,6 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
       .sort((a, b) => a._sortDate - b._sortDate)
   }, [allExpenses, monthData, monthIndex, selectedYear, monthName])
 
-  // One-time expenses whose date falls in this month+year
   const oneTimeRows = useMemo(() => {
     return allExpenses
       .filter(e => {
@@ -673,7 +913,6 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
   const oneTimeTotal     = oneTimeRows.reduce((s, r) => s + r.amount, 0)
   const grandTotal       = recurringTotal + oneTimeTotal
 
-  // Trap scroll behind modal
   useEffect(() => {
     document.body.style.overflow = 'hidden'
     return () => { document.body.style.overflow = '' }
@@ -696,7 +935,6 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
           fontFamily: "'DM Sans', sans-serif", overflow: 'hidden',
         }}
       >
-        {/* Header */}
         <div style={{ padding: '22px 26px 18px', borderBottom: '1.5px solid #e8dece', background: '#faf6ee', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
             <div>
@@ -708,33 +946,14 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-              {/* Year selector */}
               <div style={{ display: 'flex', gap: 4 }}>
                 {allYears.map(y => (
-                  <button
-                    key={y}
-                    onClick={() => setSelectedYear(y)}
-                    style={{
-                      padding: '4px 12px', borderRadius: 8, border: '1.5px solid',
-                      borderColor: selectedYear === y ? '#c97844' : '#e8dece',
-                      background: selectedYear === y ? '#fdf3e7' : 'transparent',
-                      color: selectedYear === y ? '#a05e2a' : '#8c7a68',
-                      fontSize: 12, fontWeight: selectedYear === y ? 600 : 400,
-                      cursor: 'pointer', fontFamily: "'DM Sans', sans-serif",
-                      transition: 'all 0.15s',
-                    }}
-                  >{y}</button>
+                  <button key={y} onClick={() => setSelectedYear(y)} style={{ padding: '4px 12px', borderRadius: 8, border: '1.5px solid', borderColor: selectedYear === y ? '#c97844' : '#e8dece', background: selectedYear === y ? '#fdf3e7' : 'transparent', color: selectedYear === y ? '#a05e2a' : '#8c7a68', fontSize: 12, fontWeight: selectedYear === y ? 600 : 400, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", transition: 'all 0.15s' }}>{y}</button>
                 ))}
               </div>
-              {/* Close */}
-              <button
-                onClick={onClose}
-                style={{ width: 32, height: 32, borderRadius: 10, border: '1.5px solid #e8dece', background: '#faf6ee', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, color: '#9a8775', flexShrink: 0 }}
-              >✕</button>
+              <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: '1.5px solid #e8dece', background: '#faf6ee', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, color: '#9a8775', flexShrink: 0 }}>✕</button>
             </div>
           </div>
-
-          {/* Summary pills */}
           <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
             {[
               { label: 'Recurring Due', value: fmt(recurringTotal), color: '#b5672f', bg: '#fdf3e7', border: '#f0c490' },
@@ -750,10 +969,7 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
           </div>
         </div>
 
-        {/* Body */}
         <div style={{ overflowY: 'auto', flex: 1, padding: '20px 26px 24px' }}>
-
-          {/* Recurring section */}
           {recurringRows.length > 0 && (
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -773,24 +989,24 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
                       const { cell } = emp
                       const due = Math.max(0, cell.amt - cell.paid)
                       return (
-                        <tr key={emp._id}
-                          onMouseEnter={e => e.currentTarget.style.background = '#fdf8f0'}
-                          onMouseLeave={e => e.currentTarget.style.background = ''}
-                        >
+                        <tr key={emp._id} onMouseEnter={e => e.currentTarget.style.background = '#fdf8f0'} onMouseLeave={e => e.currentTarget.style.background = ''}>
                           <td style={{ ...tdBase, width: 36, color: '#c5b49e', fontFamily: 'monospace', fontSize: 11, borderRight: '1px solid #f0ebe0' }}>{idx + 1}</td>
                           <td style={{ ...tdBase, borderRight: '1px solid #f0ebe0' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               <Avatar name={emp.expenseName || emp.name || '?'} />
                               <div>
                                 <div style={{ fontWeight: 500, color: '#2e2318', fontSize: 13 }}>{emp.expenseName || emp.name}</div>
-                                <div style={{ fontSize: 10, color: '#b0a090', marginTop: 1 }}>
-                                  since {parseUTCDate(emp.startDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                                </div>
+                                <div style={{ fontSize: 10, color: '#b0a090', marginTop: 1 }}>since {parseUTCDate(emp.startDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
                               </div>
                             </div>
                           </td>
                           <td style={{ ...tdBase, fontSize: 11, color: '#9a8775', borderRight: '1px solid #f0ebe0' }}>{emp.expenseType || '—'}</td>
-                          <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: '#b5672f', borderRight: '1px solid #f0ebe0' }}>{fmt(cell.amt)}</td>
+                          <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: '#b5672f', borderRight: '1px solid #f0ebe0' }}>
+                            {fmt(cell.amt)}
+                            {emp.amountOverrides?.some(ov => ov.year === selectedYear && ov.month === monthName) && (
+                              <span title="Amount overridden" style={{ marginLeft: 4, fontSize: 9, color: '#c97844' }}>●</span>
+                            )}
+                          </td>
                           <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', color: '#7a9e5a', borderRight: '1px solid #f0ebe0' }}>{fmt(cell.paid)}</td>
                           <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: due > 0 ? '#c97844' : '#7a9e5a' }}>
                             {due > 0 ? fmt(due) : <span style={{ color: '#7a9e5a', fontSize: 11 }}>✓ Paid</span>}
@@ -801,9 +1017,7 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
                   </tbody>
                   <tfoot>
                     <tr style={{ background: '#faf6ee' }}>
-                      <td colSpan={3} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, color: '#8c7a68', textTransform: 'uppercase', letterSpacing: 0.8, borderTop: '1.5px solid #e8dece', fontFamily: "'DM Sans', sans-serif" }}>
-                        Total ({recurringRows.length})
-                      </td>
+                      <td colSpan={3} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, color: '#8c7a68', textTransform: 'uppercase', letterSpacing: 0.8, borderTop: '1.5px solid #e8dece', fontFamily: "'DM Sans', sans-serif" }}>Total ({recurringRows.length})</td>
                       <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: '#b5672f', borderTop: '1.5px solid #e8dece', borderRight: '1px solid #f0ebe0' }}>{fmt(recurringTotal)}</td>
                       <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: '#7a9e5a', borderTop: '1.5px solid #e8dece', borderRight: '1px solid #f0ebe0' }}>{fmt(recurringPaid)}</td>
                       <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: recurringDue > 0 ? '#c97844' : '#7a9e5a', borderTop: '1.5px solid #e8dece' }}>{fmt(recurringDue)}</td>
@@ -814,7 +1028,6 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
             </div>
           )}
 
-          {/* One-time section */}
           {oneTimeRows.length > 0 && (
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
@@ -831,10 +1044,7 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
                   </thead>
                   <tbody>
                     {oneTimeRows.map((exp, idx) => (
-                      <tr key={exp._id}
-                        onMouseEnter={e => e.currentTarget.style.background = '#fdf8f0'}
-                        onMouseLeave={e => e.currentTarget.style.background = ''}
-                      >
+                      <tr key={exp._id} onMouseEnter={e => e.currentTarget.style.background = '#fdf8f0'} onMouseLeave={e => e.currentTarget.style.background = ''}>
                         <td style={{ ...tdBase, width: 36, color: '#c5b49e', fontFamily: 'monospace', fontSize: 11, borderRight: '1px solid #f0ebe0' }}>{idx + 1}</td>
                         <td style={{ ...tdBase, borderRight: '1px solid #f0ebe0' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -843,18 +1053,14 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
                           </div>
                         </td>
                         <td style={{ ...tdBase, fontSize: 11, color: '#9a8775', borderRight: '1px solid #f0ebe0' }}>{exp.expenseType || '—'}</td>
-                        <td style={{ ...tdBase, fontSize: 12, color: '#9a8775', borderRight: '1px solid #f0ebe0' }}>
-                          {parseUTCDate(exp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                        </td>
+                        <td style={{ ...tdBase, fontSize: 12, color: '#9a8775', borderRight: '1px solid #f0ebe0' }}>{parseUTCDate(exp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
                         <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: '#b5672f' }}>{fmt(exp.amount)}</td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr style={{ background: '#fdf3e7' }}>
-                      <td colSpan={4} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, color: '#8c7a68', textTransform: 'uppercase', letterSpacing: 0.8, borderTop: '1.5px solid #e8dece', fontFamily: "'DM Sans', sans-serif" }}>
-                        Total ({oneTimeRows.length})
-                      </td>
+                      <td colSpan={4} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, color: '#8c7a68', textTransform: 'uppercase', letterSpacing: 0.8, borderTop: '1.5px solid #e8dece', fontFamily: "'DM Sans', sans-serif" }}>Total ({oneTimeRows.length})</td>
                       <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: '#a05e2a', borderTop: '1.5px solid #e8dece' }}>{fmt(oneTimeTotal)}</td>
                     </tr>
                   </tfoot>
@@ -889,11 +1095,15 @@ const GLOBAL_STYLES = `
   .th-sub { text-align: center; font-size: 10px; font-weight: 500; letter-spacing: 0.8px; text-transform: uppercase; padding: 5px 6px; border-bottom: 1.5px solid #e8dece; border-right: 1px solid #f0ebe0; min-width: 88px; background: #faf6ee; color: #b0a090; font-family: 'DM Sans', sans-serif; }
   .th-sub.amt  { color: #b5672f; }
   .th-sub.paid { color: #7a9e5a; border-right: 1.5px solid #e8dece; }
+  .th-sub.amt.amt-edit-mode { color: #c97844; background: #fdf8f0; cursor: pointer; }
   .th-total { background: #f5f0e8; text-align: center; font-size: 10px; font-weight: 500; letter-spacing: 0.8px; text-transform: uppercase; padding: 5px 8px; border-bottom: 1.5px solid #e8dece; border-right: 1px solid #f0ebe0; min-width: 100px; font-family: 'DM Sans', sans-serif; color: #a05e2a; }
   tr.data-row:hover td        { background: #fdf8f0 !important; }
   tr.data-row:hover .col-name { background: #fdf8f0 !important; }
   .td-emp { padding: 11px 14px; border-bottom: 1px solid #f0ebe0; vertical-align: middle; }
   .td-amt { text-align: right; padding: 10px 10px; font-family: monospace; font-size: 12px; border-bottom: 1px solid #f0ebe0; border-right: 1px solid #f0ebe0; background: #faf6ee; color: #9a8775; }
+  .td-amt.td-amt-editable { cursor: pointer; }
+  .td-amt.td-amt-editable:hover { background: #fdf3e7 !important; color: #a05e2a !important; outline: 1.5px solid #f0c490; outline-offset: -1.5px; }
+  .td-amt.td-amt-overridden { color: #c97844 !important; font-weight: 600; }
   .td-paid { text-align: right; padding: 10px 10px; font-family: monospace; font-size: 12px; color: #7a9e5a; border-bottom: 1px solid #f0ebe0; border-right: 1.5px solid #e8dece; cursor: pointer; position: relative; }
   .td-paid:hover { background: #f5f8f0 !important; }
   .td-paid.has-carry { color: #c97844; }
@@ -927,18 +1137,22 @@ if (typeof document !== 'undefined' && !document.getElementById('employee-table-
 const EmployeeTable = () => {
   const navigate = useNavigate()
 
-  const [allExpenses, setAllExpenses] = useState([])
-  const [monthData,   setMonthData]   = useState({})
-  const [loading,     setLoading]     = useState(true)
-  const [error,       setError]       = useState(null)
-  const [savingCell,  setSavingCell]  = useState(null)
-  const [editing,     setEditing]     = useState(null)
-  const [editVal,     setEditVal]     = useState('')
+  const [allExpenses,        setAllExpenses]        = useState([])
+  const [monthData,          setMonthData]          = useState({})
+  const [loading,            setLoading]            = useState(true)
+  const [error,              setError]              = useState(null)
+  const [savingCell,         setSavingCell]         = useState(null)
+  const [editing,            setEditing]            = useState(null)
+  const [editVal,            setEditVal]            = useState('')
   const inputRef = useRef(null)
 
-  const [deleteTarget,    setDeleteTarget]    = useState(null)
-  const [deleting,        setDeleting]        = useState(false)
-  const [monthViewIndex,  setMonthViewIndex]  = useState(null) // null = closed
+  const [deleteTarget,       setDeleteTarget]       = useState(null)
+  const [deleting,           setDeleting]           = useState(false)
+  const [monthViewIndex,     setMonthViewIndex]     = useState(null)
+
+  // Amount override modal state
+  const [overrideTarget,     setOverrideTarget]     = useState(null) // { emp, month, year, currentAmt }
+  const [savingOverride,     setSavingOverride]     = useState(false)
 
   const parseServerData = useCallback((data) => {
     const recurring = data.filter(e => e.type === 'recurring')
@@ -1021,6 +1235,100 @@ const EmployeeTable = () => {
     })
   }, [editVal])
 
+  // ── Amount override handlers ─────────────────────────────────────────────
+  const handleAmountOverrideRequest = useCallback((emp, month, year, currentAmt) => {
+    setOverrideTarget({ emp, month, year, currentAmt })
+  }, [])
+
+  const handleAmountOverrideSave = useCallback(async (newAmount) => {
+    if (!overrideTarget) return
+    const { emp, month, year } = overrideTarget
+    setSavingOverride(true)
+
+    try {
+      await fetch(
+        `http://localhost:5000/api/employee/update-amount-override/${emp._id}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ year, month, amount: newAmount }),
+        }
+      )
+
+      // Update local state
+      setAllExpenses(prev => {
+        const updated = prev.map(e => {
+          if (e._id !== emp._id) return e
+          const overrides = [...(e.amountOverrides || [])]
+          const idx = overrides.findIndex(ov => ov.year === year && ov.month === month)
+          if (idx > -1) {
+            overrides[idx] = { year, month, amount: newAmount }
+          } else {
+            overrides.push({ year, month, amount: newAmount })
+          }
+          return { ...e, amountOverrides: overrides }
+        })
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(updated))
+
+        // Rebuild monthData for this employee across all years
+        const updatedEmp = updated.find(e => e._id === emp._id)
+        if (updatedEmp) {
+          const newKeys = rebuildAllYearsForEmp(updatedEmp)
+          setMonthData(md => ({ ...md, ...newKeys }))
+        }
+        return updated
+      })
+
+      setOverrideTarget(null)
+    } catch (err) {
+      console.error('Failed to save amount override:', err)
+    } finally {
+      setSavingOverride(false)
+    }
+  }, [overrideTarget])
+
+  const handleAmountOverrideRemove = useCallback(async () => {
+    if (!overrideTarget) return
+    const { emp, month, year } = overrideTarget
+    setSavingOverride(true)
+
+    try {
+      await fetch(
+        `http://localhost:5000/api/employee/remove-amount-override/${emp._id}`,
+        {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ year, month }),
+        }
+      )
+
+      setAllExpenses(prev => {
+        const updated = prev.map(e => {
+          if (e._id !== emp._id) return e
+          const overrides = (e.amountOverrides || []).filter(
+            ov => !(ov.year === year && ov.month === month)
+          )
+          return { ...e, amountOverrides: overrides }
+        })
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(updated))
+
+        const updatedEmp = updated.find(e => e._id === emp._id)
+        if (updatedEmp) {
+          const newKeys = rebuildAllYearsForEmp(updatedEmp)
+          setMonthData(md => ({ ...md, ...newKeys }))
+        }
+        return updated
+      })
+
+      setOverrideTarget(null)
+    } catch (err) {
+      console.error('Failed to remove amount override:', err)
+    } finally {
+      setSavingOverride(false)
+    }
+  }, [overrideTarget])
+
+  // ── Delete handlers ──────────────────────────────────────────────────────
   const handleDeleteRequest = useCallback((expense) => { setDeleteTarget(expense) }, [])
 
   const handleDeleteConfirm = useCallback(async () => {
@@ -1069,6 +1377,7 @@ const EmployeeTable = () => {
 
   return (
     <div style={{ padding: '36px 24px 60px', background: '#f5f0e8', minHeight: '100vh', fontFamily: "'DM Sans', sans-serif" }}>
+      {/* Modals */}
       {deleteTarget && (
         <DeleteModal expense={deleteTarget} onConfirm={handleDeleteConfirm} onCancel={handleDeleteCancel} deleting={deleting} />
       )}
@@ -1080,7 +1389,23 @@ const EmployeeTable = () => {
           onClose={() => setMonthViewIndex(null)}
         />
       )}
+      {overrideTarget && (
+        <AmountOverrideModal
+          emp={overrideTarget.emp}
+          month={overrideTarget.month}
+          year={overrideTarget.year}
+          currentAmt={overrideTarget.currentAmt}
+          existingOverride={overrideTarget.emp.amountOverrides?.find(
+            ov => ov.year === overrideTarget.year && ov.month === overrideTarget.month
+          )}
+          onSave={handleAmountOverrideSave}
+          onRemove={handleAmountOverrideRemove}
+          onCancel={() => { if (!savingOverride) setOverrideTarget(null) }}
+          saving={savingOverride}
+        />
+      )}
 
+      {/* Page header */}
       <div style={{ marginBottom: 28, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 2, textTransform: 'uppercase', color: '#b08a5e', marginBottom: 5 }}>Expense Tracker</div>
@@ -1090,8 +1415,7 @@ const EmployeeTable = () => {
             {totalRecurring} recurring &nbsp;·&nbsp;
             {totalOneTime} one-time &nbsp;·&nbsp;
             Click <span style={{ color: '#7a9e5a', fontWeight: 500 }}>Paid</span> to edit &nbsp;·&nbsp;
-            <span style={{ color: '#c97844' }}>Amber</span> = carry &nbsp;·&nbsp;
-            <span style={{ color: '#7a9e5a' }}>Green</span> = credit
+            <span style={{ color: '#c97844' }}>✏️ Edit amounts</span> to change monthly rates
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1123,7 +1447,9 @@ const EmployeeTable = () => {
             inputRef={inputRef} setEditVal={setEditVal}
             handleEditStart={handleEditStart} handleEditCommit={handleEditCommit}
             setEditing={setEditing} savingCell={savingCell}
-            onDeleteRequest={handleDeleteRequest} defaultOpen={idx === 0}
+            onDeleteRequest={handleDeleteRequest}
+            onAmountOverrideRequest={handleAmountOverrideRequest}
+            defaultOpen={idx === 0}
           />
         )
       })}
@@ -1131,7 +1457,8 @@ const EmployeeTable = () => {
       <p style={{ marginTop: 16, fontSize: 11, color: '#c5b49e', textAlign: 'center' }}>
         Scroll right to see all months &nbsp;·&nbsp;
         Click any <span style={{ color: '#7a9e5a' }}>Paid</span> cell to edit &nbsp;·&nbsp;
-        Unpaid balance carries forward &nbsp;·&nbsp; Overpayment credited to next month
+        Use <span style={{ color: '#c97844' }}>✏️ Edit amounts</span> to change rates mid-year &nbsp;·&nbsp;
+        <span style={{ color: '#c97844' }}>●</span> = overridden month
       </p>
     </div>
   )

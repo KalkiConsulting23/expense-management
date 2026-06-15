@@ -6,10 +6,15 @@ const paymentSchema = new mongoose.Schema({
   paid:  { type: Number, required: true },
 }, { _id: false });
 
+// Stores a mid-year amount change starting from a specific month+year
+const amountOverrideSchema = new mongoose.Schema({
+  year:   { type: Number, required: true },
+  month:  { type: String, required: true }, // "Jan", "Feb", ... "Dec"
+  amount: { type: Number, required: true },
+}, { _id: false });
+
 const employeeSchema = new mongoose.Schema(
   {
-    // userId removed completely to bypass auth restrictions
-
     expenseType: {
       type: String,
       required: [true, "Expense type is required"],
@@ -27,6 +32,13 @@ const employeeSchema = new mongoose.Schema(
     amount: {
       type: Number,
       required: true,
+    },
+    // Array of mid-year amount changes.
+    // e.g. [{ year: 2025, month: "Mar", amount: 20000 }]
+    // means from Mar 2025 onwards use 20000 instead of base `amount`.
+    amountOverrides: {
+      type: [amountOverrideSchema],
+      default: [],
     },
     startDate: {
       type: Date,

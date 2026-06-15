@@ -79,8 +79,9 @@ function buildProjectTimeline(project, year, localizedOverrides = {}) {
     } else {
       const type = (project.projectType || 'monthly').toLowerCase().trim();
       if (type === 'monthly') {
-        calculatedBase = Number(project.expectedAmount || 0) / totalActiveMonths;
-      } else {
+      calculatedBase = Number(project.expectedAmount || 0); // full amount per month, no division
+      }
+      else {
         calculatedBase = 0;
       }
       savedPaid = 0;
@@ -316,12 +317,11 @@ const ProjectTable = () => {
       calculatedAmt = includeGst ? base * 1.18 : base;
       payloadMetrics = { dailyRate, daysWorked, includeGst, currency, usdRate: currency === 'USD' ? usdRate : null };
     } else {
-      const totalActiveMonths = countTotalActiveMonths(project);
-      const monthlyInstallment = Number(project.expectedAmount || 0) / totalActiveMonths;
-      const base = (monthlyInstallment / (parseFloat(totalMonthDays) || 1)) * (parseFloat(daysWorkedMonthly) || 0);
+      const monthlyRate = Number(project.expectedAmount || 0); // full per-month rate
+      const base = (monthlyRate / (parseFloat(totalMonthDays) || 1)) * (parseFloat(daysWorkedMonthly) || 0);
       calculatedAmt = includeGst ? base * 1.18 : base;
       payloadMetrics = { totalMonthDays, daysWorkedMonthly, includeGst };
-    }
+  }
 
     const existingPaid = monthlyOverrides[key]?.paid !== undefined ? monthlyOverrides[key].paid : 0;
 
@@ -637,7 +637,7 @@ const ProjectTable = () => {
           </h2>
           <p style={{ fontSize: 13, color: '#9a8775', margin: 0, fontFamily: "'DM Sans', sans-serif" }}>
             {projects.length} project{projects.length !== 1 ? 's' : ''} &nbsp;·&nbsp;
-            Click <span style={{ color: '#b5672f', fontWeight: 500 }}>To Receive</span> to configure metrics &nbsp;·&nbsp;
+            Click <span style={{ color: '#b5672f', fontWeight: 500 }}>To BE Received</span> to configure metrics &nbsp;·&nbsp;
             Click <span style={{ color: '#7a9e5a', fontWeight: 500 }}>Received</span> to track per month
           </p>
         </div>
@@ -822,12 +822,12 @@ const ProjectTable = () => {
                     <tr>
                       {visibleMonths.map(m => (
                         <React.Fragment key={m}>
-                          <th className="th-sub-proj amt">To Receive</th>
+                          <th className="th-sub-proj amt">To Be Received</th>
                           <th className="th-sub-proj paid">Received</th>
                         </React.Fragment>
                       ))}
                       <th className="th-total-proj" style={{ borderRight: '1px solid #f0ebe0' }}>Received</th>
-                      <th className="th-total-proj" style={{ color: '#9a8775', background: '#faf6ee' }}>To Receive</th>
+                      <th className="th-total-proj" style={{ color: '#9a8775', background: '#faf6ee' }}>To Be Received</th>
                     </tr>
                   </thead>
 
@@ -1114,12 +1114,12 @@ const ProjectTable = () => {
                   padding: '10px 12px', borderRadius: 8, fontSize: 11,
                   color: '#8c7a68', marginBottom: 14, fontFamily: "'DM Sans', sans-serif",
                 }}>
-                  <div>Base installment: <span style={{ color: '#b5672f', fontFamily: 'monospace', fontWeight: 600 }}>
-                    {fmt((modalConfig.project.expectedAmount || 0) / countTotalActiveMonths(modalConfig.project))}
-                  </span></div>
-                  <div style={{ marginTop: 3, color: '#c5b49e' }}>
-                    {countTotalActiveMonths(modalConfig.project)} active months total
-                  </div>
+                  <div>Monthly rate: <span style={{ color: '#b5672f', fontFamily: 'monospace', fontWeight: 600 }}>
+                  {fmt(modalConfig.project.expectedAmount || 0)}
+                </span></div>
+                <div style={{ marginTop: 3, color: '#c5b49e' }}>
+                  Prorated by days worked ÷ total days
+                </div>
                 </div>
                 <div className="proj-modal-field">
                   <label>Total Cycle Days in Month</label>
@@ -1169,9 +1169,8 @@ const ProjectTable = () => {
                 const rateInINR = currency === 'USD' ? (parseFloat(dailyRate) || 0) * usdRate : (parseFloat(dailyRate) || 0);
                 base = rateInINR * (parseFloat(daysWorked) || 0);
               } else {
-                const totalActiveMonths = countTotalActiveMonths(project);
-                const inst = Number(project.expectedAmount || 0) / totalActiveMonths;
-                base = (inst / (parseFloat(totalMonthDays) || 1)) * (parseFloat(daysWorkedMonthly) || 0);
+                const monthlyRate = Number(project.expectedAmount || 0);
+                base = (monthlyRate / (parseFloat(totalMonthDays) || 1)) * (parseFloat(daysWorkedMonthly) || 0);
               }
               const gstAmt = base * 0.18;
               const final = includeGst ? base + gstAmt : base;

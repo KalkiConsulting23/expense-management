@@ -1,9 +1,105 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
 const TABS = ["recurring", "one-time"];
 const CACHE_KEY = 'local_employee_data_cache';
 
+// ── Autocomplete Input ────────────────────────────────────────────────────
+const AutocompleteInput = ({ value, onChange, suggestions, placeholder, hasError, onBlur }) => {
+  const [open, setOpen]           = useState(false);
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const wrapRef                   = useRef(null);
+
+  const filtered = value.trim()
+    ? suggestions.filter((s) => s.toLowerCase().includes(value.toLowerCase()) && s.toLowerCase() !== value.toLowerCase())
+    : [];
+
+  // Close on outside click
+  useEffect(() => {
+    const handler = (e) => {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const handleChange = (e) => {
+    onChange(e.target.value);
+    setOpen(true);
+    setActiveIdx(-1);
+  };
+
+  const handleSelect = (val) => {
+    onChange(val);
+    setOpen(false);
+    setActiveIdx(-1);
+  };
+
+  const handleKeyDown = (e) => {
+    if (!open || filtered.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setActiveIdx((i) => (i + 1) % filtered.length);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setActiveIdx((i) => (i - 1 + filtered.length) % filtered.length);
+    } else if (e.key === "Enter" && activeIdx >= 0) {
+      e.preventDefault();
+      handleSelect(filtered[activeIdx]);
+    } else if (e.key === "Escape") {
+      setOpen(false);
+    }
+  };
+
+  // Highlight matching portion
+  const highlight = (text) => {
+    const idx = text.toLowerCase().indexOf(value.toLowerCase());
+    if (idx === -1 || !value.trim()) return text;
+    return (
+      <>
+        {text.slice(0, idx)}
+        <mark style={{ background: "#fce4c8", color: "#7a4a1e", padding: 0, borderRadius: 2 }}>
+          {text.slice(idx, idx + value.length)}
+        </mark>
+        {text.slice(idx + value.length)}
+      </>
+    );
+  };
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative" }}>
+      <input
+        className={`ep-input${hasError ? " err" : ""}`}
+        value={value}
+        onChange={handleChange}
+        onKeyDown={handleKeyDown}
+        onFocus={() => filtered.length > 0 && setOpen(true)}
+        onBlur={onBlur}
+        placeholder={placeholder}
+        type="text"
+        autoFocus
+        autoComplete="off"
+      />
+      {open && filtered.length > 0 && (
+        <ul className="ep-autocomplete-list">
+          {filtered.map((item, i) => (
+            <li
+              key={item}
+              className={`ep-autocomplete-item${i === activeIdx ? " active" : ""}`}
+              onMouseDown={() => handleSelect(item)}
+              onMouseEnter={() => setActiveIdx(i)}
+            >
+              <span className="ep-ac-icon">🏷</span>
+              <span>{highlight(item)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+};
+
+// ── Main Component ────────────────────────────────────────────────────────
 const Employee = () => {
   const navigate = useNavigate();
 
@@ -11,12 +107,40 @@ const Employee = () => {
   const [expenseTypeError, setExpenseTypeError] = useState("");
   const [expenseName, setExpenseName]           = useState("");
   const [expenseNameError, setExpenseNameError] = useState("");
+  const [existingTypes, setExistingTypes]       = useState([]);
 
   const [type, setType] = useState("recurring");
 
   const [recurringData, setRecurringData] = useState({ amount: "", startDate: "", endDate: "" });
   const [oneTimeData, setOneTimeData]     = useState({ amount: "", date: "" });
-  const [errors, setErrors]   = useState({});
+  const [errors, setErrors]               = useState({});
+
+  // Fetch existing expense types for autocomplete
+  useEffect(() => {
+    const load = async () => {
+      try {
+        // Try cache first
+        const cached = sessionStorage.getItem(CACHE_KEY);
+        const employees = cached ? JSON.parse(cached) : null;
+
+        if (employees) {
+          const types = [...new Set(employees.map((e) => e.expenseType).filter(Boolean))];
+          setExistingTypes(types);
+        } else {
+          const res = await fetch("https://expense-management-7.onrender.com/api/employee/all");
+          if (res.ok) {
+            const data = await res.json();
+            const types = [...new Set(data.map((e) => e.expenseType).filter(Boolean))];
+            setExistingTypes(types);
+          }
+        }
+      } catch (err) {
+        // Non-critical — autocomplete just won't show suggestions
+        console.warn("Could not load expense types for autocomplete:", err);
+      }
+    };
+    load();
+  }, []);
 
   const handleRecurringChange = (e) => {
     const { name, value } = e.target;
@@ -78,7 +202,6 @@ const Employee = () => {
     }
 
     try {
-      // Replaced old custom apiFetch hook layer with native structural fetch calls
       const response = await fetch("https://expense-management-7.onrender.com/api/employee/add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -103,9 +226,7 @@ const Employee = () => {
     }
   };
 
-  const handleCancel = () => {
-    navigate("/");
-  };
+  const handleCancel = () => navigate("/");
 
   return (
     <>
@@ -170,6 +291,40 @@ const Employee = () => {
         .ep-btn-submit { display: flex; align-items: center; gap: 7px; padding: 10px 22px; border-radius: 12px; border: none; background: #c97844; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500; color: #fff; cursor: pointer; transition: background 0.15s, transform 0.1s; letter-spacing: 0.3px; }
         .ep-btn-submit:hover { background: #b5672f; transform: translateY(-1px); }
         .ep-btn-submit:active { transform: translateY(0); }
+
+        /* ── Autocomplete dropdown ── */
+        .ep-autocomplete-list {
+          position: absolute;
+          top: calc(100% + 6px);
+          left: 0; right: 0;
+          background: #fffdf8;
+          border: 1.5px solid #e0d4c0;
+          border-radius: 12px;
+          box-shadow: 0 6px 24px rgba(160,130,90,0.13);
+          list-style: none;
+          overflow: hidden;
+          z-index: 100;
+          padding: 4px;
+        }
+        .ep-autocomplete-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 9px 12px;
+          font-size: 13.5px;
+          color: #3a2a18;
+          border-radius: 9px;
+          cursor: pointer;
+          transition: background 0.12s;
+          font-family: 'DM Sans', sans-serif;
+        }
+        .ep-autocomplete-item:hover,
+        .ep-autocomplete-item.active {
+          background: #fce9d4;
+          color: #7a3e10;
+        }
+        .ep-ac-icon { font-size: 12px; flex-shrink: 0; opacity: 0.7; }
+
         @media (max-width: 520px) {
           .ep-body { padding: 22px 18px; }
           .ep-header { padding: 20px 18px 16px; }
@@ -188,15 +343,16 @@ const Employee = () => {
           <div className="ep-body">
             <div className="ep-section-divider">Expense details</div>
 
+            {/* Expense Type — with autocomplete */}
             <div className="ep-field">
               <label className="ep-label">Expense Type <span className="ep-required">*</span></label>
-              <input
-                className={`ep-input${expenseTypeError ? " err" : ""}`}
+              <AutocompleteInput
                 value={expenseType}
-                onChange={(e) => { setExpenseType(e.target.value); if (expenseTypeError) setExpenseTypeError(""); }}
+                onChange={(val) => { setExpenseType(val); if (expenseTypeError) setExpenseTypeError(""); }}
+                suggestions={existingTypes}
                 placeholder="e.g. Salary, Rent, Utilities…"
-                type="text"
-                autoFocus
+                hasError={!!expenseTypeError}
+                onBlur={() => {}}
               />
               {expenseTypeError
                 ? <span className="ep-err">⚠ {expenseTypeError}</span>

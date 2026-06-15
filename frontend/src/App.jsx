@@ -12,6 +12,7 @@ const Salesanl      = lazy(() => import('./assets/salesanl'))
 const Projectanl    = lazy(() => import('./assets/projectanl'))
 const Expenseanl    = lazy(() => import('./assets/expenseanl'))
 const Expensemaster = lazy(() => import('./assets/expensemaster'))
+const Projectmaster = lazy(() => import('./assets/projectmaster'))
 
 const PageLoader = () => (
   <div style={{
@@ -50,6 +51,7 @@ function App() {
             <Route path="/expenseanl"     element={<Expenseanl />} />
 
             <Route path="/expensemaster"  element={<Expensemaster />} />
+            <Route path="/projectmaster"  element={<Projectmaster />} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

@@ -55,6 +55,18 @@ const Navbar = () => {
         </svg>
       ),
     },
+    {
+      label: 'Project Master',
+      path: '/projectmaster',
+      icon: (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="2" y="3" width="20" height="14" rx="2"/>
+          <path d="M8 21h8M12 17v4"/>
+          <line x1="7" y1="8" x2="17" y2="8"/>
+          <line x1="7" y1="12" x2="13" y2="12"/>
+        </svg>
+      ),
+    },
   ]
 
   useEffect(() => {
@@ -284,7 +296,7 @@ const Navbar = () => {
         <div className="navbar-inner">
           <span className="nav-section-label">Navigation</span>
 
-          {/* Regular nav items (all except Expense Master) */}
+          {/* Regular nav items */}
           {navItems.slice(0, 3).map((item) => (
             <button
               key={item.path}
@@ -296,9 +308,24 @@ const Navbar = () => {
             </button>
           ))}
 
-          {/* Expense Master — visually separated with dashed border */}
+          {/* Expense Master */}
           {(() => {
             const item = navItems[3]
+            return (
+              <button
+                key={item.path}
+                className={`nav-btn master-btn${location.pathname === item.path ? ' active' : ''}`}
+                onClick={() => { navigate(item.path); setSidebarOpen(false) }}
+              >
+                {item.icon}
+                {item.label}
+              </button>
+            )
+          })()}
+
+          {/* Project Master */}
+          {(() => {
+            const item = navItems[4]
             return (
               <button
                 key={item.path}

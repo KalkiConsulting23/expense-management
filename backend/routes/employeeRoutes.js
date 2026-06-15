@@ -20,7 +20,6 @@ router.post("/add", async (req, res) => {
     }
 
     const data = {
-      // userId removed entirely
       expenseType: expenseType.trim(),
       expenseName: expenseName.trim(),
       type,
@@ -74,8 +73,7 @@ router.post("/add", async (req, res) => {
 // ── Get All Employees ────────────────────────────────────────────────────
 router.get("/all", async (req, res) => {
   try {
-    // Removed userId filtering to fetch all records locally
-    const employees = await Employee.find({}); 
+    const employees = await Employee.find({});
     res.status(200).json(employees);
   } catch (err) {
     res.status(500).json({ message: err.message });
@@ -87,7 +85,6 @@ router.patch("/update-payment/:id", async (req, res) => {
   try {
     const { year, month, paid } = req.body;
 
-    // Removed userId check so we find items purely by document ID
     const employee = await Employee.findOne({ _id: req.params.id });
     if (!employee) return res.status(404).json({ message: "Employee not found" });
 
@@ -108,10 +105,85 @@ router.patch("/update-payment/:id", async (req, res) => {
   }
 });
 
+// ── Add or update an amount override for a specific month ─────────────────
+// Body: { year: Number, month: String, amount: Number }
+// Effect: from that month+year onwards the expense uses `amount` instead of
+//         the base amount (until the next override, if any).
+router.patch("/update-amount-override/:id", async (req, res) => {
+  try {
+    const { year, month, amount } = req.body;
+
+    if (!year || !month || amount === undefined) {
+      return res.status(400).json({ message: "year, month, and amount are required." });
+    }
+    if (typeof amount !== "number" || amount <= 0) {
+      return res.status(400).json({ message: "amount must be a positive number." });
+    }
+
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) return res.status(404).json({ message: "Employee not found" });
+    if (employee.type !== "recurring") {
+      return res.status(400).json({ message: "Amount overrides are only supported for recurring expenses." });
+    }
+
+    const index = employee.amountOverrides.findIndex(
+      (ov) => ov.year === year && ov.month === month
+    );
+
+    if (index > -1) {
+      // Update existing override for this month
+      employee.amountOverrides[index].amount = amount;
+    } else {
+      // Add new override
+      employee.amountOverrides.push({ year, month, amount });
+    }
+
+    await employee.save();
+    res.status(200).json({
+      message: "Amount override saved",
+      amountOverrides: employee.amountOverrides,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ── Remove an amount override for a specific month ────────────────────────
+// Body: { year: Number, month: String }
+// Effect: that month reverts to the previous override or base amount.
+router.delete("/remove-amount-override/:id", async (req, res) => {
+  try {
+    const { year, month } = req.body;
+
+    if (!year || !month) {
+      return res.status(400).json({ message: "year and month are required." });
+    }
+
+    const employee = await Employee.findById(req.params.id);
+    if (!employee) return res.status(404).json({ message: "Employee not found" });
+
+    const before = employee.amountOverrides.length;
+    employee.amountOverrides = employee.amountOverrides.filter(
+      (ov) => !(ov.year === year && ov.month === month)
+    );
+
+    if (employee.amountOverrides.length === before) {
+      return res.status(404).json({ message: "No override found for that month." });
+    }
+
+    await employee.save();
+    res.status(200).json({
+      message: "Amount override removed",
+      amountOverrides: employee.amountOverrides,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
 // ── Delete Employee ───────────────────────────────────────────────────────
 router.delete("/delete/:id", async (req, res) => {
   try {
-    // Removed userId constraint to allow seamless deletion via ID
     const deleted = await Employee.findOneAndDelete({ _id: req.params.id });
     if (!deleted) return res.status(404).json({ message: "Employee not found" });
     res.status(200).json({ message: "Employee deleted successfully" });

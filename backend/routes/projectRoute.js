@@ -6,7 +6,7 @@ const Project = require('../models/project');
 router.post('/add', async (req, res) => {
   try {
     const { projectName, projectType, startDate, endDate, expectedAmount, currency } = req.body;
-
+     
     const newProject = new Project({
       // userId removed entirely
       projectName,
