@@ -1180,7 +1180,7 @@ const EmployeeTable = () => {
           setLoading(false)
           return
         }
-        const res  = await fetch('https://expense-management-7.onrender.com/api/employee/all')
+        const res  = await fetch('https://expense-management-11.onrender.com/api/employee/all')
         const data = await res.json()
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(data))
         setAllExpenses(data)
@@ -1226,7 +1226,7 @@ const EmployeeTable = () => {
         return updatedExps
       })
       setSavingCell({ empId, month, year })
-      fetch(`https://expense-management-7.onrender.com/api/employee/update-payment/${empId}`, {
+      fetch(`https://expense-management-11.onrender.com/api/employee/update-payment/${empId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ year, month, paid: newVal }),
@@ -1247,7 +1247,7 @@ const EmployeeTable = () => {
 
     try {
       await fetch(
-        `http://localhost:5000/api/employee/update-amount-override/${emp._id}`,
+        `https://expense-management-11.onrender.com/api/employee/update-amount-override/${emp._id}`,
         {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
@@ -1294,7 +1294,7 @@ const EmployeeTable = () => {
 
     try {
       await fetch(
-        `http://localhost:5000/api/employee/remove-amount-override/${emp._id}`,
+        `https://expense-management-11.onrender.com/api/employee/remove-amount-override/${emp._id}`,
         {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
@@ -1335,7 +1335,7 @@ const EmployeeTable = () => {
     if (!deleteTarget) return
     setDeleting(true)
     try {
-      await fetch(`https://expense-management-7.onrender.com/api/employee/delete/${deleteTarget._id}`, { method: 'DELETE' })
+      await fetch(`https://expense-management-11.onrender.com/api/employee/delete/${deleteTarget._id}`, { method: 'DELETE' })
       setAllExpenses(prev => {
         const remaining = prev.filter(e => e._id !== deleteTarget._id)
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(remaining))

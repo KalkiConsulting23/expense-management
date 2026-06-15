@@ -75,7 +75,7 @@ const AddProject = () => {
     setLoading(true);
     try {
       // Replaced old custom apiFetch hook layer with clean native fetch code
-      const res = await fetch("https://expense-management-7.onrender.com/api/project/add", {
+      const res = await fetch("https://expense-management-11.onrender.com/api/project/add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

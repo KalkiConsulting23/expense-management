@@ -37,7 +37,7 @@ const Salesform = () => {
     try {
       setLoading(true)
       // Swapped out custom hook engine to route cleanly through a native javascript fetch loop
-      const res = await fetch('https://expense-management-7.onrender.com/api/sales', {
+      const res = await fetch('https://expense-management-11.onrender.com/api/sales', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...form, amount: Number(form.amount) }),

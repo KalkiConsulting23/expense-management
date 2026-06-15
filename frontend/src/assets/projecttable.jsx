@@ -209,7 +209,7 @@ const ProjectTable = () => {
           return;
         }
 
-        const res = await fetch('https://expense-management-7.onrender.com/api/project/all');
+        const res = await fetch('https://expense-management-11.onrender.com/api/project/all');
         const data = await res.json();
         
         sessionStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(data));
@@ -231,7 +231,7 @@ const ProjectTable = () => {
     setDeleting(true);
 
     try {
-      const res = await fetch(`https://expense-management-7.onrender.com/api/project/delete/${project._id}`, {
+      const res = await fetch(`https://expense-management-11.onrender.com/api/project/delete/${project._id}`, {
         method: 'DELETE',
       });
 
@@ -354,7 +354,7 @@ const ProjectTable = () => {
     setModalConfig(null);
 
     try {
-      await fetch(`https://expense-management-7.onrender.com/api/project/sync-month/${project._id}`, {
+      await fetch(`https://expense-management-11.onrender.com/api/project/delete/${project._id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ month, year, amt: calculatedAmt, metrics: payloadMetrics }),
@@ -402,7 +402,7 @@ const ProjectTable = () => {
     setEditingPayment(null);
 
     try {
-      await fetch(`https://expense-management-7.onrender.com/api/project/sync-month/${projectId}`, {
+      await fetch(`https://expense-management-11.onrender.com/api/project/sync-month/${project._id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ month, year, paid: val }),

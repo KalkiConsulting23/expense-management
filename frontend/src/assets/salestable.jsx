@@ -121,7 +121,7 @@ const Salestable = () => {
 
       try {
         // Swapped custom API hook utility out for standard native JavaScript fetch calls
-        const res  = await fetch('https://expense-management-7.onrender.com/api/sales')
+        const res  = await fetch('https://expense-management-11.onrender.com/api/sales')
         const data = await res.json()
         
         sessionStorage.setItem(SALES_CACHE_KEY, JSON.stringify(data))
@@ -146,12 +146,12 @@ const Salestable = () => {
     setDeletingId(id)
 
     try {
-      await fetch(`https://expense-management-7.onrender.com/api/sales/${id}`, { method: 'DELETE' })
+      await fetch(`https://expense-management-11.onrender.com/api/sales/${id}`, { method: 'DELETE' })
       showToast('success', 'Sale deleted successfully.')
     } catch (err) {
       showToast('error', 'Failed to delete sale.')
       try {
-        const res  = await fetch('https://expense-management-7.onrender.com/api/sales')
+        const res  = await fetch('https://expense-management-11.onrender.com/api/sales')
         const data = await res.json()
         sessionStorage.setItem(SALES_CACHE_KEY, JSON.stringify(data))
         setSales(data)

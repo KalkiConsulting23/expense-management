@@ -256,7 +256,7 @@ const Salesanl = () => {
     }
 
     // Native fetch pipeline implementation directly targeting local port 5000
-    fetch('https://expense-management-7.onrender.com/api/sales')
+    fetch('https://expense-management-11.onrender.com/api/sales')
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(d => { 
         const verifiedData = Array.isArray(d) ? d : [];

@@ -127,7 +127,7 @@ const Employee = () => {
           const types = [...new Set(employees.map((e) => e.expenseType).filter(Boolean))];
           setExistingTypes(types);
         } else {
-          const res = await fetch("https://expense-management-7.onrender.com/api/employee/all");
+          const res = await fetch("https://expense-management-11.onrender.com/api/employee/all");
           if (res.ok) {
             const data = await res.json();
             const types = [...new Set(data.map((e) => e.expenseType).filter(Boolean))];
@@ -202,7 +202,7 @@ const Employee = () => {
     }
 
     try {
-      const response = await fetch("https://expense-management-7.onrender.com/api/employee/add", {
+      const response = await fetch("https://expense-management-11.onrender.com/api/employee/add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

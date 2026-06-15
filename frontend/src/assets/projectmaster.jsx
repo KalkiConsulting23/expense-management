@@ -17,7 +17,7 @@ const Projectmaster = () => {
   const [half, setHalf]           = useState('all')
 
   useEffect(() => {
-    fetch('https://expense-management-7.onrender.com/api/project/all')
+    fetch('https://expense-management-11.onrender.com/api/project/all')
       .then(r => { if (!r.ok) throw new Error('Failed'); return r.json() })
       .then(data => {
         setProjects(data)
