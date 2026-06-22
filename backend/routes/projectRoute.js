@@ -14,6 +14,7 @@ router.post('/add', async (req, res) => {
       currency,
       defaultHourlyRate,
       defaultDailyRate,
+      projectScope,
     } = req.body;
 
     const newProject = new Project({
@@ -26,9 +27,10 @@ router.post('/add', async (req, res) => {
       defaultHourlyRate: defaultHourlyRate || 0,
       defaultDailyRate: defaultDailyRate || 0,
       currency: currency || 'INR',
+      projectScope: projectScope || 'domestic',
       monthlyBreakdowns: []
     });
-
+   
     await newProject.save();
     res.status(201).json(newProject);
   } catch (err) {

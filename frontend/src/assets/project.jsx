@@ -1,14 +1,33 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
-const CURRENCIES = [
-  { value: "INR", symbol: "₹", label: "INR (₹)" },
-  { value: "USD", symbol: "$", label: "USD ($)" },
+// Fallback FX rates to INR — used only if the live API is unreachable
+const FALLBACK_FX = {
+  INR: 1,
+  USD: 83.5,
+  EUR: 90.2,
+  GBP: 106.4,
+  AED: 22.7,
+  SGD: 62.1,
+};
+
+const CURRENCY_SYMBOLS = {
+  INR: "₹", USD: "$", EUR: "€", GBP: "£", AED: "د.إ", SGD: "S$",
+};
+
+// Domestic projects bill only in INR; international can pick any of these
+const INTL_CURRENCIES = [
+  { value: "USD", symbol: "$",   label: "USD" },
+  { value: "EUR", symbol: "€",   label: "EUR" },
+  { value: "GBP", symbol: "£",   label: "GBP" },
+  { value: "AED", symbol: "د.إ", label: "AED" },
+  { value: "SGD", symbol: "S$",  label: "SGD" },
 ];
 
 const API_BASE = import.meta.env.VITE_API_BASE;
-const USD_TO_INR = 83.5;
+const GST_RATE = 0.18;
 const PROJECT_CACHE_KEY = 'local_project_data_cache';
+const FX_API = "https://open.er-api.com/v6/latest/INR"; // free, no key
 
 const typeConfig = {
   hourly:  { icon: "⏱", label: "Hourly" },
@@ -19,18 +38,66 @@ const typeConfig = {
 const AddProject = () => {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
+    projectScope: "domestic",
     projectName: "", projectType: "", currency: "INR",
     startDate: "", endDate: "", expectedAmount: "",
     defaultHourlyRate: "", defaultDailyRate: "",
+    includeGst: false,
   });
   const [errors, setErrors]   = useState({});
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  // Live FX state — starts on fallback, replaced by API result
+  const [fxRates, setFxRates]   = useState(FALLBACK_FX);
+  const [fxStatus, setFxStatus] = useState("loading"); // loading | live | fallback
+  const [fxUpdated, setFxUpdated] = useState(null);
+
+  const isIntl = formData.projectScope === "international";
+
+  // Fetch live rates once on mount
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(FX_API);
+        if (!res.ok) throw new Error("bad status");
+        const data = await res.json();
+        // API gives 1 INR -> X foreign. We need foreign -> INR, so invert.
+        const r = data.rates || {};
+        const toINR = { INR: 1 };
+        ["USD", "EUR", "GBP", "AED", "SGD"].forEach((c) => {
+          if (r[c]) toINR[c] = 1 / r[c];
+        });
+        if (!cancelled) {
+          setFxRates({ ...FALLBACK_FX, ...toINR });
+          setFxStatus("live");
+          setFxUpdated(data.time_last_update_utc || null);
+        }
+      } catch (err) {
+        if (!cancelled) setFxStatus("fallback");
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((p) => ({ ...p, [name]: value }));
     if (errors[name]) setErrors((p) => ({ ...p, [name]: undefined }));
+  };
+
+  // Switching scope resets money fields to avoid stale GST/currency state
+  const handleScopeChange = (scope) => {
+    setFormData((p) => ({
+      ...p,
+      projectScope: scope,
+      currency: scope === "international" ? "USD" : "INR",
+      includeGst: false,
+      expectedAmount: "",
+      defaultHourlyRate: "",
+      defaultDailyRate: "",
+    }));
   };
 
   const handleTypeChange = (type) => {
@@ -40,7 +107,8 @@ const AddProject = () => {
       expectedAmount: "",
       defaultHourlyRate: "",
       defaultDailyRate: "",
-      currency: "INR",
+      currency: isIntl ? (p.currency || "USD") : "INR",
+      includeGst: false,
     }));
     setErrors((p) => ({ ...p, projectType: undefined }));
   };
@@ -76,8 +144,9 @@ const AddProject = () => {
     const errs = validate();
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
-    const fx = formData.currency === "USD" ? USD_TO_INR : 1;
-
+    const fx = fxRates[formData.currency] || 1;
+    // GST is already folded into the field value when the toggle is on,
+    // so we only apply the currency conversion here.
     let finalAmountINR = 0;
     let hourlyINR = 0;
     let dailyINR = 0;
@@ -91,6 +160,7 @@ const AddProject = () => {
     }
 
     const payload = {
+      projectScope:      formData.projectScope,
       projectName:       formData.projectName.trim(),
       projectType:       formData.projectType,
       expectedAmount:    finalAmountINR,
@@ -120,7 +190,7 @@ const AddProject = () => {
       sessionStorage.removeItem(PROJECT_CACHE_KEY);
 
       setSuccess(true);
-      setFormData({ projectName: "", projectType: "", currency: "INR", startDate: "", endDate: "", expectedAmount: "", defaultHourlyRate: "", defaultDailyRate: "" });
+      setFormData({ projectScope: "domestic", projectName: "", projectType: "", currency: "INR", startDate: "", endDate: "", expectedAmount: "", defaultHourlyRate: "", defaultDailyRate: "", includeGst: false });
       setErrors({});
       setTimeout(() => {
         setSuccess(false);
@@ -134,18 +204,99 @@ const AddProject = () => {
   };
 
   const handleCancel = () => {
-    setFormData({ projectName: "", projectType: "", currency: "INR", startDate: "", endDate: "", expectedAmount: "", defaultHourlyRate: "", defaultDailyRate: "" });
+    setFormData({ projectScope: "domestic", projectName: "", projectType: "", currency: "INR", startDate: "", endDate: "", expectedAmount: "", defaultHourlyRate: "", defaultDailyRate: "", includeGst: false });
     setErrors({});
     setSuccess(false);
     navigate("/projecttable");
   };
 
-  const sym = formData.currency === "USD" ? "$" : "₹";
+  const sym = CURRENCY_SYMBOLS[formData.currency] || "₹";
 
   // Active rate field key/value for hourly & daily
   const rateField = formData.projectType === "hourly" ? "defaultHourlyRate" : "defaultDailyRate";
   const rateValue = formData.projectType === "hourly" ? formData.defaultHourlyRate : formData.defaultDailyRate;
   const rateLabel = formData.projectType === "hourly" ? "Default Hourly Rate" : "Default Daily Rate";
+
+  // Base value for the currently active money field
+  const baseVal =
+    formData.projectType === "monthly" ? formData.expectedAmount : rateValue;
+  const unit = formData.projectType === "hourly" ? " / hr" : formData.projectType === "daily" ? " / day" : "";
+  const gstTotal = Number(baseVal) * (1 + GST_RATE);
+  const fmt = (n) => n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
+  const inrFmt = (n) => n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
+
+  const curRate = fxRates[formData.currency] || 1;
+
+  // ─── Domestic: GST toggle ───
+  // Ticking GST folds 18% INTO the visible field value; unticking removes it.
+  const handleGstToggle = (checked) => {
+    setFormData((p) => {
+      const field =
+        p.projectType === "monthly" ? "expectedAmount"
+        : p.projectType === "hourly" ? "defaultHourlyRate"
+        : "defaultDailyRate";
+      const current = Number(p[field]);
+      if (!current || current <= 0) return { ...p, includeGst: checked };
+      const next = checked ? current * (1 + GST_RATE) : current / (1 + GST_RATE);
+      // round to 2dp, trim trailing zeros
+      const rounded = Math.round(next * 100) / 100;
+      return { ...p, includeGst: checked, [field]: String(rounded) };
+    });
+  };
+
+  const GstToggle = () =>
+    Number(baseVal) > 0 ? (
+      <div className="ap-gst-wrap">
+        <label className="ap-gst-row">
+          <input
+            type="checkbox"
+            name="includeGst"
+            checked={formData.includeGst}
+            onChange={(e) => handleGstToggle(e.target.checked)}
+            style={{ display: "none" }}
+          />
+          <span className={`ap-gst-box${formData.includeGst ? " checked" : ""}`}>
+            {formData.includeGst && "✓"}
+          </span>
+          <span className="ap-gst-label">Include GST (18%)</span>
+        </label>
+        {formData.includeGst && (
+          <div className="ap-gst-hint">
+            ✓ 18% GST included — <strong>₹{fmt(Number(baseVal))}{unit}</strong> is GST-inclusive
+          </div>
+        )}
+      </div>
+    ) : null;
+
+  // ─── International: currency picker with live FX ───
+  const CurrencyPicker = () => (
+    <div className="ap-field">
+      <div className="ap-label">
+        Billing Currency <span className="ap-required">*</span>
+        <span className={`ap-fx-badge ap-fx-${fxStatus}`}>
+          {fxStatus === "live" ? "● Live rates" : fxStatus === "loading" ? "○ Loading rates…" : "○ Offline rates"}
+        </span>
+      </div>
+      <div className="ap-cur-group">
+        {INTL_CURRENCIES.map((c) => (
+          <button
+            key={c.value}
+            className={`ap-cur-btn${formData.currency === c.value ? " active" : ""}`}
+            onClick={() => setFormData((p) => ({ ...p, currency: c.value }))}
+            type="button"
+          >
+            <strong>{c.symbol}</strong> {c.label}
+          </button>
+        ))}
+      </div>
+      {Number(baseVal) > 0 && (
+        <div className="ap-usd-hint">
+          {sym}{fmt(Number(baseVal))} → ≈ ₹{inrFmt(Number(baseVal) * curRate)} will be saved{unit}
+          <span className="ap-fx-note"> (1 {formData.currency} = ₹{curRate.toFixed(2)})</span>
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <>
@@ -160,13 +311,17 @@ const AddProject = () => {
         .ap-heading { font-family: 'Lora', serif; font-size: 26px; font-weight: 600; color: #2e2318; margin: 0 0 4px; line-height: 1.2; }
         .ap-sub { font-size: 13px; color: #9a8775; margin-bottom: 28px; }
         .ap-divider-top { height: 1px; background: linear-gradient(to right, #e8dece, transparent); margin-bottom: 28px; }
-        .ap-label { font-size: 11px; font-weight: 500; color: #8c7a68; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 7px; display: flex; align-items: center; gap: 3px; }
+        .ap-label { font-size: 11px; font-weight: 500; color: #8c7a68; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 7px; display: flex; align-items: center; gap: 8px; }
         .ap-required { color: #c97844; }
+        .ap-fx-badge { font-size: 9px; font-weight: 600; letter-spacing: 0.5px; padding: 2px 8px; border-radius: 20px; text-transform: none; }
+        .ap-fx-live { color: #3a6e28; background: #eef7e8; }
+        .ap-fx-loading { color: #b08a5e; background: #f7f0e4; }
+        .ap-fx-fallback { color: #b5672f; background: #faeee4; }
         .ap-input { width: 100%; padding: 11px 15px; border-radius: 12px; border: 1.5px solid #e0d4c0; background: #faf6ee; color: #2e2318; font-size: 14px; font-family: 'DM Sans', sans-serif; outline: none; transition: border-color 0.18s, background 0.18s; }
         .ap-input::placeholder { color: #c5b49e; }
         .ap-input:focus { border-color: #c97844; background: #fff; }
         .ap-input.err { border-color: #d97a5a; background: #fff8f4; }
-        .ap-input.has-prefix { padding-left: 30px; }
+        .ap-input.has-prefix { padding-left: 36px; }
         .ap-prefix-wrap { position: relative; display: flex; align-items: center; }
         .ap-prefix { position: absolute; left: 13px; font-size: 14px; color: #9a8775; pointer-events: none; z-index: 1; }
         .ap-date-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -176,10 +331,24 @@ const AddProject = () => {
         .ap-type-btn { display: flex; align-items: center; gap: 6px; padding: 10px 16px; border-radius: 12px; border: 1.5px solid #e0d4c0; background: #faf6ee; color: #9a8775; font-size: 12px; font-weight: 500; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: all 0.18s; user-select: none; }
         .ap-type-btn:hover { border-color: #d4a070; color: #7a6050; }
         .ap-type-btn.active { border-color: #c97844; background: #fff9f2; color: #a05e2a; }
-        .ap-cur-group { display: flex; gap: 10px; }
+        .ap-cur-group { display: flex; gap: 10px; flex-wrap: wrap; }
         .ap-cur-btn { display: flex; align-items: center; gap: 5px; padding: 9px 16px; border-radius: 12px; border: 1.5px solid #e0d4c0; background: #faf6ee; color: #9a8775; font-size: 13px; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: all 0.18s; }
         .ap-cur-btn:hover { border-color: #d4a070; color: #7a6050; }
         .ap-cur-btn.active { border-color: #c97844; background: #fff9f2; color: #a05e2a; font-weight: 500; }
+        .ap-scope-group { display: flex; gap: 10px; }
+        .ap-scope-btn { display: flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 12px; border: 1.5px solid #e0d4c0; background: #faf6ee; color: #9a8775; font-size: 13px; font-weight: 500; cursor: pointer; font-family: 'DM Sans', sans-serif; transition: all 0.18s; user-select: none; }
+        .ap-scope-btn:hover { border-color: #d4a070; color: #7a6050; }
+        .ap-scope-btn.active { border-color: #c97844; background: #fff9f2; color: #a05e2a; }
+        .ap-radio-dot { width: 15px; height: 15px; border-radius: 50%; border: 2px solid #d4a070; flex-shrink: 0; position: relative; transition: all 0.18s; }
+        .ap-scope-btn.active .ap-radio-dot { border-color: #c97844; }
+        .ap-scope-btn.active .ap-radio-dot::after { content: ''; position: absolute; inset: 2px; border-radius: 50%; background: #c97844; }
+        .ap-gst-wrap { display: flex; flex-direction: column; gap: 8px; margin-top: 2px; }
+        .ap-gst-row { display: inline-flex; align-items: center; gap: 9px; cursor: pointer; user-select: none; width: fit-content; }
+        .ap-gst-box { width: 18px; height: 18px; border-radius: 6px; border: 1.5px solid #d4a070; background: #faf6ee; display: flex; align-items: center; justify-content: center; font-size: 11px; color: #fff; font-weight: 700; transition: all 0.16s; flex-shrink: 0; }
+        .ap-gst-box.checked { background: #c97844; border-color: #c97844; }
+        .ap-gst-label { font-size: 13px; font-weight: 500; color: #7a6050; }
+        .ap-gst-hint { font-size: 12px; color: #b08a5e; background: #faf6ee; padding: 9px 13px; border-radius: 10px; border: 1.5px dashed #e0d4c0; line-height: 1.5; }
+        .ap-gst-hint strong { color: #a05e2a; }
         .ap-section-label { font-family: 'Lora', serif; font-size: 13px; font-style: italic; color: #b08a5e; display: flex; align-items: center; gap: 8px; margin: 4px 0; }
         .ap-section-label::before, .ap-section-label::after { content: ''; flex: 1; height: 1px; background: #e8dece; }
         .ap-info-box { font-size: 12px; color: #9a8775; background: #faf6ee; padding: 12px 15px; border-radius: 12px; border: 1.5px dashed #e0d4c0; line-height: 1.6; }
@@ -188,7 +357,8 @@ const AddProject = () => {
         .ap-success-title { font-size: 13px; font-weight: 500; color: #3a6e28; }
         .ap-success-sub { font-size: 12px; color: #5a8a48; margin-top: 2px; }
         @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
-        .ap-usd-hint { font-size: 11px; color: #b08a5e; font-weight: 500; margin-top: 5px; }
+        .ap-usd-hint { font-size: 11px; color: #b08a5e; font-weight: 500; margin-top: 7px; line-height: 1.5; }
+        .ap-fx-note { color: #c5b49e; font-weight: 400; }
         .ap-actions { display: flex; justify-content: space-between; align-items: center; margin-top: 26px; padding-top: 20px; border-top: 1px solid #e8dece; }
         .ap-required-note { font-size: 12px; color: #b0a090; }
         .ap-btn-cancel { padding: 11px 22px; border-radius: 12px; border: 1.5px solid #ddd0be; background: transparent; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500; color: #9a8775; cursor: pointer; transition: all 0.15s; }
@@ -208,6 +378,29 @@ const AddProject = () => {
           <div className="ap-heading">Add New Project</div>
           <div className="ap-sub">Fill in the details below to initialise this project</div>
           <div className="ap-divider-top" />
+
+          <div className="ap-field" style={{ marginBottom: 20 }}>
+            <div className="ap-label">Project Scope <span className="ap-required">*</span></div>
+            <div className="ap-scope-group">
+              {[
+                { value: "domestic", icon: "🏠", label: "Domestic" },
+                { value: "international", icon: "🌍", label: "International" },
+              ].map((s) => (
+                <label key={s.value} className={`ap-scope-btn${formData.projectScope === s.value ? " active" : ""}`}>
+                  <input
+                    type="radio"
+                    name="projectScope"
+                    value={s.value}
+                    checked={formData.projectScope === s.value}
+                    onChange={() => handleScopeChange(s.value)}
+                    style={{ display: "none" }}
+                  />
+                  <span className="ap-radio-dot" />
+                  {s.icon} {s.label}
+                </label>
+              ))}
+            </div>
+          </div>
 
           {success && (
             <div className="ap-success">
@@ -255,16 +448,7 @@ const AddProject = () => {
             {formData.projectType === "monthly" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
                 <div className="ap-section-label">Monthly Base Settings</div>
-                <div className="ap-field">
-                  <div className="ap-label">Currency</div>
-                  <div className="ap-cur-group">
-                    {CURRENCIES.map((c) => (
-                      <button key={c.value} className={`ap-cur-btn${formData.currency === c.value ? " active" : ""}`} onClick={() => setFormData((p) => ({ ...p, currency: c.value }))} type="button">
-                        <strong>{c.symbol}</strong> {c.value}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {isIntl && <CurrencyPicker />}
                 <div className="ap-field">
                   <div className="ap-label">Expected Amount ({formData.currency}) <span className="ap-required">*</span></div>
                   <div className="ap-prefix-wrap">
@@ -272,10 +456,8 @@ const AddProject = () => {
                     <input className={`ap-input has-prefix${errors.expectedAmount ? " err" : ""}`} name="expectedAmount" value={formData.expectedAmount} onChange={handleChange} placeholder="0.00" type="number" min="0" />
                   </div>
                   {errors.expectedAmount && <div className="ap-err">⚠ {errors.expectedAmount}</div>}
-                  {formData.currency === "USD" && Number(formData.expectedAmount) > 0 && (
-                    <div className="ap-usd-hint">≈ ₹{(Number(formData.expectedAmount) * USD_TO_INR).toLocaleString("en-IN", { maximumFractionDigits: 0 })} will be saved</div>
-                  )}
                 </div>
+                {!isIntl && <GstToggle />}
               </div>
             )}
 
@@ -284,16 +466,7 @@ const AddProject = () => {
                 <div className="ap-section-label">
                   {formData.projectType === "hourly" ? "Hourly Rate Settings" : "Daily Rate Settings"}
                 </div>
-                <div className="ap-field">
-                  <div className="ap-label">Currency</div>
-                  <div className="ap-cur-group">
-                    {CURRENCIES.map((c) => (
-                      <button key={c.value} className={`ap-cur-btn${formData.currency === c.value ? " active" : ""}`} onClick={() => setFormData((p) => ({ ...p, currency: c.value }))} type="button">
-                        <strong>{c.symbol}</strong> {c.value}
-                      </button>
-                    ))}
-                  </div>
-                </div>
+                {isIntl && <CurrencyPicker />}
                 <div className="ap-field">
                   <div className="ap-label">
                     {rateLabel} ({formData.currency}) <span className="ap-required">*</span>
@@ -311,10 +484,8 @@ const AddProject = () => {
                     />
                   </div>
                   {errors[rateField] && <div className="ap-err">⚠ {errors[rateField]}</div>}
-                  {formData.currency === "USD" && Number(rateValue) > 0 && (
-                    <div className="ap-usd-hint">≈ ₹{(Number(rateValue) * USD_TO_INR).toLocaleString("en-IN", { maximumFractionDigits: 0 })} will be saved {formData.projectType === "hourly" ? "/ hr" : "/ day"}</div>
-                  )}
                 </div>
+                {!isIntl && <GstToggle />}
                 <div className="ap-info-box">
                   ℹ️ This is the default rate. Hours/days worked are entered per-month inside the dashboard, where you can also override the rate for any single month.
                 </div>

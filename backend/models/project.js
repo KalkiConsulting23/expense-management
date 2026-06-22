@@ -11,7 +11,8 @@ const projectSchema = new mongoose.Schema({
   defaultHourlyRate: { type: Number, default: 0 }, // used by hourly (stored in INR)
   defaultDailyRate:  { type: Number, default: 0 }, // used by daily (stored in INR)
   currency:          { type: String, default: 'INR' },
-
+  projectScope:      { type: String, enum: ['domestic', 'international'], default: 'domestic' },
+   
   monthlyBreakdowns: [{
     month: { type: String, required: true },
     year:  { type: Number, required: true },

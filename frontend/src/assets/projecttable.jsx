@@ -133,10 +133,6 @@ const ProjectTable = () => {
   const [daysWorked, setDaysWorked] = useState('');
   const [totalMonthDays, setTotalMonthDays] = useState('30');
   const [daysWorkedMonthly, setDaysWorkedMonthly] = useState('20');
-  const [includeGst, setIncludeGst] = useState(false);
-  const [currency, setCurrency] = useState('INR');
-  const [usdRate, setUsdRate] = useState(84); // fallback rate
-  const [usdRateLoading, setUsdRateLoading] = useState(false);
 
   // ─── QUARTER FILTER STATE ───
   const [quarterFilter, setQuarterFilter] = useState({});
@@ -276,41 +272,22 @@ const ProjectTable = () => {
       // project's default rate (stored in INR), otherwise a hard default.
       if (existing?.hourlyRate !== undefined) {
         setHourlyRate(String(existing.hourlyRate));
-        setCurrency(existing?.currency || 'INR');
       } else {
         setHourlyRate(String(project.defaultHourlyRate || '1000'));
-        setCurrency('INR'); // defaults are stored in INR
       }
       setHoursWorked(existing?.hoursWorked !== undefined ? String(existing.hoursWorked) : '0');
     } else if (type === 'daily') {
       if (existing?.dailyRate !== undefined) {
         setDailyRate(String(existing.dailyRate));
-        setCurrency(existing?.currency || 'INR');
       } else {
         setDailyRate(String(project.defaultDailyRate || '5000'));
-        setCurrency('INR'); // defaults are stored in INR
       }
       setDaysWorked(existing?.daysWorked !== undefined ? String(existing.daysWorked) : '0');
     } else {
       setTotalMonthDays(existing?.totalMonthDays || '30');
       setDaysWorkedMonthly(existing?.daysWorkedMonthly || '0');
-      setCurrency(existing?.currency || 'INR');
     }
-    setIncludeGst(existing?.includeGst || false);
     setModalConfig({ project, month, year, type });
-  };
-
-  const fetchUsdRate = async () => {
-    setUsdRateLoading(true);
-    try {
-      const res = await fetch('https://api.frankfurter.app/latest?from=USD&to=INR');
-      const data = await res.json();
-      if (data?.rates?.INR) setUsdRate(data.rates.INR);
-    } catch (e) {
-      // keep fallback rate
-    } finally {
-      setUsdRateLoading(false);
-    }
   };
 
   const saveModalCalculation = async () => {
@@ -321,20 +298,18 @@ const ProjectTable = () => {
     let payloadMetrics = {};
 
     if (type === 'hourly') {
-      const rateInINR = currency === 'USD' ? (parseFloat(hourlyRate) || 0) * usdRate : (parseFloat(hourlyRate) || 0);
-      const base = rateInINR * (parseFloat(hoursWorked) || 0);
-      calculatedAmt = includeGst ? base * 1.18 : base;
-      payloadMetrics = { hourlyRate, hoursWorked, includeGst, currency, usdRate: currency === 'USD' ? usdRate : null };
+      const base = (parseFloat(hourlyRate) || 0) * (parseFloat(hoursWorked) || 0);
+      calculatedAmt = base;
+      payloadMetrics = { hourlyRate, hoursWorked };
     } else if (type === 'daily') {
-      const rateInINR = currency === 'USD' ? (parseFloat(dailyRate) || 0) * usdRate : (parseFloat(dailyRate) || 0);
-      const base = rateInINR * (parseFloat(daysWorked) || 0);
-      calculatedAmt = includeGst ? base * 1.18 : base;
-      payloadMetrics = { dailyRate, daysWorked, includeGst, currency, usdRate: currency === 'USD' ? usdRate : null };
+      const base = (parseFloat(dailyRate) || 0) * (parseFloat(daysWorked) || 0);
+      calculatedAmt = base;
+      payloadMetrics = { dailyRate, daysWorked };
     } else {
       const monthlyRate = Number(project.expectedAmount || 0); // full per-month rate
       const base = (monthlyRate / (parseFloat(totalMonthDays) || 1)) * (parseFloat(daysWorkedMonthly) || 0);
-      calculatedAmt = includeGst ? base * 1.18 : base;
-      payloadMetrics = { totalMonthDays, daysWorkedMonthly, includeGst };
+      calculatedAmt = base;
+      payloadMetrics = { totalMonthDays, daysWorkedMonthly };
   }
 
     const existingPaid = monthlyOverrides[key]?.paid !== undefined ? monthlyOverrides[key].paid : 0;
@@ -617,27 +592,6 @@ const ProjectTable = () => {
         .quarter-option .q-months { font-size: 9px; color: #b0a090; font-weight: 400; }
         .quarter-option.selected .q-months { color: #c97844; }
 
-        .currency-toggle {
-          display: flex; align-items: center; background: #f5f0e8;
-          border: 1.5px solid #e8dece; border-radius: 10px; padding: 3px; gap: 3px;
-          margin-bottom: 14px;
-        }
-        .currency-pill {
-          flex: 1; text-align: center; padding: 6px 0; border-radius: 7px;
-          font-size: 12px; font-weight: 600; cursor: pointer;
-          font-family: 'DM Sans', sans-serif; transition: all 0.15s;
-          color: #9a8775; border: 1.5px solid transparent;
-          user-select: none;
-        }
-        .currency-pill.inr.active {
-          background: #fffdf8; color: #b5672f;
-          border-color: #f0c490; box-shadow: 0 1px 4px rgba(160,100,40,0.10);
-        }
-        .currency-pill.usd.active {
-          background: #fffdf8; color: #4a7abf;
-          border-color: #a8c4e8; box-shadow: 0 1px 4px rgba(60,100,180,0.10);
-        }
-        .currency-pill:hover:not(.active) { background: #faf6ee; color: #5a4535; }
       `}</style>
 
       {/* Page Header */}
@@ -1011,53 +965,10 @@ const ProjectTable = () => {
 
             {modalConfig.type === 'hourly' && (
               <>
-                {/* Currency Toggle */}
-                <div style={{ marginBottom: 4 }}>
-                  <div style={{ fontSize: 11, color: '#8c7a68', fontWeight: 500, letterSpacing: '0.8px', textTransform: 'uppercase', marginBottom: 6, fontFamily: "'DM Sans', sans-serif" }}>Rate Currency</div>
-                  <div className="currency-toggle">
-                    <div
-                      className={`currency-pill inr${currency === 'INR' ? ' active' : ''}`}
-                      onClick={() => setCurrency('INR')}
-                    >
-                      ₹ INR
-                    </div>
-                    <div
-                      className={`currency-pill usd${currency === 'USD' ? ' active' : ''}`}
-                      onClick={() => { setCurrency('USD'); fetchUsdRate(); }}
-                    >
-                      $ USD
-                    </div>
-                  </div>
-                </div>
-
-                {currency === 'USD' && (
-                  <div style={{
-                    background: '#f0f4ff', border: '1.5px solid #a8c4e8',
-                    borderRadius: 8, padding: '8px 12px', marginBottom: 12,
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    fontFamily: "'DM Sans', sans-serif",
-                  }}>
-                    <div style={{ fontSize: 11, color: '#4a7abf' }}>
-                      {usdRateLoading ? 'Fetching live rate…' : `1 USD = ₹${usdRate.toFixed(2)}`}
-                    </div>
-                    <div
-                      onClick={fetchUsdRate}
-                      style={{ fontSize: 10, color: '#4a7abf', cursor: 'pointer', textDecoration: 'underline', opacity: usdRateLoading ? 0.5 : 1 }}
-                    >
-                      Refresh
-                    </div>
-                  </div>
-                )}
-
                 <div className="proj-modal-field">
-                  <label>Hourly Rate ({currency === 'USD' ? '$' : '₹'})</label>
+                  <label>Hourly Rate (₹)</label>
                   <input type="number" value={hourlyRate} onChange={e => setHourlyRate(e.target.value)} />
                 </div>
-                {currency === 'USD' && hourlyRate && (
-                  <div style={{ fontSize: 10, color: '#7a9e5a', fontFamily: 'monospace', marginTop: -8, marginBottom: 10, textAlign: 'right' }}>
-                    = ₹{((parseFloat(hourlyRate) || 0) * usdRate).toLocaleString('en-IN', { maximumFractionDigits: 0 })} / hr
-                  </div>
-                )}
                 <div className="proj-modal-field">
                   <label>Hours Worked This Month</label>
                   <input type="number" value={hoursWorked} onChange={e => setHoursWorked(e.target.value)} />
@@ -1067,53 +978,10 @@ const ProjectTable = () => {
 
             {modalConfig.type === 'daily' && (
               <>
-                {/* Currency Toggle */}
-                <div style={{ marginBottom: 4 }}>
-                  <div style={{ fontSize: 11, color: '#8c7a68', fontWeight: 500, letterSpacing: '0.8px', textTransform: 'uppercase', marginBottom: 6, fontFamily: "'DM Sans', sans-serif" }}>Rate Currency</div>
-                  <div className="currency-toggle">
-                    <div
-                      className={`currency-pill inr${currency === 'INR' ? ' active' : ''}`}
-                      onClick={() => setCurrency('INR')}
-                    >
-                      ₹ INR
-                    </div>
-                    <div
-                      className={`currency-pill usd${currency === 'USD' ? ' active' : ''}`}
-                      onClick={() => { setCurrency('USD'); fetchUsdRate(); }}
-                    >
-                      $ USD
-                    </div>
-                  </div>
-                </div>
-
-                {currency === 'USD' && (
-                  <div style={{
-                    background: '#f0f4ff', border: '1.5px solid #a8c4e8',
-                    borderRadius: 8, padding: '8px 12px', marginBottom: 12,
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    fontFamily: "'DM Sans', sans-serif",
-                  }}>
-                    <div style={{ fontSize: 11, color: '#4a7abf' }}>
-                      {usdRateLoading ? 'Fetching live rate…' : `1 USD = ₹${usdRate.toFixed(2)}`}
-                    </div>
-                    <div
-                      onClick={fetchUsdRate}
-                      style={{ fontSize: 10, color: '#4a7abf', cursor: 'pointer', textDecoration: 'underline', opacity: usdRateLoading ? 0.5 : 1 }}
-                    >
-                      Refresh
-                    </div>
-                  </div>
-                )}
-
                 <div className="proj-modal-field">
-                  <label>Daily Rate ({currency === 'USD' ? '$' : '₹'})</label>
+                  <label>Daily Rate (₹)</label>
                   <input type="number" value={dailyRate} onChange={e => setDailyRate(e.target.value)} />
                 </div>
-                {currency === 'USD' && dailyRate && (
-                  <div style={{ fontSize: 10, color: '#7a9e5a', fontFamily: 'monospace', marginTop: -8, marginBottom: 10, textAlign: 'right' }}>
-                    = ₹{((parseFloat(dailyRate) || 0) * usdRate).toLocaleString('en-IN', { maximumFractionDigits: 0 })} / day
-                  </div>
-                )}
                 <div className="proj-modal-field">
                   <label>Days Worked This Month</label>
                   <input type="number" value={daysWorked} onChange={e => setDaysWorked(e.target.value)} />
@@ -1146,66 +1014,29 @@ const ProjectTable = () => {
               </>
             )}
 
-          {/* GST Toggle */}
+          {/* Computed Total Preview */}
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            background: includeGst ? '#f5f8f0' : '#faf6ee',
-            border: `1.5px solid ${includeGst ? '#c8deb0' : '#e8dece'}`,
-            borderRadius: 10, padding: '10px 14px', marginBottom: 16,
-            cursor: 'pointer', transition: 'all 0.15s',
-          }} onClick={() => setIncludeGst(v => !v)}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <div style={{
-                width: 28, height: 28, borderRadius: 8,
-                background: includeGst ? '#e8f4d8' : '#f0ebe0',
-                border: `1.5px solid ${includeGst ? '#c8deb0' : '#e8dece'}`,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: 13, flexShrink: 0, transition: 'all 0.15s',
-              }}>
-                {includeGst ? '✓' : '%'}
-              </div>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 600, color: includeGst ? '#5a8a3a' : '#8c7a68', fontFamily: "'DM Sans', sans-serif" }}>
-                  Include GST (18%)
-                </div>
-                <div style={{ fontSize: 10, color: '#b0a090', marginTop: 1, fontFamily: "'DM Sans', sans-serif" }}>
-                  {includeGst ? 'GST will be added to the final amount' : 'Click to add 18% GST on top'}
-                </div>
-              </div>
+            background: '#faf6ee', border: '1.5px solid #e8dece',
+            borderRadius: 10, padding: '12px 14px', marginBottom: 16,
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#8c7a68', fontFamily: "'DM Sans', sans-serif" }}>
+              Computed Total
             </div>
             {(() => {
               let base = 0;
               const { type, project } = modalConfig;
               if (type === 'hourly') {
-                const rateInINR = currency === 'USD' ? (parseFloat(hourlyRate) || 0) * usdRate : (parseFloat(hourlyRate) || 0);
-                base = rateInINR * (parseFloat(hoursWorked) || 0);
+                base = (parseFloat(hourlyRate) || 0) * (parseFloat(hoursWorked) || 0);
               } else if (type === 'daily') {
-                const rateInINR = currency === 'USD' ? (parseFloat(dailyRate) || 0) * usdRate : (parseFloat(dailyRate) || 0);
-                base = rateInINR * (parseFloat(daysWorked) || 0);
+                base = (parseFloat(dailyRate) || 0) * (parseFloat(daysWorked) || 0);
               } else {
                 const monthlyRate = Number(project.expectedAmount || 0);
                 base = (monthlyRate / (parseFloat(totalMonthDays) || 1)) * (parseFloat(daysWorkedMonthly) || 0);
               }
-              const gstAmt = base * 0.18;
-              const final = includeGst ? base + gstAmt : base;
               return (
-                <div style={{ textAlign: 'right' }}>
-                  {currency === 'USD' && (type === 'hourly' || type === 'daily') && (
-                    <div style={{ fontSize: 9, color: '#4a7abf', fontFamily: 'monospace', marginBottom: 2 }}>
-                      @ ₹{usdRate.toFixed(2)}/USD
-                    </div>
-                  )}
-                  {includeGst && (
-                    <div style={{ fontSize: 9, color: '#7a9e5a', fontFamily: 'monospace', marginBottom: 2 }}>
-                      +{fmt(gstAmt)} GST
-                    </div>
-                  )}
-                  <div style={{
-                    fontSize: 13, fontWeight: 700, fontFamily: 'monospace',
-                    color: includeGst ? '#5a8a3a' : '#9a8775',
-                  }}>
-                    {fmt(final)}
-                  </div>
+                <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'monospace', color: '#b5672f' }}>
+                  {fmt(base)}
                 </div>
               );
             })()}
