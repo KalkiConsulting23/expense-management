@@ -6,6 +6,7 @@ const CURRENCIES = [
   { value: "USD", symbol: "$", label: "USD ($)" },
 ];
 
+const API_BASE = import.meta.env.VITE_API_BASE;
 const USD_TO_INR = 83.5;
 const PROJECT_CACHE_KEY = 'local_project_data_cache';
 
@@ -20,6 +21,7 @@ const AddProject = () => {
   const [formData, setFormData] = useState({
     projectName: "", projectType: "", currency: "INR",
     startDate: "", endDate: "", expectedAmount: "",
+    defaultHourlyRate: "", defaultDailyRate: "",
   });
   const [errors, setErrors]   = useState({});
   const [success, setSuccess] = useState(false);
@@ -32,7 +34,14 @@ const AddProject = () => {
   };
 
   const handleTypeChange = (type) => {
-    setFormData((p) => ({ ...p, projectType: type, expectedAmount: "", currency: "INR" }));
+    setFormData((p) => ({
+      ...p,
+      projectType: type,
+      expectedAmount: "",
+      defaultHourlyRate: "",
+      defaultDailyRate: "",
+      currency: "INR",
+    }));
     setErrors((p) => ({ ...p, projectType: undefined }));
   };
 
@@ -50,6 +59,16 @@ const AddProject = () => {
         e.expectedAmount = "Expected amount is required";
       }
     }
+    if (formData.projectType === "hourly") {
+      if (!formData.defaultHourlyRate || Number(formData.defaultHourlyRate) <= 0) {
+        e.defaultHourlyRate = "Hourly rate is required";
+      }
+    }
+    if (formData.projectType === "daily") {
+      if (!formData.defaultDailyRate || Number(formData.defaultDailyRate) <= 0) {
+        e.defaultDailyRate = "Daily rate is required";
+      }
+    }
     return e;
   };
 
@@ -57,25 +76,35 @@ const AddProject = () => {
     const errs = validate();
     if (Object.keys(errs).length) { setErrors(errs); return; }
 
+    const fx = formData.currency === "USD" ? USD_TO_INR : 1;
+
     let finalAmountINR = 0;
+    let hourlyINR = 0;
+    let dailyINR = 0;
+
     if (formData.projectType === "monthly") {
-      const raw = Number(formData.expectedAmount);
-      finalAmountINR = formData.currency === "USD" ? raw * USD_TO_INR : raw;
+      finalAmountINR = Number(formData.expectedAmount) * fx;
+    } else if (formData.projectType === "hourly") {
+      hourlyINR = Number(formData.defaultHourlyRate) * fx;
+    } else if (formData.projectType === "daily") {
+      dailyINR = Number(formData.defaultDailyRate) * fx;
     }
 
     const payload = {
-      projectName:    formData.projectName.trim(),
-      projectType:    formData.projectType,
-      expectedAmount: finalAmountINR,
-      currency:       formData.currency,
-      startDate:      formData.startDate,
-      endDate:        formData.endDate,
+      projectName:       formData.projectName.trim(),
+      projectType:       formData.projectType,
+      expectedAmount:    finalAmountINR,
+      defaultHourlyRate: hourlyINR,
+      defaultDailyRate:  dailyINR,
+      currency:          formData.currency,
+      startDate:         formData.startDate,
+      endDate:           formData.endDate,
     };
 
     setLoading(true);
     try {
       // Replaced old custom apiFetch hook layer with clean native fetch code
-      const res = await fetch("https://expense-management-11.onrender.com/api/project/add", {
+       const res = await fetch(`${API_BASE}/project/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -91,7 +120,7 @@ const AddProject = () => {
       sessionStorage.removeItem(PROJECT_CACHE_KEY);
 
       setSuccess(true);
-      setFormData({ projectName: "", projectType: "", currency: "INR", startDate: "", endDate: "", expectedAmount: "" });
+      setFormData({ projectName: "", projectType: "", currency: "INR", startDate: "", endDate: "", expectedAmount: "", defaultHourlyRate: "", defaultDailyRate: "" });
       setErrors({});
       setTimeout(() => {
         setSuccess(false);
@@ -105,13 +134,18 @@ const AddProject = () => {
   };
 
   const handleCancel = () => {
-    setFormData({ projectName: "", projectType: "", currency: "INR", startDate: "", endDate: "", expectedAmount: "" });
+    setFormData({ projectName: "", projectType: "", currency: "INR", startDate: "", endDate: "", expectedAmount: "", defaultHourlyRate: "", defaultDailyRate: "" });
     setErrors({});
     setSuccess(false);
     navigate("/projecttable");
   };
 
   const sym = formData.currency === "USD" ? "$" : "₹";
+
+  // Active rate field key/value for hourly & daily
+  const rateField = formData.projectType === "hourly" ? "defaultHourlyRate" : "defaultDailyRate";
+  const rateValue = formData.projectType === "hourly" ? formData.defaultHourlyRate : formData.defaultDailyRate;
+  const rateLabel = formData.projectType === "hourly" ? "Default Hourly Rate" : "Default Daily Rate";
 
   return (
     <>
@@ -246,7 +280,45 @@ const AddProject = () => {
             )}
 
             {(formData.projectType === "hourly" || formData.projectType === "daily") && (
-              <div className="ap-info-box">ℹ️ Rates and units for <strong>{typeConfig[formData.projectType].label}</strong> billing are configured per-month inside the dashboard.</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
+                <div className="ap-section-label">
+                  {formData.projectType === "hourly" ? "Hourly Rate Settings" : "Daily Rate Settings"}
+                </div>
+                <div className="ap-field">
+                  <div className="ap-label">Currency</div>
+                  <div className="ap-cur-group">
+                    {CURRENCIES.map((c) => (
+                      <button key={c.value} className={`ap-cur-btn${formData.currency === c.value ? " active" : ""}`} onClick={() => setFormData((p) => ({ ...p, currency: c.value }))} type="button">
+                        <strong>{c.symbol}</strong> {c.value}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="ap-field">
+                  <div className="ap-label">
+                    {rateLabel} ({formData.currency}) <span className="ap-required">*</span>
+                  </div>
+                  <div className="ap-prefix-wrap">
+                    <span className="ap-prefix">{sym}</span>
+                    <input
+                      className={`ap-input has-prefix${errors[rateField] ? " err" : ""}`}
+                      name={rateField}
+                      value={rateValue}
+                      onChange={handleChange}
+                      placeholder="0.00"
+                      type="number"
+                      min="0"
+                    />
+                  </div>
+                  {errors[rateField] && <div className="ap-err">⚠ {errors[rateField]}</div>}
+                  {formData.currency === "USD" && Number(rateValue) > 0 && (
+                    <div className="ap-usd-hint">≈ ₹{(Number(rateValue) * USD_TO_INR).toLocaleString("en-IN", { maximumFractionDigits: 0 })} will be saved {formData.projectType === "hourly" ? "/ hr" : "/ day"}</div>
+                  )}
+                </div>
+                <div className="ap-info-box">
+                  ℹ️ This is the default rate. Hours/days worked are entered per-month inside the dashboard, where you can also override the rate for any single month.
+                </div>
+              </div>
             )}
           </div>
 

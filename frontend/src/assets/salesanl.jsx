@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
+const API_BASE = import.meta.env.VITE_API_BASE;
 
 const ACCENT = '#00ffe0';
 const ACCENT2 = '#ff6b6b';
@@ -256,7 +257,7 @@ const Salesanl = () => {
     }
 
     // Native fetch pipeline implementation directly targeting local port 5000
-    fetch('https://expense-management-11.onrender.com/api/sales')
+      fetch(`${API_BASE}/sales`)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(d => { 
         const verifiedData = Array.isArray(d) ? d : [];

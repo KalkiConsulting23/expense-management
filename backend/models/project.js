@@ -7,8 +7,10 @@ const projectSchema = new mongoose.Schema({
   projectType: { type: String, required: true, enum: ['hourly', 'daily', 'monthly'] },
   startDate:   { type: Date, required: true },
   endDate:     { type: Date, required: true },
-  expectedAmount: { type: Number, default: 0 },
-  currency:       { type: String, default: 'INR' },
+  expectedAmount:    { type: Number, default: 0 }, // used by monthly
+  defaultHourlyRate: { type: Number, default: 0 }, // used by hourly (stored in INR)
+  defaultDailyRate:  { type: Number, default: 0 }, // used by daily (stored in INR)
+  currency:          { type: String, default: 'INR' },
 
   monthlyBreakdowns: [{
     month: { type: String, required: true },

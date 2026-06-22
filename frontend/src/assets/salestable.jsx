@@ -2,6 +2,8 @@ import React, { useEffect, useState, useCallback, useMemo, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 const SALES_CACHE_KEY = 'local_sales_data_cache';
+const API_BASE = import.meta.env.VITE_API_BASE;
+
 
 const SOURCE_CONFIG = {
   cash: { label: 'Cash', bg: '#fdf3e7', color: '#a05e2a', border: '#f0c490', icon: '💵' },
@@ -121,7 +123,7 @@ const Salestable = () => {
 
       try {
         // Swapped custom API hook utility out for standard native JavaScript fetch calls
-        const res  = await fetch('https://expense-management-11.onrender.com/api/sales')
+        const res  = await fetch(`${API_BASE}/sales`)
         const data = await res.json()
         
         sessionStorage.setItem(SALES_CACHE_KEY, JSON.stringify(data))
@@ -146,12 +148,12 @@ const Salestable = () => {
     setDeletingId(id)
 
     try {
-      await fetch(`https://expense-management-11.onrender.com/api/sales/${id}`, { method: 'DELETE' })
+      await fetch(`${API_BASE}/sales/${id}`, { method: 'DELETE' })
       showToast('success', 'Sale deleted successfully.')
     } catch (err) {
       showToast('error', 'Failed to delete sale.')
       try {
-        const res  = await fetch('https://expense-management-11.onrender.com/api/sales')
+        const res  = await fetch(`${API_BASE}/sales`)
         const data = await res.json()
         sessionStorage.setItem(SALES_CACHE_KEY, JSON.stringify(data))
         setSales(data)
@@ -160,7 +162,7 @@ const Salestable = () => {
       setDeletingId(null)
     }
   }, [showToast])
-
+  
   return (
     <>
       <style>{`

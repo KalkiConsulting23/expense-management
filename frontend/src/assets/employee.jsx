@@ -3,16 +3,17 @@ import { useNavigate } from "react-router-dom";
 
 const TABS = ["recurring", "one-time"];
 const CACHE_KEY = 'local_employee_data_cache';
+const API_BASE = import.meta.env.VITE_API_BASE;
 
 // ── Autocomplete Input ────────────────────────────────────────────────────
-const AutocompleteInput = ({ value, onChange, suggestions, placeholder, hasError, onBlur }) => {
+const AutocompleteInput = ({ value, onChange, suggestions, placeholder, hasError, onBlur, autoFocus = false }) => {
   const [open, setOpen]           = useState(false);
   const [activeIdx, setActiveIdx] = useState(-1);
   const wrapRef                   = useRef(null);
 
   const filtered = value.trim()
     ? suggestions.filter((s) => s.toLowerCase().includes(value.toLowerCase()) && s.toLowerCase() !== value.toLowerCase())
-    : [];
+    : suggestions; // show all when empty (on focus)
 
   // Close on outside click
   useEffect(() => {
@@ -58,7 +59,7 @@ const AutocompleteInput = ({ value, onChange, suggestions, placeholder, hasError
     return (
       <>
         {text.slice(0, idx)}
-        <mark style={{ background: "#fce4c8", color: "#7a4a1e", padding: 0, borderRadius: 2 }}>
+        <mark style={{ background: "#dbeafe", color: "#1e3a8a", padding: 0, borderRadius: 2 }}>
           {text.slice(idx, idx + value.length)}
         </mark>
         {text.slice(idx + value.length)}
@@ -77,7 +78,7 @@ const AutocompleteInput = ({ value, onChange, suggestions, placeholder, hasError
         onBlur={onBlur}
         placeholder={placeholder}
         type="text"
-        autoFocus
+        autoFocus={autoFocus}
         autoComplete="off"
       />
       {open && filtered.length > 0 && (
@@ -108,6 +109,9 @@ const Employee = () => {
   const [expenseName, setExpenseName]           = useState("");
   const [expenseNameError, setExpenseNameError] = useState("");
   const [existingTypes, setExistingTypes]       = useState([]);
+  // Full list of {expenseType, expenseName} so name suggestions can be
+  // scoped to the chosen type.
+  const [existingExpenses, setExistingExpenses] = useState([]);
 
   const [type, setType] = useState("recurring");
 
@@ -115,32 +119,49 @@ const Employee = () => {
   const [oneTimeData, setOneTimeData]     = useState({ amount: "", date: "" });
   const [errors, setErrors]               = useState({});
 
-  // Fetch existing expense types for autocomplete
+  // Fetch existing expense types + names for autocomplete
   useEffect(() => {
+    const ingest = (data) => {
+      const types = [...new Set(data.map((e) => e.expenseType).filter(Boolean))];
+      setExistingTypes(types);
+      setExistingExpenses(
+        data
+          .filter((e) => e.expenseName)
+          .map((e) => ({ expenseType: e.expenseType || "", expenseName: e.expenseName }))
+      );
+    };
+
     const load = async () => {
       try {
-        // Try cache first
         const cached = sessionStorage.getItem(CACHE_KEY);
         const employees = cached ? JSON.parse(cached) : null;
 
         if (employees) {
-          const types = [...new Set(employees.map((e) => e.expenseType).filter(Boolean))];
-          setExistingTypes(types);
+          ingest(employees);
         } else {
-          const res = await fetch("https://expense-management-11.onrender.com/api/employee/all");
+          const res = await fetch(`${API_BASE}/employee/all`);
           if (res.ok) {
             const data = await res.json();
-            const types = [...new Set(data.map((e) => e.expenseType).filter(Boolean))];
-            setExistingTypes(types);
+            ingest(data);
           }
         }
       } catch (err) {
-        // Non-critical — autocomplete just won't show suggestions
-        console.warn("Could not load expense types for autocomplete:", err);
+        console.warn("Could not load expense data for autocomplete:", err);
       }
     };
     load();
   }, []);
+
+  // Name suggestions: if the typed type matches an existing type, scope names
+  // to that type; otherwise suggest all known names. De-duplicated.
+  const typeMatch = expenseType.trim().toLowerCase();
+  const nameSuggestions = (() => {
+    const scoped = typeMatch
+      ? existingExpenses.filter((e) => e.expenseType.toLowerCase() === typeMatch)
+      : [];
+    const source = scoped.length > 0 ? scoped : existingExpenses;
+    return [...new Set(source.map((e) => e.expenseName))];
+  })();
 
   const handleRecurringChange = (e) => {
     const { name, value } = e.target;
@@ -202,7 +223,7 @@ const Employee = () => {
     }
 
     try {
-      const response = await fetch("https://expense-management-11.onrender.com/api/employee/add", {
+      const response = await fetch(`${API_BASE}/employee/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
@@ -239,57 +260,82 @@ const Employee = () => {
 
         .ep-page {
           min-height: 100vh;
-          background: #f5f0e8;
+          background: #eef3fb;
           display: flex;
           align-items: flex-start;
           justify-content: center;
           padding: 40px 16px 60px;
           font-family: 'DM Sans', sans-serif;
         }
-        .ep-card {
+
+        /* ── Bento grid shell ── */
+        .ep-bento {
           width: 100%;
-          max-width: 560px;
-          background: #fffdf8;
-          border: 1.5px solid #e8dece;
-          border-radius: 20px;
-          overflow: hidden;
-          box-shadow: 0 2px 0 #e2d9c8, 0 8px 32px rgba(160,130,90,0.08);
+          max-width: 920px;
+          display: grid;
+          grid-template-columns: 1fr 1.6fr;
+          grid-auto-rows: min-content;
+          gap: 16px;
         }
-        .ep-header {
-          padding: 24px 32px 20px;
-          border-bottom: 1px solid #e8dece;
-          background: #fffdf8;
+        .ep-tile {
+          background: #ffffff;
+          border: 1.5px solid #dde6f4;
+          border-radius: 22px;
+          box-shadow: 0 2px 0 #e6edf8, 0 8px 32px rgba(30,58,138,0.07);
+          overflow: visible;
         }
-        .ep-eyebrow { font-size: 10px; font-weight: 500; letter-spacing: 2px; text-transform: uppercase; color: #b08a5e; margin-bottom: 5px; }
-        .ep-heading { font-family: 'Lora', serif; font-size: 22px; font-weight: 600; color: #2e2318; line-height: 1.2; }
-        .ep-sub { font-size: 12px; color: #9a8775; margin-top: 3px; }
-        .ep-body { padding: 28px 32px; }
-        .ep-section-divider { font-family: 'Lora', serif; font-size: 13px; font-style: italic; color: #b08a5e; display: flex; align-items: center; gap: 8px; margin-bottom: 20px; margin-top: 4px; }
-        .ep-section-divider::before, .ep-section-divider::after { content: ''; flex: 1; height: 1px; background: #e8dece; }
-        .ep-field { display: flex; flex-direction: column; margin-bottom: 18px; }
-        .ep-label { font-size: 11px; font-weight: 500; color: #8c7a68; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 7px; }
-        .ep-required { color: #c97844; margin-left: 2px; }
-        .ep-input { width: 100%; padding: 11px 15px; border-radius: 12px; border: 1.5px solid #e0d4c0; background: #faf6ee; color: #2e2318; font-size: 14px; font-family: 'DM Sans', sans-serif; outline: none; transition: border-color 0.18s, background 0.18s; }
-        .ep-input::placeholder { color: #c5b49e; }
-        .ep-input:focus { border-color: #c97844; background: #fff; }
-        .ep-input.err { border-color: #d97a5a; background: #fff8f4; }
+
+        /* Hero tile (left, spans both rows) — rounded gradient */
+        .ep-tile-hero {
+          grid-row: span 2;
+          background: linear-gradient(160deg, #1e3a8a 0%, #2563eb 55%, #60a5fa 100%);
+          color: #ffffff;
+          padding: 30px 28px;
+          display: flex;
+          flex-direction: column;
+          justify-content: space-between;
+          min-height: 100%;
+          border: none;
+          border-radius: 26px;
+          box-shadow: 0 10px 34px rgba(30,58,138,0.28);
+        }
+        .ep-hero-eyebrow { font-size: 10px; font-weight: 500; letter-spacing: 2px; text-transform: uppercase; color: #bfdbfe; margin-bottom: 10px; }
+        .ep-hero-title { font-family: 'Lora', serif; font-size: 26px; font-weight: 600; line-height: 1.18; }
+        .ep-hero-sub { font-size: 13px; color: #dbeafe; margin-top: 10px; line-height: 1.5; }
+        .ep-hero-foot { font-size: 12px; color: #bfdbfe; margin-top: 24px; }
+        .ep-hero-foot .star { color: #ffffff; }
+
+        /* Tile headers/body */
+        .ep-tile-pad { padding: 22px 24px; }
+        .ep-section-divider { font-family: 'Lora', serif; font-size: 13px; font-style: italic; color: #2563eb; display: flex; align-items: center; gap: 8px; margin-bottom: 18px; margin-top: 0; }
+        .ep-section-divider::before, .ep-section-divider::after { content: ''; flex: 1; height: 1px; background: #dde6f4; }
+
+        .ep-field { display: flex; flex-direction: column; margin-bottom: 16px; }
+        .ep-field:last-child { margin-bottom: 0; }
+        .ep-label { font-size: 11px; font-weight: 500; color: #51607c; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 7px; }
+        .ep-required { color: #2563eb; margin-left: 2px; }
+        .ep-input { width: 100%; padding: 11px 15px; border-radius: 12px; border: 1.5px solid #d7e1f3; background: #f5f8fe; color: #1e293b; font-size: 14px; font-family: 'DM Sans', sans-serif; outline: none; transition: border-color 0.18s, background 0.18s; }
+        .ep-input::placeholder { color: #a9bbd6; }
+        .ep-input:focus { border-color: #2563eb; background: #fff; }
+        .ep-input.err { border-color: #1e3a8a; background: #eef3fb; }
         .ep-input.has-prefix { padding-left: 30px; }
-        .ep-hint { font-size: 11px; color: #b0a090; margin-top: 5px; }
-        .ep-err  { font-size: 11px; color: #c97844; font-weight: 500; margin-top: 5px; }
-        .ep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .ep-hint { font-size: 11px; color: #94a3b8; margin-top: 5px; }
+        .ep-err  { font-size: 11px; color: #1e3a8a; font-weight: 500; margin-top: 5px; }
+        .ep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
         .ep-prefix-wrap { position: relative; display: flex; align-items: center; }
-        .ep-prefix { position: absolute; left: 13px; font-size: 14px; color: #9a8775; pointer-events: none; z-index: 1; }
-        .ep-tab-row { display: flex; border: 1.5px solid #e0d4c0; border-radius: 14px; background: #faf6ee; overflow: hidden; margin-bottom: 22px; }
-        .ep-tab { flex: 1; padding: 10px 0; border: none; border-bottom: none; background: transparent; cursor: pointer; font-size: 12px; font-weight: 500; color: #9a8775; font-family: 'DM Sans', sans-serif; transition: all 0.15s; letter-spacing: 0.3px; }
-        .ep-tab:hover { color: #7a6050; }
-        .ep-tab.active { color: #fff; background: #c97844; font-weight: 500; }
-        .ep-footer { display: flex; justify-content: space-between; align-items: center; padding-top: 20px; margin-top: 6px; border-top: 1px solid #e8dece; }
-        .ep-footer-note { font-size: 12px; color: #b0a090; }
+        .ep-prefix { position: absolute; left: 13px; font-size: 14px; color: #51607c; pointer-events: none; z-index: 1; }
+        .ep-tab-row { display: flex; border: 1.5px solid #d7e1f3; border-radius: 14px; background: #f5f8fe; overflow: hidden; margin-bottom: 18px; }
+        .ep-tab { flex: 1; padding: 10px 0; border: none; background: transparent; cursor: pointer; font-size: 12px; font-weight: 500; color: #51607c; font-family: 'DM Sans', sans-serif; transition: all 0.15s; letter-spacing: 0.3px; }
+        .ep-tab:hover { color: #1e3a8a; }
+        .ep-tab.active { color: #fff; background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); font-weight: 500; }
+
+        .ep-footer { display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; }
+        .ep-footer-note { font-size: 12px; color: #94a3b8; }
         .ep-btn-group { display: flex; gap: 8px; }
-        .ep-btn-cancel { padding: 10px 20px; border-radius: 12px; border: 1.5px solid #ddd0be; background: transparent; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500; color: #9a8775; cursor: pointer; transition: all 0.15s; }
-        .ep-btn-cancel:hover { background: #f0ebe1; color: #5a4a38; border-color: #c8baa8; }
-        .ep-btn-submit { display: flex; align-items: center; gap: 7px; padding: 10px 22px; border-radius: 12px; border: none; background: #c97844; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500; color: #fff; cursor: pointer; transition: background 0.15s, transform 0.1s; letter-spacing: 0.3px; }
-        .ep-btn-submit:hover { background: #b5672f; transform: translateY(-1px); }
+        .ep-btn-cancel { padding: 10px 20px; border-radius: 12px; border: 1.5px solid #d7e1f3; background: transparent; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500; color: #51607c; cursor: pointer; transition: all 0.15s; }
+        .ep-btn-cancel:hover { background: #eef3fb; color: #1e293b; border-color: #b9cbed; }
+        .ep-btn-submit { display: flex; align-items: center; gap: 7px; padding: 10px 22px; border-radius: 12px; border: none; background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500; color: #fff; cursor: pointer; transition: filter 0.15s, transform 0.1s; letter-spacing: 0.3px; }
+        .ep-btn-submit:hover { filter: brightness(1.08); transform: translateY(-1px); }
         .ep-btn-submit:active { transform: translateY(0); }
 
         /* ── Autocomplete dropdown ── */
@@ -297,14 +343,16 @@ const Employee = () => {
           position: absolute;
           top: calc(100% + 6px);
           left: 0; right: 0;
-          background: #fffdf8;
-          border: 1.5px solid #e0d4c0;
+          background: #ffffff;
+          border: 1.5px solid #d7e1f3;
           border-radius: 12px;
-          box-shadow: 0 6px 24px rgba(160,130,90,0.13);
+          box-shadow: 0 6px 24px rgba(30,58,138,0.15);
           list-style: none;
           overflow: hidden;
           z-index: 100;
           padding: 4px;
+          max-height: 220px;
+          overflow-y: auto;
         }
         .ep-autocomplete-item {
           display: flex;
@@ -312,7 +360,7 @@ const Employee = () => {
           gap: 8px;
           padding: 9px 12px;
           font-size: 13.5px;
-          color: #3a2a18;
+          color: #1e293b;
           border-radius: 9px;
           cursor: pointer;
           transition: background 0.12s;
@@ -320,27 +368,35 @@ const Employee = () => {
         }
         .ep-autocomplete-item:hover,
         .ep-autocomplete-item.active {
-          background: #fce9d4;
-          color: #7a3e10;
+          background: #dbeafe;
+          color: #1e3a8a;
         }
         .ep-ac-icon { font-size: 12px; flex-shrink: 0; opacity: 0.7; }
 
-        @media (max-width: 520px) {
-          .ep-body { padding: 22px 18px; }
-          .ep-header { padding: 20px 18px 16px; }
+        @media (max-width: 760px) {
+          .ep-bento { grid-template-columns: 1fr; }
+          .ep-tile-hero { grid-row: auto; min-height: auto; }
+          .ep-tile-pad { padding: 20px 18px; }
+          .ep-footer { padding: 16px 18px; }
           .ep-grid { grid-template-columns: 1fr; }
         }
       `}</style>
 
       <div className="ep-page">
-        <div className="ep-card">
-          <div className="ep-header">
-            <div className="ep-eyebrow">Expense Entry</div>
-            <div className="ep-heading">Add New Expense</div>
-            <div className="ep-sub">Fill in the details below to register an expense</div>
+        <div className="ep-bento">
+
+          {/* Hero tile */}
+          <div className="ep-tile-hero">
+            <div>
+              <div className="ep-hero-eyebrow">Expense Entry</div>
+              <div className="ep-hero-title">Add New Expense</div>
+              <div className="ep-hero-sub">Fill in the details to register a recurring or one-time expense record.</div>
+            </div>
+            <div className="ep-hero-foot"><span className="star">*</span> Required fields</div>
           </div>
 
-          <div className="ep-body">
+          {/* Details tile */}
+          <div className="ep-tile ep-tile-pad">
             <div className="ep-section-divider">Expense details</div>
 
             {/* Expense Type — with autocomplete */}
@@ -353,27 +409,37 @@ const Employee = () => {
                 placeholder="e.g. Salary, Rent, Utilities…"
                 hasError={!!expenseTypeError}
                 onBlur={() => {}}
+                autoFocus
               />
               {expenseTypeError
                 ? <span className="ep-err">⚠ {expenseTypeError}</span>
                 : <span className="ep-hint">The broad category this expense belongs to</span>}
             </div>
 
+            {/* Expense Name — now with autocomplete */}
             <div className="ep-field">
               <label className="ep-label">Expense Name <span className="ep-required">*</span></label>
-              <input
-                className={`ep-input${expenseNameError ? " err" : ""}`}
+              <AutocompleteInput
                 value={expenseName}
-                onChange={(e) => { setExpenseName(e.target.value); if (expenseNameError) setExpenseNameError(""); }}
+                onChange={(val) => { setExpenseName(val); if (expenseNameError) setExpenseNameError(""); }}
+                suggestions={nameSuggestions}
                 placeholder="e.g. Office Supplies, Rahul Salary…"
-                type="text"
+                hasError={!!expenseNameError}
+                onBlur={() => {}}
               />
               {expenseNameError
                 ? <span className="ep-err">⚠ {expenseNameError}</span>
-                : <span className="ep-hint">The specific label for this expense record</span>}
+                : <span className="ep-hint">
+                    {expenseType.trim() && nameSuggestions.length > 0
+                      ? `Existing names under "${expenseType.trim()}" — or type a new one`
+                      : "The specific label for this expense record"}
+                  </span>}
             </div>
+          </div>
 
-            <div className="ep-section-divider" style={{ marginTop: 8 }}>Amount &amp; schedule</div>
+          {/* Amount & schedule tile */}
+          <div className="ep-tile ep-tile-pad">
+            <div className="ep-section-divider">Amount &amp; schedule</div>
 
             <div className="ep-tab-row">
               {TABS.map((tab) => (
@@ -392,18 +458,20 @@ const Employee = () => {
             ) : (
               <OneTimeForm data={oneTimeData} errors={errors} onChange={handleOneTimeChange} />
             )}
+          </div>
 
-            <div className="ep-footer">
-              <span className="ep-footer-note"><span style={{ color: "#c97844" }}>*</span> Required fields</span>
-              <div className="ep-btn-group">
-                <button className="ep-btn-cancel" onClick={handleCancel}>Cancel</button>
-                <button className="ep-btn-submit" onClick={handleSubmit}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
-                  Add Expense
-                </button>
-              </div>
+          {/* Footer tile (spans full width) */}
+          <div className="ep-tile ep-footer" style={{ gridColumn: "1 / -1" }}>
+            <span className="ep-footer-note"><span style={{ color: "#2563eb" }}>*</span> Required fields</span>
+            <div className="ep-btn-group">
+              <button className="ep-btn-cancel" onClick={handleCancel}>Cancel</button>
+              <button className="ep-btn-submit" onClick={handleSubmit}>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+                Add Expense
+              </button>
             </div>
           </div>
+
         </div>
       </div>
     </>

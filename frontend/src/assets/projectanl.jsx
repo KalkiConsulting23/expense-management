@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import * as d3 from 'd3';
 
 // ─── CONFIG ───
-const API_BASE = 'https://expense-management-11.onrender.com/api/project';
+const API_BASE = import.meta.env.VITE_API_BASE;
 const PROJECT_CACHE_KEY = 'local_project_data_cache';
 
 // ─── HELPERS ───
@@ -48,7 +48,7 @@ function useProjects() {
     }
 
     // Native fetch pipeline implementation directly targeting local port 5000
-    fetch(`${API_BASE}/all`)
+     fetch(`${API_BASE}/project/all`)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
       .then(data => {
         sessionStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(data));

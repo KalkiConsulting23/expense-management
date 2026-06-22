@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useRef, useMemo, useCallback, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
 
+
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const CACHE_KEY = 'local_employee_data_cache'
-
+const API_BASE = import.meta.env.VITE_API_BASE
+console.log('API_BASE =', API_BASE)
 const fmt = (n) => '₹' + Number(n).toLocaleString('en-IN')
 
 // ─── Period filter config ────────────────────────────────────────────────────
@@ -22,31 +24,171 @@ function getMonthsForPeriod(periodValue) {
 }
 
 // ─── Amount override helpers ─────────────────────────────────────────────────
-/**
- * Returns the effective amount for a given month+year, considering overrides.
- * An override at month M applies from M onwards until the next override.
- * overrides: [{ year, month, amount }]
- */
 function getEffectiveAmount(baseAmount, overrides = [], monthIndex, year) {
   if (!overrides || overrides.length === 0) return baseAmount
-
-  // Build a sorted list of all override points up to and including this month
-  // An override at (year2, monthIdx2) applies if year2 < year
-  //   OR (year2 === year AND monthIdx2 <= monthIndex)
   const applicable = overrides.filter(ov => {
     const ovIdx = MONTHS.indexOf(ov.month)
     return (ov.year < year) || (ov.year === year && ovIdx <= monthIndex)
   })
-
   if (applicable.length === 0) return baseAmount
-
-  // The most recent override wins: sort by year asc, then month asc, take last
   applicable.sort((a, b) => {
     if (a.year !== b.year) return a.year - b.year
     return MONTHS.indexOf(a.month) - MONTHS.indexOf(b.month)
   })
-
   return applicable[applicable.length - 1].amount
+}
+
+// ─── Core helpers ─────────────────────────────────────────────────────────────
+function parseUTCDate(dateStr) {
+  const d = new Date(dateStr)
+  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+}
+
+function isMonthActive(emp, monthIndex, year) {
+  const monthStart = new Date(year, monthIndex, 1)
+  const monthEnd   = new Date(year, monthIndex + 1, 0)
+  const start = parseUTCDate(emp.startDate)
+  const end   = emp.endDate ? parseUTCDate(emp.endDate) : null
+  if (monthEnd < start) return false
+  if (end && monthStart > end) return false
+  return true
+}
+
+// ─── Merge helpers ────────────────────────────────────────────────────────────
+// Merge recurring records that share the same expenseName into one virtual
+// "merged employee". Ranges are assumed non-overlapping.
+function mergeRecurringByName(recurringRecords) {
+  const byName = new Map()
+  recurringRecords.forEach(rec => {
+    const name = (rec.expenseName || rec.name || '?').trim()
+    if (!byName.has(name)) byName.set(name, [])
+    byName.get(name).push(rec)
+  })
+
+  const merged = []
+  byName.forEach((records, name) => {
+    const sorted = [...records].sort(
+      (a, b) => parseUTCDate(a.startDate) - parseUTCDate(b.startDate)
+    )
+    const earliest = sorted[0]
+    // latest end: null if any record is ongoing
+    const anyOngoing = sorted.some(r => !r.endDate)
+    let latestEnd = null
+    if (!anyOngoing) {
+      latestEnd = sorted.reduce((acc, r) => {
+        const e = parseUTCDate(r.endDate)
+        return !acc || e > acc ? e : acc
+      }, null)
+    }
+
+    // union overrides, each tagged with the source record id
+    const allOverrides = sorted.flatMap(r =>
+      (r.amountOverrides || []).map(ov => ({ ...ov, _srcId: r._id }))
+    )
+
+    merged.push({
+      _id: `merged::${name}`,
+      _merged: true,
+      _records: sorted,
+      type: 'recurring',
+      expenseName: name,
+      expenseType: earliest.expenseType,
+      amount: earliest.amount,          // base shown in the row subtitle
+      startDate: earliest.startDate,
+      endDate: latestEnd ? latestEnd.toISOString() : null,
+      amountOverrides: allOverrides,
+    })
+  })
+
+  return merged
+}
+
+// Which underlying record is active in this month/year? (non-overlapping ⇒ first match)
+function resolveRecordForMonth(mergedEmp, monthIndex, year) {
+  if (!mergedEmp?._records) return mergedEmp
+  return mergedEmp._records.find(r => isMonthActive(r, monthIndex, year)) || null
+}
+
+// Build month data for a (possibly merged) employee for one year.
+// paidMapByMonth: { Jan: number, ... } already resolved for this year.
+function buildMonthData(emp, year, paidMap = {}) {
+  let carry = 0
+  const result = {}
+  MONTHS.forEach((m, i) => {
+    // For merged employees, the active record decides amount + activity.
+    const activeRec = emp._merged ? resolveRecordForMonth(emp, i, year) : emp
+    const active = emp._merged
+      ? !!activeRec
+      : isMonthActive(emp, i, year)
+
+    if (!active) {
+      result[m] = { amt: 0, paid: 0, carry: 0, active: false }
+      return
+    }
+    const baseAmount = activeRec.amount
+    const overrides  = activeRec.amountOverrides
+    const baseAmt    = getEffectiveAmount(baseAmount, overrides, i, year)
+    const paid       = paidMap[m] !== undefined ? paidMap[m] : 0
+    const totalDue   = baseAmt + carry
+    carry            = totalDue - paid
+    result[m]        = { amt: baseAmt, paid, carry, active: true, _srcId: activeRec._id }
+  })
+  return result
+}
+
+// Build the per-month paid map for a merged (or single) employee for a year,
+// pulling each month's payment from whichever record is active that month.
+function buildPaidMapForYear(emp, year) {
+  const paidMap = {}
+  MONTHS.forEach((m, i) => {
+    const rec = emp._merged ? resolveRecordForMonth(emp, i, year) : emp
+    if (!rec) return
+    const pay = (rec.payments || []).find(p => p.year === year && p.month === m)
+    if (pay) paidMap[m] = pay.paid
+  })
+  return paidMap
+}
+
+function recalcEmployee(emp, year, oldData, changedMonth, newPaidValue) {
+  const paidMap = {}
+  MONTHS.forEach((m) => { paidMap[m] = oldData[m]?.paid })
+  paidMap[changedMonth] = newPaidValue
+  return buildMonthData(emp, year, paidMap)
+}
+
+function rebuildAllYearsForEmp(emp) {
+  const result = {}
+  getEmployeeYears(emp).forEach(year => {
+    result[`${emp._id}_${year}`] = buildMonthData(emp, year, buildPaidMapForYear(emp, year))
+  })
+  return result
+}
+
+function getEmployeeYears(emp) {
+  // For merged employees, span across all underlying records.
+  const records = emp._merged ? emp._records : [emp]
+  const set = new Set()
+  records.forEach(rec => {
+    const start = parseUTCDate(rec.startDate).getFullYear()
+    const end   = rec.endDate ? parseUTCDate(rec.endDate).getFullYear() : new Date().getFullYear()
+    for (let y = start; y <= Math.max(start, end); y++) set.add(y)
+  })
+  return Array.from(set).sort((a, b) => a - b)
+}
+
+function getAllYears(employees) {
+  const set = new Set()
+  employees.forEach(emp => getEmployeeYears(emp).forEach(y => set.add(y)))
+  return Array.from(set).sort()
+}
+
+function groupByExpenseType(expenses) {
+  return expenses.reduce((acc, exp) => {
+    const key = (exp.expenseType || 'Uncategorised').trim()
+    if (!acc[key]) acc[key] = []
+    acc[key].push(exp)
+    return acc
+  }, {})
 }
 
 // ─── Period Dropdown ─────────────────────────────────────────────────────────
@@ -129,87 +271,6 @@ const PeriodDropdown = memo(function PeriodDropdown({ value, onChange, year }) {
   )
 })
 
-// ─── Core helpers ─────────────────────────────────────────────────────────────
-function parseUTCDate(dateStr) {
-  const d = new Date(dateStr)
-  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
-}
-
-function isMonthActive(emp, monthIndex, year) {
-  const monthStart = new Date(year, monthIndex, 1)
-  const monthEnd   = new Date(year, monthIndex + 1, 0)
-  const start = parseUTCDate(emp.startDate)
-  const end   = emp.endDate ? parseUTCDate(emp.endDate) : null
-  if (monthEnd < start) return false
-  if (end && monthStart > end) return false
-  return true
-}
-
-function buildMonthData(emp, year, paidMap = {}) {
-  let carry = 0
-  const result = {}
-  MONTHS.forEach((m, i) => {
-    if (!isMonthActive(emp, i, year)) {
-      result[m] = { amt: 0, paid: 0, carry: 0, active: false }
-      return
-    }
-    const baseAmt  = getEffectiveAmount(emp.amount, emp.amountOverrides, i, year)
-    const paid     = paidMap[m] !== undefined ? paidMap[m] : 0
-    const totalDue = baseAmt + carry
-    carry          = totalDue - paid
-    result[m]      = { amt: baseAmt, paid, carry, active: true }
-  })
-  return result
-}
-
-function recalcEmployee(emp, year, oldData, changedMonth, newPaidValue) {
-  const paidMap = {}
-  MONTHS.forEach((m) => { paidMap[m] = oldData[m]?.paid })
-  paidMap[changedMonth] = newPaidValue
-  return buildMonthData(emp, year, paidMap)
-}
-
-/**
- * Full recalc of all years for an employee — needed after an override change
- * because overrides can cascade across year boundaries.
- */
-function rebuildAllYearsForEmp(emp) {
-  const result = {}
-  getEmployeeYears(emp).forEach(year => {
-    const paidMap = {}
-    if (emp.payments?.length > 0) {
-      emp.payments.filter(p => p.year === year).forEach(p => { paidMap[p.month] = p.paid })
-    }
-    result[`${emp._id}_${year}`] = buildMonthData(emp, year, paidMap)
-  })
-  return result
-}
-
-function getEmployeeYears(emp) {
-  const start = parseUTCDate(emp.startDate).getFullYear()
-  const end   = emp.endDate
-    ? parseUTCDate(emp.endDate).getFullYear()
-    : new Date().getFullYear()
-  const years = []
-  for (let y = start; y <= Math.max(start, end); y++) years.push(y)
-  return years
-}
-
-function getAllYears(employees) {
-  const set = new Set()
-  employees.forEach(emp => getEmployeeYears(emp).forEach(y => set.add(y)))
-  return Array.from(set).sort()
-}
-
-function groupByExpenseType(expenses) {
-  return expenses.reduce((acc, exp) => {
-    const key = (exp.expenseType || 'Uncategorised').trim()
-    if (!acc[key]) acc[key] = []
-    acc[key].push(exp)
-    return acc
-  }, {})
-}
-
 // ─── Shared sub-components ────────────────────────────────────────────────────
 const Avatar = memo(function Avatar({ name = '' }) {
   const palette = ['#c97844','#b08a5e','#8c7a68','#a05e2a','#7a6050','#d4a070','#9a8775','#b5672f']
@@ -229,6 +290,7 @@ const Avatar = memo(function Avatar({ name = '' }) {
 })
 
 const DeleteModal = memo(function DeleteModal({ expense, onConfirm, onCancel, deleting }) {
+  const recordCount = expense._merged ? expense._records.length : 1
   return (
     <div
       style={{
@@ -257,6 +319,11 @@ const DeleteModal = memo(function DeleteModal({ expense, onConfirm, onCancel, de
             <span style={{ color: '#b5672f', fontFamily: 'monospace' }}>{fmt(expense.amount)}</span>
             {expense.type === 'recurring' ? '/mo' : ' one-time'}
           </div>
+          {recordCount > 1 && (
+            <div style={{ fontSize: 11, color: '#c97844', marginTop: 6 }}>
+              This name has {recordCount} date-range records — all will be deleted.
+            </div>
+          )}
         </div>
         <div style={{ fontSize: 12, color: '#c97844', marginBottom: 22 }}>⚠️ This action cannot be undone. All payment history will be lost.</div>
         <div style={{ display: 'flex', gap: 10 }}>
@@ -281,11 +348,6 @@ const TrashBtn = memo(function TrashBtn({ onClick }) {
 })
 
 // ─── Amount Override Modal ────────────────────────────────────────────────────
-/**
- * Shown when the user clicks "Edit amount from [Month]".
- * Lets them set a new amount that applies from that month onwards,
- * or remove an existing override for that month.
- */
 const AmountOverrideModal = memo(function AmountOverrideModal({
   emp, month, year, currentAmt, existingOverride, onSave, onRemove, onCancel, saving
 }) {
@@ -303,7 +365,6 @@ const AmountOverrideModal = memo(function AmountOverrideModal({
   }
 
   const monthIdx   = MONTHS.indexOf(month)
-  const remaining  = MONTHS.slice(monthIdx)
   const isBaseAmt  = !existingOverride && parseInt(val) === emp.amount
   const noChange   = existingOverride && parseInt(val) === existingOverride.amount
 
@@ -316,7 +377,6 @@ const AmountOverrideModal = memo(function AmountOverrideModal({
         onClick={e => e.stopPropagation()}
         style={{ background: '#fffdf8', border: '1.5px solid #e8dece', borderRadius: 22, boxShadow: '0 12px 50px rgba(120,90,50,0.28)', padding: '30px 30px 24px', maxWidth: 400, width: '92vw', fontFamily: "'DM Sans', sans-serif" }}
       >
-        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 20 }}>
           <div style={{ width: 46, height: 46, borderRadius: 12, background: '#fdf3e7', border: '1.5px solid #f0c490', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>✏️</div>
           <div>
@@ -329,7 +389,6 @@ const AmountOverrideModal = memo(function AmountOverrideModal({
           </div>
         </div>
 
-        {/* Context pills */}
         <div style={{ display: 'flex', gap: 8, marginBottom: 18, flexWrap: 'wrap' }}>
           <div style={{ background: '#faf6ee', border: '1.5px solid #e8dece', borderRadius: 8, padding: '5px 12px', fontSize: 11, color: '#8c7a68' }}>
             Base: <span style={{ fontFamily: 'monospace', color: '#b5672f', fontWeight: 600 }}>{fmt(emp.amount)}/mo</span>
@@ -339,7 +398,6 @@ const AmountOverrideModal = memo(function AmountOverrideModal({
           </div>
         </div>
 
-        {/* Input */}
         <div style={{ marginBottom: 14 }}>
           <label style={{ fontSize: 11, fontWeight: 500, color: '#9a8775', letterSpacing: 0.8, textTransform: 'uppercase', display: 'block', marginBottom: 6 }}>
             New monthly amount from {month} {year}
@@ -357,7 +415,6 @@ const AmountOverrideModal = memo(function AmountOverrideModal({
           </div>
         </div>
 
-        {/* Impact preview */}
         <div style={{ background: '#faf6ee', border: '1.5px solid #e8dece', borderRadius: 12, padding: '10px 14px', marginBottom: 20, fontSize: 11, color: '#8c7a68', lineHeight: 1.7 }}>
           <div style={{ fontWeight: 600, color: '#6a5848', marginBottom: 4 }}>Impact preview</div>
           <div>
@@ -375,7 +432,6 @@ const AmountOverrideModal = memo(function AmountOverrideModal({
           </div>
         </div>
 
-        {/* Actions */}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <button onClick={onCancel} style={{ flex: 1, minWidth: 80, padding: '9px 0', borderRadius: 12, border: '1.5px solid #e8dece', background: '#faf6ee', color: '#8c7a68', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" }}>
             Cancel
@@ -488,7 +544,7 @@ const RecurringYearTable = memo(function RecurringYearTable({
   onDeleteRequest, onAmountOverrideRequest
 }) {
   const [period, setPeriod] = useState('full')
-  const [amtEditMode, setAmtEditMode] = useState(false) // toggles the "edit amount" checkboxes
+  const [amtEditMode, setAmtEditMode] = useState(false)
   const visibleMonths = useMemo(() => getMonthsForPeriod(period), [period])
 
   const empTotals = useMemo(() => {
@@ -506,14 +562,12 @@ const RecurringYearTable = memo(function RecurringYearTable({
 
   return (
     <div style={{ marginBottom: 20 }}>
-      {/* Row: label + controls */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, gap: 10, flexWrap: 'wrap' }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, background: '#f5ece0', color: '#8c7a68', border: '1.5px solid #e8dece', padding: '4px 12px', borderRadius: 20, fontSize: 10, fontWeight: 500, letterSpacing: 1, textTransform: 'uppercase', fontFamily: "'DM Sans', sans-serif" }}>
           <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#b08a5e', display: 'inline-block' }} />
           {year} · Recurring
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          {/* Edit Amount toggle */}
           <button
             onClick={() => setAmtEditMode(p => !p)}
             title="Toggle per-month amount editing"
@@ -553,7 +607,10 @@ const RecurringYearTable = memo(function RecurringYearTable({
               </th>
               {visibleMonths.map((m) => {
                 const i = MONTHS.indexOf(m)
-                const anyActive = activeEmps.some(emp => isMonthActive(emp, i, year))
+                const anyActive = activeEmps.some(emp => {
+                  const data = monthData[`${emp._id}_${year}`] || {}
+                  return data[m]?.active
+                })
                 return (
                   <th key={m} colSpan={2} className={`th-month${!anyActive ? ' inactive-head' : ''}`}>{m}</th>
                 )
@@ -590,21 +647,18 @@ const RecurringYearTable = memo(function RecurringYearTable({
                           {emp.expenseName || emp.name}
                         </div>
                         <div style={{ fontSize: 10, color: '#b0a090', marginTop: 2, fontFamily: "'DM Sans', sans-serif" }}>
-                        <span style={{ color: '#b5672f', fontFamily: 'monospace' }}>{fmt(emp.amount)}/mo base</span>
+                          <span style={{ color: '#b5672f', fontFamily: 'monospace' }}>{fmt(emp.amount)}/mo base</span>
                           {emp.amountOverrides?.length > 0 && (
-                          <span style={{
-                            display: 'inline-flex', alignItems: 'center', gap: 3,
-                            marginLeft: 6,
-                            background: '#fdf3e7', border: '1px solid #f0c490',
-                            color: '#a05e2a', borderRadius: 4,
-                            padding: '1px 5px', fontSize: 9, fontWeight: 600,
-                            fontFamily: "'DM Sans', sans-serif",
-                            verticalAlign: 'middle',
-                          }}>
-                             ✏️ {emp.amountOverrides.length}
-                             </span>
-                             )}
-                      </div>
+                            <span style={{
+                              display: 'inline-flex', alignItems: 'center', gap: 3, marginLeft: 6,
+                              background: '#fdf3e7', border: '1px solid #f0c490', color: '#a05e2a',
+                              borderRadius: 4, padding: '1px 5px', fontSize: 9, fontWeight: 600,
+                              fontFamily: "'DM Sans', sans-serif", verticalAlign: 'middle',
+                            }}>
+                              ✏️ {emp.amountOverrides.length}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <TrashBtn onClick={() => onDeleteRequest(emp)} />
                     </div>
@@ -614,11 +668,9 @@ const RecurringYearTable = memo(function RecurringYearTable({
                     const cell      = data[m]
                     const isEditing = editing?.empId === emp._id && editing?.month === m && editing?.year === year
                     const isSaving  = savingCell?.empId === emp._id && savingCell?.month === m && savingCell?.year === year
-                    const monthIdx  = MONTHS.indexOf(m)
 
-                    // Check if this month has an override
-                    const hasOverrideHere = emp.amountOverrides?.some(
-                      ov => ov.year === year && ov.month === m
+                    const hasOverrideHere = !!(cell?._srcId) && emp.amountOverrides?.some(
+                      ov => ov.year === year && ov.month === m && ov._srcId === cell._srcId
                     )
 
                     if (!cell || !cell.active) {
@@ -630,7 +682,6 @@ const RecurringYearTable = memo(function RecurringYearTable({
 
                     return (
                       <React.Fragment key={m}>
-                        {/* AMT cell — clickable in edit-amount mode */}
                         <td
                           className={`td-amt${amtEditMode ? ' td-amt-editable' : ''}${hasOverrideHere ? ' td-amt-overridden' : ''}`}
                           onClick={() => {
@@ -651,7 +702,6 @@ const RecurringYearTable = memo(function RecurringYearTable({
                           {hasCarry  && <div style={{ fontSize: 10, color: '#c97844', marginTop: 2 }}>carry: {fmt(cell.carry)} →</div>}
                           {hasCredit && <div style={{ fontSize: 10, color: '#7a9e5a', marginTop: 2 }}>credit: {fmt(Math.abs(cell.carry))} →</div>}
                         </td>
-                        {/* PAID cell — always clickable */}
                         <td
                           className={`td-paid${hasCarry ? ' has-carry' : ''}${isSaving ? ' saving' : ''}`}
                           onClick={() => !isEditing && !isSaving && handleEditStart(emp._id, m, year, cell.paid)}
@@ -870,31 +920,33 @@ const MonthPickerDropdown = memo(function MonthPickerDropdown({ onSelect }) {
 })
 
 // ─── Month View Modal ─────────────────────────────────────────────────────────
-const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, monthData, onClose }) {
+const MonthViewModal = memo(function MonthViewModal({ monthIndex, mergedRecurring, allExpenses, monthData, onClose }) {
   const monthName = MONTHS[monthIndex]
   const monthFull = MONTH_FULL[monthIndex]
   const currentYear = new Date().getFullYear()
 
   const allYears = useMemo(() => {
     const set = new Set()
-    allExpenses.forEach(emp => getEmployeeYears(emp).forEach(y => set.add(y)))
+    mergedRecurring.forEach(emp => getEmployeeYears(emp).forEach(y => set.add(y)))
+    allExpenses.filter(e => e.type === 'one-time').forEach(e => set.add(parseUTCDate(e.date).getFullYear()))
     return Array.from(set).sort((a, b) => b - a)
-  }, [allExpenses])
+  }, [mergedRecurring, allExpenses])
 
   const [selectedYear, setSelectedYear] = useState(() => {
     return allYears.includes(currentYear) ? currentYear : (allYears[0] || currentYear)
   })
 
   const recurringRows = useMemo(() => {
-    return allExpenses
-      .filter(e => e.type === 'recurring' && isMonthActive(e, monthIndex, selectedYear))
+    return mergedRecurring
       .map(emp => {
         const key  = `${emp._id}_${selectedYear}`
-        const cell = monthData[key]?.[monthName] || { amt: 0, paid: 0, carry: 0, active: false }
-        return { ...emp, cell, _sortDate: parseUTCDate(emp.startDate) }
+        const cell = monthData[key]?.[monthName]
+        return { emp, cell }
       })
-      .sort((a, b) => a._sortDate - b._sortDate)
-  }, [allExpenses, monthData, monthIndex, selectedYear, monthName])
+      .filter(r => r.cell && r.cell.active)
+      .map(({ emp, cell }) => ({ ...emp, cell }))
+      .sort((a, b) => (a.expenseName || '').localeCompare(b.expenseName || ''))
+  }, [mergedRecurring, monthData, selectedYear, monthName])
 
   const oneTimeRows = useMemo(() => {
     return allExpenses
@@ -907,11 +959,41 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
       .sort((a, b) => a._sortDate - b._sortDate)
   }, [allExpenses, monthIndex, selectedYear])
 
-  const recurringTotal   = recurringRows.reduce((s, r) => s + (r.cell.amt || 0), 0)
-  const recurringPaid    = recurringRows.reduce((s, r) => s + (r.cell.paid || 0), 0)
-  const recurringDue     = Math.max(0, recurringTotal - recurringPaid)
-  const oneTimeTotal     = oneTimeRows.reduce((s, r) => s + r.amount, 0)
-  const grandTotal       = recurringTotal + oneTimeTotal
+  const combinedRows = useMemo(() => {
+    const recurring = recurringRows.map(emp => {
+      const amt  = emp.cell.amt  || 0
+      const paid = emp.cell.paid || 0
+      return {
+        _id: emp._id,
+        name: emp.expenseName || emp.name,
+        expenseType: emp.expenseType,
+        kind: 'recurring',
+        amt, paid,
+        due: Math.max(0, amt - paid),
+        overridden: !!(emp.cell._srcId) && emp.amountOverrides?.some(ov => ov.year === selectedYear && ov.month === monthName && ov._srcId === emp.cell._srcId),
+        sub: 'since ' + parseUTCDate(emp.startDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+      }
+    })
+    const oneTime = oneTimeRows.map(exp => ({
+      _id: exp._id,
+      name: exp.expenseName,
+      expenseType: exp.expenseType,
+      kind: 'one-time',
+      amt: exp.amount,
+      paid: exp.amount,
+      due: 0,
+      overridden: false,
+      sub: parseUTCDate(exp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+    }))
+    return [...recurring, ...oneTime]
+  }, [recurringRows, oneTimeRows, selectedYear, monthName])
+
+  const recurringTotal = recurringRows.reduce((s, r) => s + (r.cell.amt  || 0), 0)
+  const recurringPaid  = recurringRows.reduce((s, r) => s + (r.cell.paid || 0), 0)
+  const oneTimeTotal   = oneTimeRows.reduce((s, r) => s + r.amount, 0)
+  const totalDue     = recurringTotal + oneTimeTotal
+  const totalPaid    = recurringPaid + oneTimeTotal
+  const totalBalance = Math.max(0, totalDue - totalPaid)
 
   useEffect(() => {
     document.body.style.overflow = 'hidden'
@@ -942,7 +1024,7 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
               <div style={{ fontFamily: "'Lora', serif", fontSize: 22, fontWeight: 600, color: '#2e2318' }}>{monthFull}</div>
               <div style={{ fontSize: 12, color: '#9a8775', marginTop: 3 }}>
                 {recurringRows.length} recurring &nbsp;·&nbsp; {oneTimeRows.length} one-time &nbsp;·&nbsp;
-                <span style={{ color: '#b5672f', fontFamily: 'monospace' }}>{fmt(grandTotal)}</span> total
+                <span style={{ color: '#b5672f', fontFamily: 'monospace' }}>{fmt(totalDue)}</span> total
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
@@ -954,12 +1036,12 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
               <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: '1.5px solid #e8dece', background: '#faf6ee', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, color: '#9a8775', flexShrink: 0 }}>✕</button>
             </div>
           </div>
+
           <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
             {[
-              { label: 'Recurring Due', value: fmt(recurringTotal), color: '#b5672f', bg: '#fdf3e7', border: '#f0c490' },
-              { label: 'Recurring Paid', value: fmt(recurringPaid), color: '#7a9e5a', bg: '#f5f8f0', border: '#c8deb0' },
-              { label: 'Recurring Balance', value: fmt(recurringDue), color: recurringDue > 0 ? '#c97844' : '#7a9e5a', bg: recurringDue > 0 ? '#fff8f4' : '#f5f8f0', border: recurringDue > 0 ? '#f0c490' : '#c8deb0' },
-              { label: 'One-Time', value: fmt(oneTimeTotal), color: '#a05e2a', bg: '#fdf3e7', border: '#f0c490' },
+              { label: 'Total Due',     value: fmt(totalDue),     color: '#b5672f', bg: '#fdf3e7', border: '#f0c490' },
+              { label: 'Total Paid',    value: fmt(totalPaid),    color: '#7a9e5a', bg: '#f5f8f0', border: '#c8deb0' },
+              { label: 'Total Balance', value: fmt(totalBalance), color: totalBalance > 0 ? '#c97844' : '#7a9e5a', bg: totalBalance > 0 ? '#fff8f4' : '#f5f8f0', border: totalBalance > 0 ? '#f0c490' : '#c8deb0' },
             ].map(p => (
               <div key={p.label} style={{ background: p.bg, border: `1.5px solid ${p.border}`, borderRadius: 10, padding: '6px 14px', display: 'flex', flexDirection: 'column', gap: 1 }}>
                 <span style={{ fontSize: 9, letterSpacing: 0.8, textTransform: 'uppercase', color: '#b08a5e', fontWeight: 500 }}>{p.label}</span>
@@ -970,106 +1052,70 @@ const MonthViewModal = memo(function MonthViewModal({ monthIndex, allExpenses, m
         </div>
 
         <div style={{ overflowY: 'auto', flex: 1, padding: '20px 26px 24px' }}>
-          {recurringRows.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 1, textTransform: 'uppercase', color: '#b08a5e', background: '#f5ece0', border: '1.5px solid #e8dece', padding: '3px 12px', borderRadius: 20 }}>🔁 Recurring · {selectedYear}</div>
-              </div>
-              <div style={{ borderRadius: 14, border: '1.5px solid #e8dece', overflow: 'hidden', boxShadow: '0 2px 0 #e2d9c8' }}>
-                <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-                  <thead>
-                    <tr style={{ background: '#faf6ee' }}>
-                      {['#', 'Expense Name', 'Type', 'Monthly Amt', 'Paid', 'Balance'].map((h, i) => (
-                        <th key={h} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, letterSpacing: 0.9, textTransform: 'uppercase', color: '#b08a5e', textAlign: i >= 3 ? 'right' : 'left', borderBottom: '1.5px solid #e8dece', borderRight: i < 5 ? '1px solid #f0ebe0' : 'none', fontFamily: "'DM Sans', sans-serif" }}>{h}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recurringRows.map((emp, idx) => {
-                      const { cell } = emp
-                      const due = Math.max(0, cell.amt - cell.paid)
-                      return (
-                        <tr key={emp._id} onMouseEnter={e => e.currentTarget.style.background = '#fdf8f0'} onMouseLeave={e => e.currentTarget.style.background = ''}>
-                          <td style={{ ...tdBase, width: 36, color: '#c5b49e', fontFamily: 'monospace', fontSize: 11, borderRight: '1px solid #f0ebe0' }}>{idx + 1}</td>
-                          <td style={{ ...tdBase, borderRight: '1px solid #f0ebe0' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              <Avatar name={emp.expenseName || emp.name || '?'} />
-                              <div>
-                                <div style={{ fontWeight: 500, color: '#2e2318', fontSize: 13 }}>{emp.expenseName || emp.name}</div>
-                                <div style={{ fontSize: 10, color: '#b0a090', marginTop: 1 }}>since {parseUTCDate(emp.startDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</div>
-                              </div>
-                            </div>
-                          </td>
-                          <td style={{ ...tdBase, fontSize: 11, color: '#9a8775', borderRight: '1px solid #f0ebe0' }}>{emp.expenseType || '—'}</td>
-                          <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: '#b5672f', borderRight: '1px solid #f0ebe0' }}>
-                            {fmt(cell.amt)}
-                            {emp.amountOverrides?.some(ov => ov.year === selectedYear && ov.month === monthName) && (
-                              <span title="Amount overridden" style={{ marginLeft: 4, fontSize: 9, color: '#c97844' }}>●</span>
-                            )}
-                          </td>
-                          <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', color: '#7a9e5a', borderRight: '1px solid #f0ebe0' }}>{fmt(cell.paid)}</td>
-                          <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: due > 0 ? '#c97844' : '#7a9e5a' }}>
-                            {due > 0 ? fmt(due) : <span style={{ color: '#7a9e5a', fontSize: 11 }}>✓ Paid</span>}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr style={{ background: '#faf6ee' }}>
-                      <td colSpan={3} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, color: '#8c7a68', textTransform: 'uppercase', letterSpacing: 0.8, borderTop: '1.5px solid #e8dece', fontFamily: "'DM Sans', sans-serif" }}>Total ({recurringRows.length})</td>
-                      <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: '#b5672f', borderTop: '1.5px solid #e8dece', borderRight: '1px solid #f0ebe0' }}>{fmt(recurringTotal)}</td>
-                      <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: '#7a9e5a', borderTop: '1.5px solid #e8dece', borderRight: '1px solid #f0ebe0' }}>{fmt(recurringPaid)}</td>
-                      <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: recurringDue > 0 ? '#c97844' : '#7a9e5a', borderTop: '1.5px solid #e8dece' }}>{fmt(recurringDue)}</td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </div>
-          )}
-
-          {oneTimeRows.length > 0 && (
+          {combinedRows.length > 0 ? (
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-                <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 1, textTransform: 'uppercase', color: '#a05e2a', background: '#fdf3e7', border: '1.5px solid #f0c490', padding: '3px 12px', borderRadius: 20 }}>⚡ One-Time · {selectedYear}</div>
+                <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 1, textTransform: 'uppercase', color: '#b08a5e', background: '#f5ece0', border: '1.5px solid #e8dece', padding: '3px 12px', borderRadius: 20 }}>
+                  🧾 {monthFull} {selectedYear} · All Expenses
+                </div>
               </div>
               <div style={{ borderRadius: 14, border: '1.5px solid #e8dece', overflow: 'hidden', boxShadow: '0 2px 0 #e2d9c8' }}>
                 <table style={{ borderCollapse: 'collapse', width: '100%' }}>
                   <thead>
                     <tr style={{ background: '#faf6ee' }}>
-                      {['#', 'Expense Name', 'Type', 'Date', 'Amount'].map((h, i) => (
-                        <th key={h} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, letterSpacing: 0.9, textTransform: 'uppercase', color: '#b08a5e', textAlign: i === 4 ? 'right' : 'left', borderBottom: '1.5px solid #e8dece', borderRight: i < 4 ? '1px solid #f0ebe0' : 'none', fontFamily: "'DM Sans', sans-serif" }}>{h}</th>
+                      {['#', 'Expense Name', 'Type', 'Kind', 'Amount', 'Paid', 'Balance'].map((h, i) => (
+                        <th key={h} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, letterSpacing: 0.9, textTransform: 'uppercase', color: '#b08a5e', textAlign: i >= 4 ? 'right' : 'left', borderBottom: '1.5px solid #e8dece', borderRight: i < 6 ? '1px solid #f0ebe0' : 'none', fontFamily: "'DM Sans', sans-serif" }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {oneTimeRows.map((exp, idx) => (
-                      <tr key={exp._id} onMouseEnter={e => e.currentTarget.style.background = '#fdf8f0'} onMouseLeave={e => e.currentTarget.style.background = ''}>
+                    {combinedRows.map((row, idx) => (
+                      <tr key={row._id} onMouseEnter={e => e.currentTarget.style.background = '#fdf8f0'} onMouseLeave={e => e.currentTarget.style.background = ''}>
                         <td style={{ ...tdBase, width: 36, color: '#c5b49e', fontFamily: 'monospace', fontSize: 11, borderRight: '1px solid #f0ebe0' }}>{idx + 1}</td>
                         <td style={{ ...tdBase, borderRight: '1px solid #f0ebe0' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ width: 28, height: 28, borderRadius: 8, background: '#fdf3e7', border: '1.5px solid #f0c490', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>⚡</span>
-                            <span style={{ fontWeight: 500, color: '#2e2318', fontSize: 13 }}>{exp.expenseName}</span>
+                            {row.kind === 'recurring'
+                              ? <Avatar name={row.name || '?'} />
+                              : <span style={{ width: 28, height: 28, borderRadius: 8, background: '#fdf3e7', border: '1.5px solid #f0c490', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13, flexShrink: 0 }}>⚡</span>
+                            }
+                            <div>
+                              <div style={{ fontWeight: 500, color: '#2e2318', fontSize: 13 }}>{row.name}</div>
+                              <div style={{ fontSize: 10, color: '#b0a090', marginTop: 1 }}>{row.sub}</div>
+                            </div>
                           </div>
                         </td>
-                        <td style={{ ...tdBase, fontSize: 11, color: '#9a8775', borderRight: '1px solid #f0ebe0' }}>{exp.expenseType || '—'}</td>
-                        <td style={{ ...tdBase, fontSize: 12, color: '#9a8775', borderRight: '1px solid #f0ebe0' }}>{parseUTCDate(exp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
-                        <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: '#b5672f' }}>{fmt(exp.amount)}</td>
+                        <td style={{ ...tdBase, fontSize: 11, color: '#9a8775', borderRight: '1px solid #f0ebe0' }}>{row.expenseType || '—'}</td>
+                        <td style={{ ...tdBase, fontSize: 11, borderRight: '1px solid #f0ebe0' }}>
+                          {row.kind === 'recurring'
+                            ? <span style={{ color: '#8c7a68' }}>🔁 Recurring</span>
+                            : <span style={{ color: '#a05e2a' }}>⚡ One-Time</span>
+                          }
+                        </td>
+                        <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: '#b5672f', borderRight: '1px solid #f0ebe0' }}>
+                          {fmt(row.amt)}
+                          {row.overridden && <span title="Amount overridden" style={{ marginLeft: 4, fontSize: 9, color: '#c97844' }}>●</span>}
+                        </td>
+                        <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', color: '#7a9e5a', borderRight: '1px solid #f0ebe0' }}>{fmt(row.paid)}</td>
+                        <td style={{ ...tdBase, textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: row.due > 0 ? '#c97844' : '#7a9e5a' }}>
+                          {row.due > 0 ? fmt(row.due) : <span style={{ color: '#7a9e5a', fontSize: 11 }}>✓ Paid</span>}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
-                    <tr style={{ background: '#fdf3e7' }}>
-                      <td colSpan={4} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, color: '#8c7a68', textTransform: 'uppercase', letterSpacing: 0.8, borderTop: '1.5px solid #e8dece', fontFamily: "'DM Sans', sans-serif" }}>Total ({oneTimeRows.length})</td>
-                      <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: '#a05e2a', borderTop: '1.5px solid #e8dece' }}>{fmt(oneTimeTotal)}</td>
+                    <tr style={{ background: '#faf6ee' }}>
+                      <td colSpan={4} style={{ padding: '9px 14px', fontSize: 10, fontWeight: 500, color: '#8c7a68', textTransform: 'uppercase', letterSpacing: 0.8, borderTop: '1.5px solid #e8dece', fontFamily: "'DM Sans', sans-serif" }}>
+                        Total ({combinedRows.length})
+                      </td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: '#b5672f', borderTop: '1.5px solid #e8dece', borderRight: '1px solid #f0ebe0' }}>{fmt(totalDue)}</td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: '#7a9e5a', borderTop: '1.5px solid #e8dece', borderRight: '1px solid #f0ebe0' }}>{fmt(totalPaid)}</td>
+                      <td style={{ padding: '9px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: totalBalance > 0 ? '#c97844' : '#7a9e5a', borderTop: '1.5px solid #e8dece' }}>{fmt(totalBalance)}</td>
                     </tr>
                   </tfoot>
                 </table>
               </div>
             </div>
-          )}
-
-          {recurringRows.length === 0 && oneTimeRows.length === 0 && (
+          ) : (
             <div style={{ textAlign: 'center', padding: '40px 0', color: '#b0a090' }}>
               <div style={{ fontSize: 32, marginBottom: 10 }}>📭</div>
               <div style={{ fontSize: 14, fontWeight: 600, fontFamily: "'Lora', serif", color: '#8c7a68' }}>No expenses in {monthFull} {selectedYear}</div>
@@ -1150,41 +1196,49 @@ const EmployeeTable = () => {
   const [deleting,           setDeleting]           = useState(false)
   const [monthViewIndex,     setMonthViewIndex]     = useState(null)
 
-  // Amount override modal state
-  const [overrideTarget,     setOverrideTarget]     = useState(null) // { emp, month, year, currentAmt }
+  const [overrideTarget,     setOverrideTarget]     = useState(null)
   const [savingOverride,     setSavingOverride]     = useState(false)
 
-  const parseServerData = useCallback((data) => {
-    const recurring = data.filter(e => e.type === 'recurring')
+  // Merge recurring records by name → virtual merged employees.
+  const mergedRecurring = useMemo(
+    () => mergeRecurringByName(allExpenses.filter(e => e.type === 'recurring')),
+    [allExpenses]
+  )
+
+  // Quick lookup: mergedId → merged employee
+  const mergedById = useMemo(() => {
+    const map = {}
+    mergedRecurring.forEach(m => { map[m._id] = m })
+    return map
+  }, [mergedRecurring])
+
+  // Build month data keyed by merged employee id.
+  const buildAllMonthData = useCallback((mergedList) => {
     const initial = {}
-    recurring.forEach(emp => {
+    mergedList.forEach(emp => {
       getEmployeeYears(emp).forEach(year => {
-        const paidMap = {}
-        if (emp.payments?.length > 0) {
-          emp.payments.filter(p => p.year === year).forEach(p => { paidMap[p.month] = p.paid })
-        }
-        initial[`${emp._id}_${year}`] = buildMonthData(emp, year, paidMap)
+        initial[`${emp._id}_${year}`] = buildMonthData(emp, year, buildPaidMapForYear(emp, year))
       })
     })
     return initial
   }, [])
 
   useEffect(() => {
+    setMonthData(buildAllMonthData(mergedRecurring))
+  }, [mergedRecurring, buildAllMonthData])
+
+  useEffect(() => {
     const fetchExpenses = async () => {
       try {
         const cachedData = sessionStorage.getItem(CACHE_KEY)
         if (cachedData) {
-          const parsed = JSON.parse(cachedData)
-          setAllExpenses(parsed)
-          setMonthData(parseServerData(parsed))
+          setAllExpenses(JSON.parse(cachedData))
           setLoading(false)
-          return
         }
-        const res  = await fetch('https://expense-management-11.onrender.com/api/employee/all')
+        const res  = await fetch(`${API_BASE}/employee/all`)
         const data = await res.json()
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(data))
         setAllExpenses(data)
-        setMonthData(parseServerData(data))
       } catch (err) {
         setError('Failed to fetch expenses')
       } finally {
@@ -1192,7 +1246,16 @@ const EmployeeTable = () => {
       }
     }
     fetchExpenses()
-  }, [parseServerData])
+  }, [])
+
+  // Resolve the real underlying record id for a merged emp at month/year.
+  const resolveRealId = useCallback((mergedId, month, year) => {
+    const merged = mergedById[mergedId]
+    if (!merged) return mergedId // already a real id (shouldn't happen for recurring)
+    const monthIdx = MONTHS.indexOf(month)
+    const rec = resolveRecordForMonth(merged, monthIdx, year)
+    return rec?._id || null
+  }, [mergedById])
 
   const handleEditStart = useCallback((empId, month, year, currentPaid) => {
     setEditing({ empId, month, year })
@@ -1205,9 +1268,13 @@ const EmployeeTable = () => {
       if (!prev) return prev
       const { empId, month, year } = prev
       const newVal = Math.max(0, parseInt(editVal) || 0)
+
+      const realId = resolveRealId(empId, month, year)
+      if (!realId) return null
+
       setAllExpenses(exps => {
         const updatedExps = exps.map(e => {
-          if (e._id !== empId) return e
+          if (e._id !== realId) return e
           const existingPaymentIdx = (e.payments || []).findIndex(p => p.year === year && p.month === month)
           const updatedPayments = [...(e.payments || [])]
           if (existingPaymentIdx > -1) {
@@ -1218,24 +1285,19 @@ const EmployeeTable = () => {
           return { ...e, payments: updatedPayments }
         })
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(updatedExps))
-        const emp = updatedExps.find(e => e._id === empId)
-        if (emp) {
-          const key = `${empId}_${year}`
-          setMonthData(md => ({ ...md, [key]: recalcEmployee(emp, year, md[key], month, newVal) }))
-        }
         return updatedExps
       })
+
       setSavingCell({ empId, month, year })
-      fetch(`https://expense-management-11.onrender.com/api/employee/update-payment/${empId}`, {
+      fetch(`${API_BASE}/employee/update-payment/${realId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ year, month, paid: newVal }),
       }).catch(err => console.error('Failed to save payment:', err)).finally(() => setSavingCell(null))
       return null
     })
-  }, [editVal])
+  }, [editVal, resolveRealId])
 
-  // ── Amount override handlers ─────────────────────────────────────────────
   const handleAmountOverrideRequest = useCallback((emp, month, year, currentAmt) => {
     setOverrideTarget({ emp, month, year, currentAmt })
   }, [])
@@ -1243,90 +1305,61 @@ const EmployeeTable = () => {
   const handleAmountOverrideSave = useCallback(async (newAmount) => {
     if (!overrideTarget) return
     const { emp, month, year } = overrideTarget
+    const realId = resolveRealId(emp._id, month, year)
+    if (!realId) return
     setSavingOverride(true)
-
     try {
       await fetch(
-        `https://expense-management-11.onrender.com/api/employee/update-amount-override/${emp._id}`,
-        {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ year, month, amount: newAmount }),
-        }
+        `${API_BASE}/employee/update-amount-override/${realId}`,
+        { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ year, month, amount: newAmount }) }
       )
-
-      // Update local state
       setAllExpenses(prev => {
         const updated = prev.map(e => {
-          if (e._id !== emp._id) return e
+          if (e._id !== realId) return e
           const overrides = [...(e.amountOverrides || [])]
           const idx = overrides.findIndex(ov => ov.year === year && ov.month === month)
-          if (idx > -1) {
-            overrides[idx] = { year, month, amount: newAmount }
-          } else {
-            overrides.push({ year, month, amount: newAmount })
-          }
+          if (idx > -1) overrides[idx] = { year, month, amount: newAmount }
+          else overrides.push({ year, month, amount: newAmount })
           return { ...e, amountOverrides: overrides }
         })
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(updated))
-
-        // Rebuild monthData for this employee across all years
-        const updatedEmp = updated.find(e => e._id === emp._id)
-        if (updatedEmp) {
-          const newKeys = rebuildAllYearsForEmp(updatedEmp)
-          setMonthData(md => ({ ...md, ...newKeys }))
-        }
         return updated
       })
-
       setOverrideTarget(null)
     } catch (err) {
       console.error('Failed to save amount override:', err)
     } finally {
       setSavingOverride(false)
     }
-  }, [overrideTarget])
+  }, [overrideTarget, resolveRealId])
 
   const handleAmountOverrideRemove = useCallback(async () => {
     if (!overrideTarget) return
     const { emp, month, year } = overrideTarget
+    const realId = resolveRealId(emp._id, month, year)
+    if (!realId) return
     setSavingOverride(true)
-
     try {
       await fetch(
-        `https://expense-management-11.onrender.com/api/employee/remove-amount-override/${emp._id}`,
-        {
-          method: 'DELETE',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ year, month }),
-        }
+        `${API_BASE}/employee/remove-amount-override/${realId}`,
+        { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ year, month }) }
       )
-
       setAllExpenses(prev => {
         const updated = prev.map(e => {
-          if (e._id !== emp._id) return e
-          const overrides = (e.amountOverrides || []).filter(
-            ov => !(ov.year === year && ov.month === month)
-          )
+          if (e._id !== realId) return e
+          const overrides = (e.amountOverrides || []).filter(ov => !(ov.year === year && ov.month === month))
           return { ...e, amountOverrides: overrides }
         })
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(updated))
-
-        const updatedEmp = updated.find(e => e._id === emp._id)
-        if (updatedEmp) {
-          const newKeys = rebuildAllYearsForEmp(updatedEmp)
-          setMonthData(md => ({ ...md, ...newKeys }))
-        }
         return updated
       })
-
       setOverrideTarget(null)
     } catch (err) {
       console.error('Failed to remove amount override:', err)
     } finally {
       setSavingOverride(false)
     }
-  }, [overrideTarget])
+  }, [overrideTarget, resolveRealId])
 
   // ── Delete handlers ──────────────────────────────────────────────────────
   const handleDeleteRequest = useCallback((expense) => { setDeleteTarget(expense) }, [])
@@ -1334,17 +1367,18 @@ const EmployeeTable = () => {
   const handleDeleteConfirm = useCallback(async () => {
     if (!deleteTarget) return
     setDeleting(true)
+    // Merged recurring → delete all underlying records. Otherwise just the one.
+    const idsToDelete = deleteTarget._merged
+      ? deleteTarget._records.map(r => r._id)
+      : [deleteTarget._id]
     try {
-      await fetch(`https://expense-management-11.onrender.com/api/employee/delete/${deleteTarget._id}`, { method: 'DELETE' })
+      await Promise.all(idsToDelete.map(id =>
+        fetch(`${API_BASE}/employee/delete/${id}`, { method: 'DELETE' })
+      ))
       setAllExpenses(prev => {
-        const remaining = prev.filter(e => e._id !== deleteTarget._id)
+        const remaining = prev.filter(e => !idsToDelete.includes(e._id))
         sessionStorage.setItem(CACHE_KEY, JSON.stringify(remaining))
         return remaining
-      })
-      setMonthData(prev => {
-        const next = { ...prev }
-        Object.keys(next).forEach(k => { if (k.startsWith(`${deleteTarget._id}_`)) delete next[k] })
-        return next
       })
       setDeleteTarget(null)
     } catch (err) {
@@ -1356,13 +1390,18 @@ const EmployeeTable = () => {
 
   const handleDeleteCancel = useCallback(() => { if (!deleting) setDeleteTarget(null) }, [deleting])
 
+  // Group for display: merged recurring + raw one-time, grouped by expense type.
   const { grouped, groupNames, totalRecurring, totalOneTime } = useMemo(() => {
-    const grouped        = groupByExpenseType(allExpenses)
-    const groupNames     = Object.keys(grouped).sort((a, b) => a.localeCompare(b))
-    const totalRecurring = allExpenses.filter(e => e.type === 'recurring').length
-    const totalOneTime   = allExpenses.filter(e => e.type === 'one-time').length
-    return { grouped, groupNames, totalRecurring, totalOneTime }
-  }, [allExpenses])
+    const oneTime = allExpenses.filter(e => e.type === 'one-time')
+    const grouped = groupByExpenseType([...mergedRecurring, ...oneTime])
+    const groupNames = Object.keys(grouped).sort((a, b) => a.localeCompare(b))
+    return {
+      grouped,
+      groupNames,
+      totalRecurring: mergedRecurring.length,
+      totalOneTime: oneTime.length,
+    }
+  }, [allExpenses, mergedRecurring])
 
   if (loading) return (
     <div style={{ padding: 40, display: 'flex', alignItems: 'center', gap: 12, fontFamily: "'DM Sans', sans-serif", color: '#9a8775', background: '#f5f0e8', minHeight: '100vh' }}>
@@ -1377,13 +1416,13 @@ const EmployeeTable = () => {
 
   return (
     <div style={{ padding: '36px 24px 60px', background: '#f5f0e8', minHeight: '100vh', fontFamily: "'DM Sans', sans-serif" }}>
-      {/* Modals */}
       {deleteTarget && (
         <DeleteModal expense={deleteTarget} onConfirm={handleDeleteConfirm} onCancel={handleDeleteCancel} deleting={deleting} />
       )}
       {monthViewIndex !== null && (
         <MonthViewModal
           monthIndex={monthViewIndex}
+          mergedRecurring={mergedRecurring}
           allExpenses={allExpenses}
           monthData={monthData}
           onClose={() => setMonthViewIndex(null)}
@@ -1395,9 +1434,11 @@ const EmployeeTable = () => {
           month={overrideTarget.month}
           year={overrideTarget.year}
           currentAmt={overrideTarget.currentAmt}
-          existingOverride={overrideTarget.emp.amountOverrides?.find(
-            ov => ov.year === overrideTarget.year && ov.month === overrideTarget.month
-          )}
+          existingOverride={(() => {
+            const realId = resolveRealId(overrideTarget.emp._id, overrideTarget.month, overrideTarget.year)
+            const rec = allExpenses.find(e => e._id === realId)
+            return rec?.amountOverrides?.find(ov => ov.year === overrideTarget.year && ov.month === overrideTarget.month)
+          })()}
           onSave={handleAmountOverrideSave}
           onRemove={handleAmountOverrideRemove}
           onCancel={() => { if (!savingOverride) setOverrideTarget(null) }}
@@ -1405,7 +1446,6 @@ const EmployeeTable = () => {
         />
       )}
 
-      {/* Page header */}
       <div style={{ marginBottom: 28, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div>
           <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 2, textTransform: 'uppercase', color: '#b08a5e', marginBottom: 5 }}>Expense Tracker</div>

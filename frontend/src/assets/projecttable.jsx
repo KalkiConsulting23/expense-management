@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const PROJECT_CACHE_KEY = 'local_project_data_cache';
-
+const API_BASE = import.meta.env.VITE_API_BASE;
 const fmt = (n) => '₹' + Number(n).toLocaleString('en-IN');
 
 function parseUTCDate(dateStr) {
@@ -209,7 +209,7 @@ const ProjectTable = () => {
           return;
         }
 
-        const res = await fetch('https://expense-management-11.onrender.com/api/project/all');
+        const res = await fetch(`${API_BASE}/project/all`);
         const data = await res.json();
         
         sessionStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(data));
@@ -231,7 +231,7 @@ const ProjectTable = () => {
     setDeleting(true);
 
     try {
-      const res = await fetch(`https://expense-management-11.onrender.com/api/project/delete/${project._id}`, {
+       const res = await fetch(`${API_BASE}/project/delete/${project._id}`, {
         method: 'DELETE',
       });
 
@@ -272,17 +272,31 @@ const ProjectTable = () => {
     const existing = monthlyOverrides[key];
 
     if (type === 'hourly') {
-      setHourlyRate(existing?.hourlyRate || '1000');
-      setHoursWorked(existing?.hoursWorked || '0');
+      // Prefer a previously-saved month override; otherwise fall back to the
+      // project's default rate (stored in INR), otherwise a hard default.
+      if (existing?.hourlyRate !== undefined) {
+        setHourlyRate(String(existing.hourlyRate));
+        setCurrency(existing?.currency || 'INR');
+      } else {
+        setHourlyRate(String(project.defaultHourlyRate || '1000'));
+        setCurrency('INR'); // defaults are stored in INR
+      }
+      setHoursWorked(existing?.hoursWorked !== undefined ? String(existing.hoursWorked) : '0');
     } else if (type === 'daily') {
-      setDailyRate(existing?.dailyRate || '5000');
-      setDaysWorked(existing?.daysWorked || '0');
+      if (existing?.dailyRate !== undefined) {
+        setDailyRate(String(existing.dailyRate));
+        setCurrency(existing?.currency || 'INR');
+      } else {
+        setDailyRate(String(project.defaultDailyRate || '5000'));
+        setCurrency('INR'); // defaults are stored in INR
+      }
+      setDaysWorked(existing?.daysWorked !== undefined ? String(existing.daysWorked) : '0');
     } else {
       setTotalMonthDays(existing?.totalMonthDays || '30');
       setDaysWorkedMonthly(existing?.daysWorkedMonthly || '0');
+      setCurrency(existing?.currency || 'INR');
     }
     setIncludeGst(existing?.includeGst || false);
-    setCurrency(existing?.currency || 'INR');
     setModalConfig({ project, month, year, type });
   };
 
@@ -354,7 +368,7 @@ const ProjectTable = () => {
     setModalConfig(null);
 
     try {
-      await fetch(`https://expense-management-11.onrender.com/api/project/delete/${project._id}`, {
+       await fetch(`${API_BASE}/project/sync-month/${project._id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ month, year, amt: calculatedAmt, metrics: payloadMetrics }),
@@ -402,7 +416,7 @@ const ProjectTable = () => {
     setEditingPayment(null);
 
     try {
-      await fetch(`https://expense-management-11.onrender.com/api/project/sync-month/${project._id}`, {
+        await fetch(`${API_BASE}/project/sync-month/${projectId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ month, year, paid: val }),

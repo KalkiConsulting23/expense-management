@@ -5,8 +5,17 @@ const Project = require('../models/project');
 // ─── ADD PROJECT ───
 router.post('/add', async (req, res) => {
   try {
-    const { projectName, projectType, startDate, endDate, expectedAmount, currency } = req.body;
-     
+    const {
+      projectName,
+      projectType,
+      startDate,
+      endDate,
+      expectedAmount,
+      currency,
+      defaultHourlyRate,
+      defaultDailyRate,
+    } = req.body;
+
     const newProject = new Project({
       // userId removed entirely
       projectName,
@@ -14,6 +23,8 @@ router.post('/add', async (req, res) => {
       startDate,
       endDate,
       expectedAmount: expectedAmount || 0,
+      defaultHourlyRate: defaultHourlyRate || 0,
+      defaultDailyRate: defaultDailyRate || 0,
       currency: currency || 'INR',
       monthlyBreakdowns: []
     });

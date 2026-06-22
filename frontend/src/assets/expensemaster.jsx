@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from "react";
 
-const API_URL = import.meta.env.VITE_API_URL || "https://expense-management-11.onrender.com";
+const API_BASE = import.meta.env.VITE_API_BASE;
 
 const MONTHS = [
   "January", "February", "March", "April", "May", "June",
@@ -84,7 +84,7 @@ export default function ExpenseMaster() {
     async function fetchExpenses() {
       try {
         setLoading(true);
-        const res = await fetch(`${API_URL}/api/employee/all`);
+        const res = await fetch(`${API_BASE}/employee/all`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         setExpenses(data);

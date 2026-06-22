@@ -14,6 +14,7 @@ const A4      = '#fb923c'  // orange
 const A5      = '#a78bfa'  // purple
 const COLORS  = [A1, A2, A3, A4, A5, '#facc15', '#f87171', '#2dd4bf']
 const CACHE_KEY = 'local_employee_data_cache'
+const API_BASE = import.meta.env.VITE_API_BASE
 
 function fmt(n) {
   if (n >= 1e6) return `₹${(n / 1e6).toFixed(1)}M`
@@ -633,7 +634,7 @@ const Expenseanl = () => {
     }
 
     // Rewritten with native JavaScript fetch instead of custom useApi hook wrappers
-    fetch('https://expense-management-11.onrender.com/api/employee/all')
+    fetch(`${API_BASE}/employee/all`)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() })
       .then(d => { 
         const verifiedData = Array.isArray(d) ? d : []

@@ -1,11 +1,38 @@
-import React, { useEffect, useState, useRef } from 'react'
+import React, { useEffect, useState } from 'react'
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const Q = { Q1:[0,1,2], Q2:[3,4,5], Q3:[6,7,8], Q4:[9,10,11] }
 const H = { H1:[0,1,2,3,4,5], H2:[6,7,8,9,10,11], all:[0,1,2,3,4,5,6,7,8,9,10,11] }
 
+const API_BASE = import.meta.env.VITE_API_BASE
 const fmt = (n) =>
   new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(n || 0)
+
+// Parse a date string into a local (midnight) date, ignoring timezone drift
+function parseUTCDate(dateStr) {
+  if (!dateStr) return null
+  const d = new Date(dateStr)
+  if (isNaN(d)) return null
+  return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+}
+
+function fmtDate(dateStr) {
+  const d = parseUTCDate(dateStr)
+  if (!d) return '—'
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+// A project is active if today falls within [startDate, endDate] inclusive.
+// No endDate => still running (active if started). No startDate => assume active.
+function isProjectActive(p) {
+  const today = new Date()
+  const t = new Date(today.getFullYear(), today.getMonth(), today.getDate())
+  const start = parseUTCDate(p.startDate)
+  const end   = parseUTCDate(p.endDate)
+  if (start && t < start) return false
+  if (end && t > end) return false
+  return true
+}
 
 const Projectmaster = () => {
   const [projects, setProjects]   = useState([])
@@ -17,10 +44,11 @@ const Projectmaster = () => {
   const [half, setHalf]           = useState('all')
 
   useEffect(() => {
-    fetch('https://expense-management-11.onrender.com/api/project/all')
+    fetch(`${API_BASE}/project/all`)
       .then(r => { if (!r.ok) throw new Error('Failed'); return r.json() })
       .then(data => {
         setProjects(data)
+
         const ys = [...new Set(data.flatMap(p => (p.monthlyBreakdowns || []).map(b => b.year)))]
           .sort((a, b) => b - a)
         if (!ys.length) ys.push(new Date().getFullYear())
@@ -38,21 +66,26 @@ const Projectmaster = () => {
     return H.all
   }
 
+  // Per-month rows
   const monthData = MONTHS.map((m, mi) => {
     const matched = projects.filter(p =>
       (p.monthlyBreakdowns || []).some(b => b.month === m && Number(b.year) === Number(year))
     )
     const rows = matched.map(p => {
       const b = p.monthlyBreakdowns.find(b => b.month === m && Number(b.year) === Number(year))
-      return { name: p.projectName, amt: b?.amt || 0, paid: b?.paid || 0 }
+      return {
+        name: p.projectName,
+        amt: b?.amt || 0,
+        paid: b?.paid || 0,
+      }
     })
     return { mi, rows }
   })
 
   const vis = visibleMonths()
   const visData = vis.map(mi => monthData[mi])
-  const totalAmt    = visData.reduce((s, d) => s + d.rows.reduce((a, r) => a + r.amt, 0), 0)
-  const totalPaid   = visData.reduce((s, d) => s + d.rows.reduce((a, r) => a + r.paid, 0), 0)
+  const totalAmt     = visData.reduce((s, d) => s + d.rows.reduce((a, r) => a + r.amt, 0), 0)
+  const totalPaid    = visData.reduce((s, d) => s + d.rows.reduce((a, r) => a + r.paid, 0), 0)
   const activeProjs  = new Set(visData.flatMap(d => d.rows.map(r => r.name))).size
   const activeMonths = visData.filter(d => d.rows.length > 0).length
 
@@ -109,44 +142,41 @@ const Projectmaster = () => {
 
         .pm-section-label { font-size: 10px; font-weight: 500; color: #b08a5e; letter-spacing: 1.4px; text-transform: uppercase; margin-bottom: 12px; padding-left: 2px; }
 
-        .months-grid { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; }
-
-        .month-card { background: #fffdf8; border: 1.5px solid #e8dece; border-radius: 12px; padding: 14px 16px; }
-        .month-card.has-data { border-color: #d4b090; }
-        .month-name { font-size: 10px; font-weight: 500; letter-spacing: 1.2px; text-transform: uppercase; color: #b08a5e; margin-bottom: 10px; }
-        .month-card.has-data .month-name { color: #c97844; }
-
-        .project-row { display: flex; align-items: center; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #f0e8db; }
-        .proj-name { font-size: 12px; color: #2e2318; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px; }
-        .proj-amt { font-size: 12px; font-weight: 500; color: #c97844; white-space: nowrap; margin-left: 8px; }
-        .proj-paid { font-size: 10px; color: #9a8775; white-space: nowrap; }
-
-        .month-total-row {
-          display: flex; align-items: center; justify-content: space-between;
-          margin-top: 8px; padding-top: 7px; border-top: 1.5px solid #e8dece;
+        /* Project summary table */
+        .pm-projects-wrap {
+          background: #fffdf8; border: 1.5px solid #e8dece; border-radius: 12px;
+          overflow: hidden; box-shadow: 0 2px 0 #e2d9c8;
         }
-        .month-total-label {
-          font-size: 9px; font-weight: 500; color: #b08a5e;
-          text-transform: uppercase; letter-spacing: 1px;
+        .pm-projects-table { border-collapse: collapse; width: 100%; }
+        .pm-projects-table th {
+          background: #faf6ee; color: #b08a5e; font-size: 9px; font-weight: 500;
+          letter-spacing: 1.2px; text-transform: uppercase; text-align: left;
+          padding: 11px 16px; border-bottom: 1.5px solid #e8dece; white-space: nowrap;
         }
-        .month-total-amt {
-          font-size: 12px; font-weight: 600; color: #c97844;
-          font-family: monospace; text-align: right;
+        .pm-projects-table th.center { text-align: center; }
+        .pm-projects-table td {
+          padding: 12px 16px; border-bottom: 1px solid #f0e8db; font-size: 13px;
+          color: #2e2318; vertical-align: middle;
         }
-        .month-total-paid {
-          font-size: 10px; color: #7a9e5a;
-          font-family: monospace; text-align: right; margin-top: 1px;
-        }
+        .pm-projects-table tr:last-child td { border-bottom: none; }
+        .pm-projects-table tr:hover td { background: #fdf8f0; }
+        .pj-name { font-weight: 500; color: #2e2318; }
+        .pj-date { font-size: 12px; color: #9a8775; white-space: nowrap; }
 
-        .empty-msg { font-size: 11px; color: #c5b49e; text-align: center; padding: 10px 0; }
+        .status-pill {
+          display: inline-flex; align-items: center; gap: 5px; font-size: 11px;
+          font-weight: 500; padding: 3px 11px; border-radius: 20px; white-space: nowrap;
+        }
+        .status-pill.active   { background: #f5f8f0; color: #5e8a3a; border: 1.5px solid #c8deb0; }
+        .status-pill.inactive { background: #faf3f0; color: #b5672f; border: 1.5px solid #e8c4ae; }
+        .status-dot { width: 6px; height: 6px; border-radius: 50%; }
+        .status-pill.active   .status-dot { background: #7a9e5a; }
+        .status-pill.inactive .status-dot { background: #c97844; }
 
         @media (max-width: 700px) {
-          .months-grid { grid-template-columns: repeat(2, minmax(0,1fr)); }
           .summary-bar { grid-template-columns: repeat(2, minmax(0,1fr)); }
           .pm-page { padding: 48px 16px 24px; }
-        }
-        @media (max-width: 480px) {
-          .months-grid { grid-template-columns: 1fr; }
+          .pm-projects-wrap { overflow-x: auto; }
         }
       `}</style>
 
@@ -206,49 +236,40 @@ const Projectmaster = () => {
           </div>
         </div>
 
-        {/* Month grid */}
-        <div className="pm-section-label">{sectionLabel} · {year}</div>
-        <div className="months-grid">
-          {vis.map(mi => {
-            const { rows } = monthData[mi]
-            const hasData = rows.length > 0
-            const monthTotalAmt  = rows.reduce((s, r) => s + r.amt, 0)
-            const monthTotalPaid = rows.reduce((s, r) => s + r.paid, 0)
-            const hasPaid = rows.some(r => r.paid > 0)
-
-            return (
-              <div key={mi} className={`month-card${hasData ? ' has-data' : ''}`}>
-                <div className="month-name">{MONTHS[mi]}</div>
-
-                {hasData ? (
-                  <>
-                    {rows.map((r, i) => (
-                      <div key={i} className="project-row">
-                        <span className="proj-name" title={r.name}>{r.name}</span>
-                        <div style={{ textAlign: 'right' }}>
-                          <div className="proj-amt">{fmt(r.amt)}</div>
-                          {r.paid > 0 && <div className="proj-paid">Paid {fmt(r.paid)}</div>}
-                        </div>
-                      </div>
-                    ))}
-
-                    {/* ── Month total row ── */}
-                    <div className="month-total-row">
-                      <span className="month-total-label">Total</span>
-                      <div>
-                        <div className="month-total-amt">{fmt(monthTotalAmt)}</div>
-                        {hasPaid && (
-                          <div className="month-total-paid">Paid {fmt(monthTotalPaid)}</div>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="empty-msg">No entries</div>
-                )}
-              </div>
-            )
-          })}
+        {/* Project summary table */}
+        <div className="pm-section-label">Projects · {projects.length}</div>
+        <div className="pm-projects-wrap">
+          <table className="pm-projects-table">
+            <thead>
+              <tr>
+                <th>Project Name</th>
+                <th>Start Date</th>
+                <th>End Date</th>
+                <th className="center">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {projects.length === 0 && (
+                <tr><td colSpan={4} style={{ textAlign: 'center', color: '#c5b49e' }}>No projects</td></tr>
+              )}
+              {projects.map(p => {
+                const active = isProjectActive(p)
+                return (
+                  <tr key={p._id}>
+                    <td className="pj-name">{p.projectName}</td>
+                    <td className="pj-date">{fmtDate(p.startDate)}</td>
+                    <td className="pj-date">{p.endDate ? fmtDate(p.endDate) : 'Ongoing'}</td>
+                    <td style={{ textAlign: 'center' }}>
+                      <span className={`status-pill ${active ? 'active' : 'inactive'}`}>
+                        <span className="status-dot" />
+                        {active ? 'Active' : 'Inactive'}
+                      </span>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
         </div>
       </div>
     </>
