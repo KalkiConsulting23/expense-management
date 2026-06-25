@@ -1,18 +1,22 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react'
 import * as d3 from 'd3'
 
-// ── Theme ─────────────────────────────────────────────────────────────────────
-const BG      = '#0b0f1a'
-const CARD    = '#111827'
-const BORDER  = '#1c2a3a'
-const TEXT    = '#e2e8f0'
-const MUTED   = '#4a5568'
-const A1      = '#38bdf8'  // sky blue
-const A2      = '#f472b6'  // pink
-const A3      = '#34d399'  // green
-const A4      = '#fb923c'  // orange
-const A5      = '#a78bfa'  // purple
-const COLORS  = [A1, A2, A3, A4, A5, '#facc15', '#f87171', '#2dd4bf']
+// ── Light SaaS theme ──────────────────────────────────────────────────────────
+const BG      = '#f7f7f8'
+const CARD    = '#ffffff'
+const CARDALT = '#fafafa'
+const BORDER  = '#ececec'
+const BORDERSOFT = '#f1f1f1'
+const GRID    = '#eef0f2'
+const TEXT    = '#18181b'
+const SUB     = '#6b7280'
+const MUTED   = '#9ca3af'
+const A1      = '#4f46e5'  // indigo (primary)
+const A2      = '#dc2626'  // rose
+const A3      = '#16a34a'  // emerald
+const A4      = '#d97706'  // amber
+const A5      = '#7c3aed'  // purple
+const COLORS  = [A1, '#0891b2', A3, A4, A5, '#0d9488', A2, '#db2777']
 const CACHE_KEY = 'local_employee_data_cache'
 const API_BASE = import.meta.env.VITE_API_BASE
 
@@ -33,12 +37,12 @@ function NoData() {
 function Tooltip({ id, accent = A1 }) {
   return (
     <div id={id} style={{
-      position: 'absolute', background: '#0d1525',
-      border: `1px solid ${accent}44`, borderRadius: 7,
+      position: 'absolute', background: '#ffffff',
+      border: `1px solid ${BORDER}`, borderRadius: 8,
       padding: '7px 12px', fontSize: 12, color: TEXT,
       pointerEvents: 'none', opacity: 0,
       transition: 'opacity .15s', whiteSpace: 'nowrap',
-      boxShadow: `0 0 12px ${accent}22`
+      boxShadow: '0 4px 16px rgba(16,24,40,0.12)'
     }} />
   )
 }
@@ -54,7 +58,6 @@ function StackedBar({ data }) {
     const m = { top: 20, right: 20, bottom: 48, left: 64 }
     const w = W - m.left - m.right, h = H - m.top - m.bottom
 
-    // derive month key
     const monthKey = d => {
       const raw = d.date ?? d.startDate ?? d.createdAt
       if (!raw) return 'N/A'
@@ -65,7 +68,6 @@ function StackedBar({ data }) {
     const types = [...new Set(data.map(d => d.expenseType ?? 'Other'))]
     const months = [...new Set(data.map(monthKey))].sort()
 
-    // build matrix
     const matrix = months.map(mo => {
       const row = { month: mo }
       types.forEach(t => { row[t] = 0 })
@@ -85,7 +87,7 @@ function StackedBar({ data }) {
 
     g.append('g').call(d3.axisLeft(y).ticks(5).tickSize(-w).tickFormat(''))
       .call(a => a.select('.domain').remove())
-      .call(a => a.selectAll('line').attr('stroke', BORDER))
+      .call(a => a.selectAll('line').attr('stroke', GRID))
 
     const tip = d3.select('#sb-tip')
     stack.forEach((layer, li) => {
@@ -116,12 +118,11 @@ function StackedBar({ data }) {
       .call(a => a.selectAll('text').attr('fill', MUTED).style('font-size', '11px'))
       .call(a => a.selectAll('line').remove())
 
-    // legend
     const lg = svg.append('g').attr('transform', `translate(${m.left}, ${H - 14})`)
     types.forEach((t, i) => {
       const gx = lg.append('g').attr('transform', `translate(${i * 110}, 0)`)
       gx.append('rect').attr('width', 9).attr('height', 9).attr('y', -9).attr('rx', 2).attr('fill', color(t))
-      gx.append('text').attr('x', 13).attr('fill', MUTED).style('font-size', '11px').text(t)
+      gx.append('text').attr('x', 13).attr('fill', SUB).style('font-size', '11px').text(t)
     })
   }, [data])
 
@@ -147,7 +148,7 @@ function TypeDonut({ data }) {
     const grouped = d3.rollup(data, v => d3.sum(v, d => d.amount ?? 0), d => d.type ?? 'unknown')
     const entries = Array.from(grouped, ([k, v]) => ({ key: k, value: v }))
     const total = d3.sum(entries, d => d.value)
-    const color = d3.scaleOrdinal().domain(entries.map(d => d.key)).range([A1, A2, A3, A4])
+    const color = d3.scaleOrdinal().domain(entries.map(d => d.key)).range([A1, A4, A3, A2])
 
     const svg = d3.select(el).append('svg').attr('width', size).attr('height', size)
     const g = svg.append('g').attr('transform', `translate(${r},${r})`)
@@ -158,7 +159,7 @@ function TypeDonut({ data }) {
     const tip = d3.select('#do-tip')
 
     g.selectAll('path').data(pie(entries)).join('path')
-      .attr('fill', d => color(d.data.key)).attr('stroke', BG).attr('stroke-width', 2)
+      .attr('fill', d => color(d.data.key)).attr('stroke', CARD).attr('stroke-width', 2)
       .style('cursor', 'pointer')
       .on('mouseover', function (ev, d) {
         d3.select(this).transition().duration(120).attr('d', arcH)
@@ -179,7 +180,7 @@ function TypeDonut({ data }) {
     g.append('text').attr('text-anchor', 'middle').attr('dy', '-0.3em')
       .attr('fill', MUTED).style('font-size', '11px').text('Total')
     g.append('text').attr('text-anchor', 'middle').attr('dy', '1em')
-      .attr('fill', A1).style('font-size', '14px').style('font-weight', 700).text(fmt(total))
+      .attr('fill', TEXT).style('font-size', '15px').style('font-weight', 700).text(fmt(total))
   }, [data])
 
   const legendEntries = useMemo(() => {
@@ -200,8 +201,8 @@ function TypeDonut({ data }) {
           : legendEntries.map((e, i) => (
             <div key={e.key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <div style={{ width: 10, height: 10, borderRadius: 2, background: COLORS[i % COLORS.length], flexShrink: 0 }} />
-              <span style={{ fontSize: 12, color: MUTED, textTransform: 'capitalize' }}>{e.key}</span>
-              <span style={{ fontSize: 12, color: TEXT, marginLeft: 'auto', paddingLeft: 20 }}>{fmt(e.value)}</span>
+              <span style={{ fontSize: 12, color: SUB, textTransform: 'capitalize' }}>{e.key}</span>
+              <span style={{ fontSize: 12, color: TEXT, marginLeft: 'auto', paddingLeft: 20, fontVariantNumeric: 'tabular-nums' }}>{fmt(e.value)}</span>
             </div>
           ))
         }
@@ -235,8 +236,8 @@ function TopExpenses({ data }) {
     const defs = svg.append('defs')
     entries.forEach((e, i) => {
       const grad = defs.append('linearGradient').attr('id', `hg${i}`).attr('x1', 0).attr('y1', 0).attr('x2', 1).attr('y2', 0)
-      grad.append('stop').attr('offset', '0%').attr('stop-color', COLORS[i % COLORS.length]).attr('stop-opacity', 0.9)
-      grad.append('stop').attr('offset', '100%').attr('stop-color', COLORS[i % COLORS.length]).attr('stop-opacity', 0.3)
+      grad.append('stop').attr('offset', '0%').attr('stop-color', COLORS[i % COLORS.length]).attr('stop-opacity', 0.95)
+      grad.append('stop').attr('offset', '100%').attr('stop-color', COLORS[i % COLORS.length]).attr('stop-opacity', 0.45)
     })
 
     const tip = d3.select('#hb-tip')
@@ -252,12 +253,11 @@ function TopExpenses({ data }) {
       .on('mouseout', () => tip.style('opacity', 0))
       .transition().duration(700).ease(d3.easeCubicOut).attr('width', d => x(d.value))
 
-    // value labels
     g.selectAll('text.val').data(entries).join('text')
       .attr('class', 'val')
       .attr('y', d => y(d.name) + y.bandwidth() / 2 + 4)
       .attr('x', d => x(d.value) + 6)
-      .attr('fill', MUTED).style('font-size', '11px').text(d => fmt(d.value))
+      .attr('fill', SUB).style('font-size', '11px').text(d => fmt(d.value))
 
     g.append('g').call(d3.axisLeft(y).tickSize(0))
       .call(a => a.select('.domain').remove())
@@ -304,23 +304,23 @@ function CumulativeLine({ data }) {
 
     const defs = svg.append('defs')
     const grad = defs.append('linearGradient').attr('id', 'clGrad').attr('x1', 0).attr('y1', 0).attr('x2', 0).attr('y2', 1)
-    grad.append('stop').attr('offset', '0%').attr('stop-color', A3).attr('stop-opacity', 0.3)
-    grad.append('stop').attr('offset', '100%').attr('stop-color', A3).attr('stop-opacity', 0)
+    grad.append('stop').attr('offset', '0%').attr('stop-color', A1).attr('stop-opacity', 0.2)
+    grad.append('stop').attr('offset', '100%').attr('stop-color', A1).attr('stop-opacity', 0)
 
     g.append('g').call(d3.axisLeft(y).ticks(5).tickSize(-w).tickFormat(''))
       .call(a => a.select('.domain').remove())
-      .call(a => a.selectAll('line').attr('stroke', BORDER))
+      .call(a => a.selectAll('line').attr('stroke', GRID))
 
     const area = d3.area().x(d => x(d.date)).y0(h).y1(d => y(d.cumulative)).curve(d3.curveCatmullRom)
     const line = d3.line().x(d => x(d.date)).y(d => y(d.cumulative)).curve(d3.curveCatmullRom)
 
     g.append('path').datum(series).attr('fill', 'url(#clGrad)').attr('d', area)
-    g.append('path').datum(series).attr('fill', 'none').attr('stroke', A3).attr('stroke-width', 2.5).attr('d', line)
+    g.append('path').datum(series).attr('fill', 'none').attr('stroke', A1).attr('stroke-width', 2.5).attr('d', line)
 
     const tip = d3.select('#cl-tip')
     g.selectAll('circle').data(series).join('circle')
       .attr('cx', d => x(d.date)).attr('cy', d => y(d.cumulative))
-      .attr('r', 4).attr('fill', A3).attr('stroke', BG).attr('stroke-width', 2)
+      .attr('r', 4).attr('fill', A1).attr('stroke', CARD).attr('stroke-width', 2)
       .style('cursor', 'pointer')
       .on('mouseover', (ev, d) => {
         tip.style('opacity', 1)
@@ -379,7 +379,7 @@ function PaymentHeatmap({ data }) {
     })
 
     const maxVal = d3.max(matrix, d => d.value) || 1
-    const colorScale = d3.scaleSequential(d3.interpolateBlues).domain([0, maxVal])
+    const colorScale = d3.scaleSequential(d3.interpolatePuBu).domain([0, maxVal])
 
     const svg = d3.select(el).append('svg').attr('width', W).attr('height', H)
     const g = svg.append('g').attr('transform', `translate(${pad.left},${pad.top})`)
@@ -391,7 +391,7 @@ function PaymentHeatmap({ data }) {
     g.selectAll('rect').data(matrix).join('rect')
       .attr('x', d => x(d.month)).attr('y', d => y(d.type))
       .attr('width', x.bandwidth()).attr('height', y.bandwidth())
-      .attr('fill', d => d.value ? colorScale(d.value) : BORDER).attr('rx', 3)
+      .attr('fill', d => d.value ? colorScale(d.value) : GRID).attr('rx', 3)
       .style('cursor', 'pointer')
       .on('mouseover', (ev, d) => {
         tip.style('opacity', 1)
@@ -423,13 +423,13 @@ function PaymentHeatmap({ data }) {
 function KPI({ label, value, accent, sub }) {
   return (
     <div style={{
-      background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12,
-      padding: '20px 24px', flex: 1, minWidth: 140,
-      borderTop: `3px solid ${accent}`
+      background: CARD, border: `1px solid ${BORDER}`, borderRadius: 14,
+      padding: '18px 22px', flex: 1, minWidth: 140,
+      borderTop: `3px solid ${accent}`, boxShadow: '0 1px 3px rgba(16,24,40,0.04)'
     }}>
-      <div style={{ fontSize: 11, color: MUTED, textTransform: 'uppercase', letterSpacing: '0.09em', marginBottom: 8 }}>{label}</div>
-      <div style={{ fontSize: 26, fontWeight: 700, color: accent, fontFamily: 'monospace' }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: MUTED, marginTop: 4 }}>{sub}</div>}
+      <div style={{ fontSize: 11, color: MUTED, letterSpacing: '0.2px', marginBottom: 8 }}>{label}</div>
+      <div style={{ fontSize: 24, fontWeight: 700, color: TEXT, fontVariantNumeric: 'tabular-nums', letterSpacing: '-0.5px' }}>{value}</div>
+      {sub && <div style={{ fontSize: 11.5, color: MUTED, marginTop: 4 }}>{sub}</div>}
     </div>
   )
 }
@@ -437,10 +437,10 @@ function KPI({ label, value, accent, sub }) {
 function ChartCard({ title, children }) {
   return (
     <div style={{
-      background: CARD, border: `1px solid ${BORDER}`, borderRadius: 12,
-      padding: '20px 24px'
+      background: CARD, border: `1px solid ${BORDER}`, borderRadius: 16,
+      padding: '20px 24px', boxShadow: '0 1px 3px rgba(16,24,40,0.04)'
     }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, marginBottom: 16, letterSpacing: '0.04em' }}>{title}</div>
+      <div style={{ fontSize: 13, fontWeight: 600, color: TEXT, marginBottom: 16, letterSpacing: '-0.1px' }}>{title}</div>
       {children}
     </div>
   )
@@ -462,13 +462,13 @@ function CategoryDropdown({ categories, selected, onSelect }) {
         onClick={() => setOpen(o => !o)}
         style={{
           display: 'flex', alignItems: 'center', gap: 8,
-          padding: '8px 16px', borderRadius: 10,
-          border: `1px solid ${selected ? A2 : BORDER}`,
-          background: selected ? `${A2}15` : CARD,
-          color: selected ? A2 : TEXT,
+          padding: '9px 16px', borderRadius: 10,
+          border: `1px solid ${selected ? A1 : BORDER}`,
+          background: selected ? `${A1}10` : CARD,
+          color: selected ? A1 : TEXT,
           fontSize: 13, fontWeight: 600, cursor: 'pointer',
           transition: 'all .2s', whiteSpace: 'nowrap',
-          boxShadow: open ? `0 0 0 2px ${A2}33` : 'none'
+          boxShadow: open ? `0 0 0 3px ${A1}1f` : '0 1px 2px rgba(16,24,40,0.04)'
         }}
       >
         <span style={{ fontSize: 15 }}>🗂</span>
@@ -483,24 +483,24 @@ function CategoryDropdown({ categories, selected, onSelect }) {
       {open && (
         <div style={{
           position: 'absolute', top: 'calc(100% + 8px)', right: 0,
-          background: '#0d1525', border: `1px solid ${BORDER}`,
+          background: '#ffffff', border: `1px solid ${BORDER}`,
           borderRadius: 12, overflow: 'hidden', zIndex: 999,
           minWidth: 200,
-          boxShadow: '0 16px 40px rgba(0,0,0,0.6)',
+          boxShadow: '0 16px 40px rgba(16,24,40,0.14)',
           animation: 'dropIn .15s ease'
         }}>
           <div
             onClick={() => { onSelect(null); setOpen(false) }}
             style={{
               padding: '10px 16px', fontSize: 13, cursor: 'pointer',
-              color: !selected ? A1 : MUTED,
-              background: !selected ? `${A1}10` : 'transparent',
-              borderBottom: `1px solid ${BORDER}`,
+              color: !selected ? A1 : SUB,
+              background: !selected ? `${A1}0d` : 'transparent',
+              borderBottom: `1px solid ${BORDERSOFT}`,
               display: 'flex', alignItems: 'center', gap: 8,
               transition: 'background .15s'
             }}
-            onMouseEnter={e => e.currentTarget.style.background = `${A1}12`}
-            onMouseLeave={e => e.currentTarget.style.background = !selected ? `${A1}10` : 'transparent'}
+            onMouseEnter={e => e.currentTarget.style.background = `${A1}0d`}
+            onMouseLeave={e => e.currentTarget.style.background = !selected ? `${A1}0d` : 'transparent'}
           >
             <span>🌐</span> All Categories
           </div>
@@ -512,13 +512,13 @@ function CategoryDropdown({ categories, selected, onSelect }) {
               style={{
                 padding: '10px 16px', fontSize: 13, cursor: 'pointer',
                 color: selected === cat ? COLORS[i % COLORS.length] : TEXT,
-                background: selected === cat ? `${COLORS[i % COLORS.length]}12` : 'transparent',
+                background: selected === cat ? `${COLORS[i % COLORS.length]}10` : 'transparent',
                 display: 'flex', alignItems: 'center', gap: 10,
                 transition: 'background .15s',
-                borderBottom: i < categories.length - 1 ? `1px solid ${BORDER}22` : 'none'
+                borderBottom: i < categories.length - 1 ? `1px solid ${BORDERSOFT}` : 'none'
               }}
-              onMouseEnter={e => e.currentTarget.style.background = `${COLORS[i % COLORS.length]}12`}
-              onMouseLeave={e => e.currentTarget.style.background = selected === cat ? `${COLORS[i % COLORS.length]}12` : 'transparent'}
+              onMouseEnter={e => e.currentTarget.style.background = `${COLORS[i % COLORS.length]}10`}
+              onMouseLeave={e => e.currentTarget.style.background = selected === cat ? `${COLORS[i % COLORS.length]}10` : 'transparent'}
             >
               <span style={{
                 width: 8, height: 8, borderRadius: '50%',
@@ -582,7 +582,7 @@ function ExpenseTable({ data, accent }) {
         <thead>
           <tr style={{ borderBottom: `1px solid ${BORDER}` }}>
             {['Name', 'Type', 'Amount', 'Date'].map(h => (
-              <th key={h} style={{ padding: '6px 10px', textAlign: 'left', color: MUTED, fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{h}</th>
+              <th key={h} style={{ padding: '8px 10px', textAlign: 'left', color: MUTED, fontWeight: 500, fontSize: 10.5, letterSpacing: '0.3px' }}>{h}</th>
             ))}
           </tr>
         </thead>
@@ -591,20 +591,20 @@ function ExpenseTable({ data, accent }) {
             const raw = d.date ?? d.startDate ?? d.createdAt
             const dateStr = raw ? new Date(raw).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'
             return (
-              <tr key={d._id ?? i} style={{ borderBottom: `1px solid ${BORDER}22` }}
-                onMouseEnter={e => e.currentTarget.style.background = `${accent}08`}
+              <tr key={d._id ?? i} style={{ borderBottom: `1px solid ${BORDERSOFT}` }}
+                onMouseEnter={e => e.currentTarget.style.background = CARDALT}
                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                <td style={{ padding: '8px 10px', color: TEXT }}>{d.expenseName ?? '—'}</td>
-                <td style={{ padding: '8px 10px' }}>
+                <td style={{ padding: '9px 10px', color: TEXT }}>{d.expenseName ?? '—'}</td>
+                <td style={{ padding: '9px 10px' }}>
                   <span style={{
                     padding: '2px 8px', borderRadius: 20, fontSize: 10, fontWeight: 600,
-                    background: d.type === 'recurring' ? `${A4}20` : `${A1}20`,
+                    background: d.type === 'recurring' ? `${A4}18` : `${A1}18`,
                     color: d.type === 'recurring' ? A4 : A1,
                     textTransform: 'capitalize'
                   }}>{d.type ?? '—'}</span>
                 </td>
-                <td style={{ padding: '8px 10px', color: accent, fontWeight: 700, fontFamily: 'monospace' }}>{fmt(d.amount ?? 0)}</td>
-                <td style={{ padding: '8px 10px', color: MUTED }}>{dateStr}</td>
+                <td style={{ padding: '9px 10px', color: accent, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{fmt(d.amount ?? 0)}</td>
+                <td style={{ padding: '9px 10px', color: MUTED }}>{dateStr}</td>
               </tr>
             )
           })}
@@ -663,7 +663,7 @@ const Expenseanl = () => {
 
   if (loading) return (
     <div style={{ background: BG, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ color: A1, fontSize: 14, fontFamily: 'monospace', letterSpacing: '0.1em' }}>
+      <div style={{ color: SUB, fontSize: 14, fontFamily: "'Inter', sans-serif", letterSpacing: '0.02em' }}>
         Fetching expense records…
       </div>
     </div>
@@ -671,23 +671,23 @@ const Expenseanl = () => {
 
   if (error) return (
     <div style={{ background: BG, minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ color: A2, fontSize: 14, fontFamily: 'monospace' }}>Error: {error}</div>
+      <div style={{ color: A2, fontSize: 14, fontFamily: "'Inter', sans-serif" }}>Error: {error}</div>
     </div>
   )
 
   return (
-    <div style={{ background: BG, minHeight: '100vh', padding: '32px 24px', fontFamily: "'DM Sans','Segoe UI',sans-serif", color: TEXT }}>
-      <style>{`@keyframes dropIn { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:translateY(0) } }`}</style>
+    <div style={{ background: BG, minHeight: '100vh', padding: '32px 24px', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif", color: TEXT }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap'); @keyframes dropIn { from { opacity:0; transform:translateY(-6px) } to { opacity:1; transform:translateY(0) } }`}</style>
 
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 24, gap: 16, flexWrap: 'wrap' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
-            <div style={{ width: 6, height: 28, background: activeCategory ? catAccent : A1, borderRadius: 3, transition: 'background .3s' }} />
-            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, letterSpacing: '-0.02em' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 5 }}>
+            <div style={{ width: 5, height: 26, background: activeCategory ? catAccent : A1, borderRadius: 3, transition: 'background .3s' }} />
+            <h1 style={{ margin: 0, fontSize: 22, fontWeight: 600, letterSpacing: '-0.4px', color: TEXT }}>
               {activeCategory ? `${activeCategory} Expenses` : 'Expense Analytics'}
             </h1>
           </div>
-          <p style={{ margin: 0, marginLeft: 16, fontSize: 13, color: MUTED }}>
+          <p style={{ margin: 0, marginLeft: 15, fontSize: 13, color: SUB }}>
             {activeCategory
               ? `${filtered.filter(d => (d.expenseType ?? 'Other') === activeCategory).length} records · ${activeCategory} category`
               : `${filtered.length} records · All time`}
@@ -704,13 +704,13 @@ const Expenseanl = () => {
       <div style={{ display: 'flex', gap: 8, marginBottom: 24 }}>
         {['all', 'recurring', 'one-time'].map(f => (
           <button key={f} onClick={() => setFilter(f)} style={{
-            padding: '6px 16px', borderRadius: 20,
+            padding: '7px 16px', borderRadius: 20,
             border: `1px solid ${filter === f ? A1 : BORDER}`,
-            background: filter === f ? `${A1}18` : 'transparent',
-            color: filter === f ? A1 : MUTED,
-            fontSize: 12, cursor: 'pointer',
-            fontWeight: filter === f ? 600 : 400,
-            textTransform: 'capitalize', transition: 'all .2s'
+            background: filter === f ? `${A1}10` : CARD,
+            color: filter === f ? A1 : SUB,
+            fontSize: 12.5, cursor: 'pointer',
+            fontWeight: filter === f ? 600 : 500,
+            textTransform: 'capitalize', transition: 'all .2s', fontFamily: 'inherit'
           }}>{f}</button>
         ))}
       </div>

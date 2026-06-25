@@ -4,10 +4,6 @@ const Employee = require("../models/employee");
 
 // ── Create Employee ──────────────────────────────────────────────────────
 router.post("/add", async (req, res) => {
-  console.log("=== /add called ===");
-  console.log("Content-Type :", req.headers["content-type"]);
-  console.log("Raw body     :", req.body);
-
   try {
     const { expenseType, expenseName, type, amount, startDate, endDate, date } = req.body;
 

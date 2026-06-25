@@ -1,10 +1,30 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+// Calendar month order — used only for calendar-month index math (Date.getMonth()).
+const CAL_MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+// Financial-year display order: April → March.
+const MONTHS = ['Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar'];
 const PROJECT_CACHE_KEY = 'local_project_data_cache';
 const API_BASE = import.meta.env.VITE_API_BASE;
 const fmt = (n) => '₹' + Number(n).toLocaleString('en-IN');
+
+// The calendar index (0-11) for a month name.
+const calIndex = (m) => CAL_MONTHS.indexOf(m);
+
+// Given a financial year (the START calendar year, e.g. 2025 means FY 2025-26),
+// return the CALENDAR year that a given month falls in.
+// Apr–Dec belong to the FY start year; Jan–Mar belong to the next calendar year.
+const calYearForFYMonth = (month, fyStartYear) =>
+  calIndex(month) >= 3 ? fyStartYear : fyStartYear + 1;
+
+// Given any calendar date's year + month index, which FY START year does it fall in?
+// Jan–Mar (index 0-2) belong to the previous FY start year.
+const fyStartYearForDate = (calYear, monthIndex) =>
+  monthIndex >= 3 ? calYear : calYear - 1;
+
+// Pretty label like "2025-26"
+const fyLabel = (fyStartYear) => `${fyStartYear}-${String((fyStartYear + 1) % 100).padStart(2, '0')}`;
 
 function parseUTCDate(dateStr) {
   if (!dateStr) return new Date();
@@ -28,15 +48,21 @@ function isMonthActive(project, monthIndex, year) {
   return true;
 }
 
-function isProjectActiveInYear(project, year) {
+// Active in a FINANCIAL year (Apr fyStartYear → Mar fyStartYear+1)?
+function isProjectActiveInYear(project, fyStartYear) {
   const startStr = project.startDate;
   const endStr = project.endDate;
   if (!startStr) return false;
 
-  const startYear = parseUTCDate(startStr).getFullYear();
-  const endYear = endStr ? parseUTCDate(endStr).getFullYear() : new Date().getFullYear();
+  const start = parseUTCDate(startStr);
+  const end = endStr ? parseUTCDate(endStr) : new Date();
 
-  return year >= startYear && year <= endYear;
+  const fyStart = new Date(fyStartYear, 3, 1);          // 1 Apr
+  const fyEnd   = new Date(fyStartYear + 1, 2, 31);     // 31 Mar next year
+
+  if (end < fyStart) return false;
+  if (start > fyEnd) return false;
+  return true;
 }
 
 function countTotalActiveMonths(project) {
@@ -58,18 +84,23 @@ function countTotalActiveMonths(project) {
   return count || 1;
 }
 
-function buildProjectTimeline(project, year, localizedOverrides = {}) {
+function buildProjectTimeline(project, fyStartYear, localizedOverrides = {}) {
   const result = {};
 
   const totalActiveMonths = countTotalActiveMonths(project);
 
-  MONTHS.forEach((m, i) => {
-    if (!isMonthActive(project, i, year)) {
+  MONTHS.forEach((m) => {
+    // Real calendar year for this FY month (Jan–Mar roll into fyStartYear+1).
+    const calYear = calYearForFYMonth(m, fyStartYear);
+    const monthIdx = calIndex(m);
+
+    if (!isMonthActive(project, monthIdx, calYear)) {
       result[m] = { amt: 0, paid: 0, active: false };
       return;
     }
 
-    const overrideKey = `${m}_${year}`;
+    // Override key uses the true calendar year so saved breakdowns still match.
+    const overrideKey = `${m}_${calYear}`;
     let calculatedBase = 0;
     let savedPaid = 0;
 
@@ -91,6 +122,7 @@ function buildProjectTimeline(project, year, localizedOverrides = {}) {
       amt: calculatedBase, 
       paid: savedPaid, 
       active: true,
+      calYear,
       metrics: localizedOverrides[overrideKey] || null 
     };
   });
@@ -98,16 +130,16 @@ function buildProjectTimeline(project, year, localizedOverrides = {}) {
 }
 
 function ProjectAvatar({ name = '' }) {
-  const palette = ['#c97844','#b08a5e','#8c7a68','#a05e2a','#7a6050','#d4a070','#9a8775','#b5672f'];
+  const palette = ['#4f46e5','#0891b2','#7c3aed','#0d9488','#2563eb','#db2777','#ea580c','#059669'];
   const color   = palette[name.charCodeAt(0) % palette.length];
   const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   return (
     <div style={{
       width: 32, height: 32, borderRadius: 10, flexShrink: 0,
-      background: color + '22', border: `1.5px solid ${color}55`,
+      background: color + '18', border: `1.5px solid ${color}40`,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       fontSize: 11, fontWeight: 600, color,
-      fontFamily: "'DM Sans', sans-serif", letterSpacing: 0.5,
+      fontFamily: "'Inter', sans-serif", letterSpacing: 0.3,
     }}>
       {initials}
     </div>
@@ -139,10 +171,10 @@ const ProjectTable = () => {
   const [quarterDropdownOpen, setQuarterDropdownOpen] = useState({});
 
   const QUARTERS = {
-    Q1: ['Jan','Feb','Mar'],
-    Q2: ['Apr','May','Jun'],
-    Q3: ['Jul','Aug','Sep'],
-    Q4: ['Oct','Nov','Dec'],
+    Q1: ['Apr','May','Jun'],
+    Q2: ['Jul','Aug','Sep'],
+    Q3: ['Oct','Nov','Dec'],
+    Q4: ['Jan','Feb','Mar'],
   };
 
   const getVisibleMonths = (year) => {
@@ -157,24 +189,30 @@ const ProjectTable = () => {
   const rebuildMatrix = useCallback((allProjs, overrides) => {
     const matrix = {};
     allProjs.forEach(p => {
-      const uniqueYears = new Set();
+      const uniqueFYs = new Set();
       const startStr = p.startDate;
       const endStr = p.endDate;
 
       if (startStr) {
-        const sYear = parseUTCDate(startStr).getFullYear();
-        const eYear = endStr ? parseUTCDate(endStr).getFullYear() : new Date().getFullYear();
-        for (let y = sYear; y <= eYear; y++) uniqueYears.add(y);
+        const sd = parseUTCDate(startStr);
+        const ed = endStr ? parseUTCDate(endStr) : new Date();
+        const sFY = fyStartYearForDate(sd.getFullYear(), sd.getMonth());
+        const eFY = fyStartYearForDate(ed.getFullYear(), ed.getMonth());
+        for (let y = sFY; y <= eFY; y++) uniqueFYs.add(y);
       }
-      uniqueYears.add(new Date().getFullYear());
-      
-      Array.from(uniqueYears).forEach(year => {
+      const now = new Date();
+      uniqueFYs.add(fyStartYearForDate(now.getFullYear(), now.getMonth()));
+
+      Array.from(uniqueFYs).forEach(fyStartYear => {
         const localizedOverrides = {};
+        // A FY spans two calendar years — gather overrides for each month against
+        // its real calendar year so saved data keyed by calendar year still resolves.
         MONTHS.forEach(m => {
-          const k = `${p._id}_${m}_${year}`;
-          if (overrides[k]) localizedOverrides[`${m}_${year}`] = overrides[k];
+          const calYear = calYearForFYMonth(m, fyStartYear);
+          const k = `${p._id}_${m}_${calYear}`;
+          if (overrides[k]) localizedOverrides[`${m}_${calYear}`] = overrides[k];
         });
-        matrix[`${p._id}_${year}`] = buildProjectTimeline(p, year, localizedOverrides);
+        matrix[`${p._id}_${fyStartYear}`] = buildProjectTimeline(p, fyStartYear, localizedOverrides);
       });
     });
     setTimelineData(matrix);
@@ -268,8 +306,6 @@ const ProjectTable = () => {
     const existing = monthlyOverrides[key];
 
     if (type === 'hourly') {
-      // Prefer a previously-saved month override; otherwise fall back to the
-      // project's default rate (stored in INR), otherwise a hard default.
       if (existing?.hourlyRate !== undefined) {
         setHourlyRate(String(existing.hourlyRate));
       } else {
@@ -400,40 +436,44 @@ const ProjectTable = () => {
   };
 
   if (loading) return (
-    <div style={{ padding: 40, display: 'flex', alignItems: 'center', gap: 12, fontFamily: "'DM Sans', sans-serif", color: '#9a8775', background: '#f5f0e8', minHeight: '100vh' }}>
-      <div style={{ width: 22, height: 22, border: '2.5px solid #e8dece', borderTopColor: '#c97844', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
+    <div style={{ padding: 40, display: 'flex', alignItems: 'center', gap: 12, fontFamily: "'Inter', sans-serif", color: '#6b7280', background: '#f7f7f8', minHeight: '100vh' }}>
+      <div style={{ width: 22, height: 22, border: '2.5px solid #ececec', borderTopColor: '#18181b', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
       Refreshing workspace matrix…
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 
   if (error) return (
-    <div style={{ padding: 40, fontFamily: "'DM Sans', sans-serif", color: '#c97844', background: '#f5f0e8', minHeight: '100vh' }}>{error}</div>
+    <div style={{ padding: 40, fontFamily: "'Inter', sans-serif", color: '#dc2626', background: '#f7f7f8', minHeight: '100vh' }}>{error}</div>
   );
 
+  // FY start years that any project touches.
   const distinctYears = Array.from(new Set(projects.flatMap(p => {
     const s = p.startDate;
     const e = p.endDate;
-    if (!s) return [new Date().getFullYear()];
-    const startY = parseUTCDate(s).getFullYear();
-    const endY = e ? parseUTCDate(e).getFullYear() : new Date().getFullYear();
+    const now = new Date();
+    if (!s) return [fyStartYearForDate(now.getFullYear(), now.getMonth())];
+    const sd = parseUTCDate(s);
+    const ed = e ? parseUTCDate(e) : now;
+    const startFY = fyStartYearForDate(sd.getFullYear(), sd.getMonth());
+    const endFY = fyStartYearForDate(ed.getFullYear(), ed.getMonth());
     const yearsArray = [];
-    for (let y = startY; y <= endY; y++) yearsArray.push(y);
+    for (let y = startFY; y <= endFY; y++) yearsArray.push(y);
     return yearsArray;
   }))).sort((a,b) => a-b);
 
   return (
-    <div style={{ padding: '36px 24px 60px', background: '#f5f0e8', minHeight: '100vh', fontFamily: "'DM Sans', sans-serif" }}>
+    <div style={{ padding: '32px 24px 60px', background: '#f7f7f8', minHeight: '100vh', fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif" }}>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         * { box-sizing: border-box; }
 
         .proj-table-scroll {
           overflow-x: auto;
           border-radius: 14px;
-          border: 1.5px solid #e8dece;
-          background: #fffdf8;
-          box-shadow: 0 2px 0 #e2d9c8;
+          border: 1px solid #ececec;
+          background: #ffffff;
+          box-shadow: 0 1px 3px rgba(16,24,40,0.04);
         }
         .proj-table {
           border-collapse: collapse;
@@ -441,172 +481,173 @@ const ProjectTable = () => {
           width: 100%;
         }
         .col-name {
-          position: sticky; left: 0; z-index: 3; background: #fffdf8;
-          min-width: 255px; max-width: 255px; border-right: 1.5px solid #e8dece;
+          position: sticky; left: 0; z-index: 3; background: #ffffff;
+          min-width: 255px; max-width: 255px; border-right: 1px solid #ececec;
         }
-        .col-name.head { background: #faf6ee; z-index: 4; }
+        .col-name.head { background: #fafafa; z-index: 4; }
 
         .th-month {
-          background: #faf6ee; color: #b08a5e; text-align: center;
-          font-size: 10px; font-weight: 500; letter-spacing: 1px;
-          text-transform: uppercase; padding: 10px 4px;
-          border-right: 1.5px solid #e8dece; border-bottom: 1px solid #e8dece;
-          font-family: 'DM Sans', sans-serif;
+          background: #fafafa; color: #9ca3af; text-align: center;
+          font-size: 10.5px; font-weight: 500; letter-spacing: 0.3px;
+          padding: 11px 4px;
+          border-right: 1px solid #ececec; border-bottom: 1px solid #ececec;
+          font-family: 'Inter', sans-serif;
         }
         .th-sub-proj {
           text-align: center; font-size: 10px; font-weight: 500;
-          letter-spacing: 0.8px; text-transform: uppercase;
-          padding: 5px 6px; border-bottom: 1.5px solid #e8dece;
-          border-right: 1px solid #f0ebe0; min-width: 95px;
-          background: #faf6ee; color: #b0a090;
-          font-family: 'DM Sans', sans-serif;
+          letter-spacing: 0.3px;
+          padding: 6px 6px; border-bottom: 1px solid #ececec;
+          border-right: 1px solid #f4f4f5; min-width: 95px;
+          background: #fafafa; color: #9ca3af;
+          font-family: 'Inter', sans-serif;
         }
-        .th-sub-proj.amt  { color: #b5672f; }
-        .th-sub-proj.paid { color: #7a9e5a; border-right: 1.5px solid #e8dece; }
+        .th-sub-proj.amt  { color: #d97706; }
+        .th-sub-proj.paid { color: #16a34a; border-right: 1px solid #ececec; }
 
         .th-total-proj {
-          background: #f5f0e8; color: #a05e2a; text-align: center;
-          font-size: 10px; font-weight: 500; letter-spacing: 0.8px;
-          text-transform: uppercase; padding: 5px 8px;
-          border-bottom: 1.5px solid #e8dece; border-right: 1px solid #f0ebe0;
-          min-width: 100px; font-family: 'DM Sans', sans-serif;
+          background: #eef2ff; color: #4338ca; text-align: center;
+          font-size: 10px; font-weight: 500; letter-spacing: 0.3px;
+          padding: 6px 8px;
+          border-bottom: 1px solid #ececec; border-right: 1px solid #f4f4f5;
+          min-width: 100px; font-family: 'Inter', sans-serif;
         }
 
-        tr.proj-data-row:hover td            { background: #fdf8f0 !important; }
-        tr.proj-data-row:hover .col-name     { background: #fdf8f0 !important; }
+        tr.proj-data-row:hover td            { background: #fafafa !important; }
+        tr.proj-data-row:hover .col-name     { background: #fafafa !important; }
 
         .td-proj-name {
-          padding: 11px 14px; border-bottom: 1px solid #f0ebe0; vertical-align: middle;
+          padding: 11px 14px; border-bottom: 1px solid #f4f4f5; vertical-align: middle;
         }
         .td-proj-amt {
           text-align: right; padding: 10px 10px;
-          font-family: monospace; font-size: 12px;
-          border-bottom: 1px solid #f0ebe0; border-right: 1px solid #f0ebe0;
-          background: #faf6ee; color: #9a8775; cursor: pointer;
+          font-variant-numeric: tabular-nums; font-size: 12px;
+          border-bottom: 1px solid #f4f4f5; border-right: 1px solid #f4f4f5;
+          background: #fafafa; color: #6b7280; cursor: pointer;
         }
-        .td-proj-amt:hover { background: #fdf3e7 !important; }
+        .td-proj-amt:hover { background: #fffbeb !important; }
 
         .td-proj-paid {
           text-align: right; padding: 10px 10px;
-          font-family: monospace; font-size: 12px; color: #7a9e5a;
-          border-bottom: 1px solid #f0ebe0; border-right: 1.5px solid #e8dece;
+          font-variant-numeric: tabular-nums; font-size: 12px; color: #16a34a;
+          border-bottom: 1px solid #f4f4f5; border-right: 1px solid #ececec;
           cursor: pointer; position: relative;
         }
-        .td-proj-paid:hover { background: #f5f8f0 !important; }
+        .td-proj-paid:hover { background: #f0fdf4 !important; }
 
         .td-proj-inactive {
-          background: #faf6ee; color: #d4c8b8; text-align: center; font-size: 11px;
-          border-bottom: 1px solid #f0ebe0; border-right: 1.5px solid #e8dece; padding: 10px 6px;
+          background: #fafafa; color: #d1d5db; text-align: center; font-size: 11px;
+          border-bottom: 1px solid #f4f4f5; border-right: 1px solid #ececec; padding: 10px 6px;
         }
 
         .proj-edit-inp {
-          width: 85px; background: #fffdf8; border: 1.5px solid #c97844;
+          width: 85px; background: #ffffff; border: 1px solid #18181b;
           border-radius: 8px; padding: 3px 7px;
-          font-family: monospace; font-size: 12px;
-          color: #2e2318; outline: none; text-align: right;
+          font-variant-numeric: tabular-nums; font-size: 12px;
+          color: #18181b; outline: none; text-align: right;
+          box-shadow: 0 0 0 3px rgba(24,24,27,0.06);
         }
         .proj-totals-row td {
-          background: #faf6ee; border-top: 1.5px solid #e8dece;
-          font-family: monospace; font-size: 11px;
-          text-align: right; padding: 9px 10px; border-right: 1px solid #f0ebe0;
+          background: #fafafa; border-top: 1px solid #ececec;
+          font-variant-numeric: tabular-nums; font-size: 11px;
+          text-align: right; padding: 9px 10px; border-right: 1px solid #f4f4f5;
         }
         .proj-modal-overlay {
           position: fixed; top:0; left:0; width:100%; height:100%;
-          background: rgba(46,35,24,0.55); display:flex;
+          background: rgba(17,24,39,0.45); display:flex;
           align-items:center; justify-content:center; z-index:100;
-          backdrop-filter: blur(2px);
+          backdrop-filter: blur(4px);
         }
         .proj-modal-box {
-          background: #fffdf8; padding: 28px 26px; border-radius: 18px; width: 360px;
-          box-shadow: 0 20px 40px rgba(160,130,90,0.18), 0 2px 0 #e2d9c8;
-          border: 1.5px solid #e8dece;
+          background: #ffffff; padding: 28px 26px; border-radius: 18px; width: 360px;
+          box-shadow: 0 24px 60px rgba(16,24,40,0.22);
+          border: 1px solid #ececec;
         }
         .proj-modal-field { display:flex; flex-direction:column; gap:6px; margin-bottom:14px; }
-        .proj-modal-field label { font-size:11px; color:#8c7a68; font-weight:500; letter-spacing:0.8px; text-transform:uppercase; font-family:'DM Sans',sans-serif; }
+        .proj-modal-field label { font-size:12px; color:#4b5563; font-weight:500; letter-spacing:0.2px; font-family:'Inter',sans-serif; }
         .proj-modal-field input {
-          padding: 8px 12px; border: 1.5px solid #e8dece; border-radius: 8px;
-          font-size: 13px; outline: none; background: #f5f0e8;
-          font-family: monospace; color: #2e2318;
-          transition: border-color 0.15s;
+          padding: 9px 12px; border: 1px solid #ececec; border-radius: 10px;
+          font-size: 13px; outline: none; background: #fafafa;
+          font-variant-numeric: tabular-nums; color: #18181b;
+          transition: border-color 0.15s, box-shadow 0.15s;
         }
-        .proj-modal-field input:focus { border-color: #c97844; background: #fffdf8; }
-        ::-webkit-scrollbar { height: 5px; }
-        ::-webkit-scrollbar-track { background: #f5f0e8; }
-        ::-webkit-scrollbar-thumb { background: #e0d4c0; border-radius: 3px; }
+        .proj-modal-field input:focus { border-color: #18181b; background: #fff; box-shadow: 0 0 0 3px rgba(24,24,27,0.06); }
+        ::-webkit-scrollbar { height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f1f1; }
+        ::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 3px; }
 
         .add-proj-btn {
           display: flex; align-items: center; gap: 7px;
           padding: 10px 18px; flex-shrink: 0; margin-top: 4px;
-          background: #c97844; border: none; border-radius: 10px;
-          font-size: 13px; font-weight: 600; color: #fff;
-          font-family: 'DM Sans', sans-serif;
-          cursor: pointer; box-shadow: 0 2px 0 #a05e2a;
+          background: #18181b; border: none; border-radius: 10px;
+          font-size: 13px; font-weight: 500; color: #fff;
+          font-family: 'Inter', sans-serif;
+          cursor: pointer;
           transition: background 0.15s, transform 0.1s;
         }
-        .add-proj-btn:hover { background: #b5672f; transform: translateY(-1px); }
+        .add-proj-btn:hover { background: #000; transform: translateY(-1px); }
         .add-proj-btn:active { transform: translateY(0); }
 
         .delete-proj-btn {
           width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
-          border: 1.5px solid transparent; background: transparent;
+          border: 1px solid transparent; background: transparent;
           display: flex; align-items: center; justify-content: center;
-          cursor: pointer; color: #c5b49e;
+          cursor: pointer; color: #9ca3af;
           transition: background 0.15s, border-color 0.15s, color 0.15s;
           padding: 0;
         }
         .delete-proj-btn:hover {
-          background: #fdf0ea; border-color: #e8b89a; color: #c0522a;
+          background: #fef2f2; border-color: #fecaca; color: #dc2626;
         }
 
         .delete-modal-box {
-          background: #fffdf8; padding: 28px 26px; border-radius: 18px; width: 380px;
-          box-shadow: 0 20px 40px rgba(160,130,90,0.18), 0 2px 0 #e2d9c8;
-          border: 1.5px solid #e8dece;
+          background: #ffffff; padding: 28px 26px; border-radius: 18px; width: 380px;
+          box-shadow: 0 24px 60px rgba(16,24,40,0.22);
+          border: 1px solid #ececec;
         }
 
         .quarter-btn {
           display: flex; align-items: center; gap: 6px;
-          padding: 4px 11px; border-radius: 20px; cursor: pointer;
-          font-size: 11px; font-weight: 500; font-family: 'DM Sans', sans-serif;
-          border: 1.5px solid #e8dece; background: #fffdf8; color: #8c7a68;
+          padding: 5px 11px; border-radius: 20px; cursor: pointer;
+          font-size: 11px; font-weight: 500; font-family: 'Inter', sans-serif;
+          border: 1px solid #ececec; background: #ffffff; color: #6b7280;
           transition: all 0.15s; white-space: nowrap;
         }
-        .quarter-btn:hover { background: #fdf3e7; border-color: #f0c490; color: #a05e2a; }
-        .quarter-btn.active { background: #fdf3e7; border-color: #f0c490; color: #a05e2a; }
+        .quarter-btn:hover { background: #f3f4f6; border-color: #d1d5db; color: #18181b; }
+        .quarter-btn.active { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
 
         .quarter-dropdown {
           position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
-          background: #fffdf8; border: 1.5px solid #e8dece; border-radius: 12px;
-          box-shadow: 0 8px 24px rgba(160,130,90,0.15);
+          background: #ffffff; border: 1px solid #ececec; border-radius: 12px;
+          box-shadow: 0 8px 24px rgba(16,24,40,0.12);
           padding: 6px; min-width: 110px;
         }
         .quarter-option {
           display: flex; align-items: center; justify-content: space-between;
           padding: 7px 10px; border-radius: 8px; cursor: pointer;
-          font-size: 12px; font-weight: 500; color: #5a4535;
-          font-family: 'DM Sans', sans-serif; transition: background 0.12s;
+          font-size: 12px; font-weight: 500; color: #374151;
+          font-family: 'Inter', sans-serif; transition: background 0.12s;
           gap: 8px;
         }
-        .quarter-option:hover { background: #fdf3e7; }
-        .quarter-option.selected { background: #fdf3e7; color: #a05e2a; }
-        .quarter-option .q-months { font-size: 9px; color: #b0a090; font-weight: 400; }
-        .quarter-option.selected .q-months { color: #c97844; }
+        .quarter-option:hover { background: #fafafa; }
+        .quarter-option.selected { background: #eef2ff; color: #4338ca; }
+        .quarter-option .q-months { font-size: 9px; color: #9ca3af; font-weight: 400; }
+        .quarter-option.selected .q-months { color: #4f46e5; }
 
       `}</style>
 
       {/* Page Header */}
       <div style={{ marginBottom: 28, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <div>
-          <div style={{ fontSize: 10, fontWeight: 500, letterSpacing: 2, textTransform: 'uppercase', color: '#b08a5e', marginBottom: 5, fontFamily: "'DM Sans', sans-serif" }}>
+          <div style={{ fontSize: 11, fontWeight: 500, letterSpacing: 0.4, textTransform: 'uppercase', color: '#9ca3af', marginBottom: 5, fontFamily: "'Inter', sans-serif" }}>
             Project Tracker
           </div>
-          <h2 style={{ fontFamily: "'Lora', serif", fontSize: 26, fontWeight: 600, color: '#2e2318', margin: '0 0 4px' }}>
+          <h2 style={{ fontSize: 26, fontWeight: 600, color: '#18181b', margin: '0 0 4px', letterSpacing: '-0.4px' }}>
             Financial Workspace Matrix
           </h2>
-          <p style={{ fontSize: 13, color: '#9a8775', margin: 0, fontFamily: "'DM Sans', sans-serif" }}>
+          <p style={{ fontSize: 13, color: '#6b7280', margin: 0, fontFamily: "'Inter', sans-serif" }}>
             {projects.length} project{projects.length !== 1 ? 's' : ''} &nbsp;·&nbsp;
-            Click <span style={{ color: '#b5672f', fontWeight: 500 }}>To BE Received</span> to configure metrics &nbsp;·&nbsp;
-            Click <span style={{ color: '#7a9e5a', fontWeight: 500 }}>Received</span> to track per month
+            Click <span style={{ color: '#d97706', fontWeight: 500 }}>To BE Received</span> to configure metrics &nbsp;·&nbsp;
+            Click <span style={{ color: '#16a34a', fontWeight: 500 }}>Received</span> to track per month
           </p>
         </div>
 
@@ -623,9 +664,9 @@ const ProjectTable = () => {
       </div>
 
       {projects.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '60px 0', color: '#b0a090' }}>
+        <div style={{ textAlign: 'center', padding: '60px 0', color: '#9ca3af' }}>
           <div style={{ fontSize: 40, marginBottom: 12 }}>📋</div>
-          <div style={{ fontSize: 16, fontWeight: 600, fontFamily: "'Lora', serif", color: '#8c7a68' }}>No projects yet</div>
+          <div style={{ fontSize: 16, fontWeight: 600, color: '#6b7280' }}>No projects yet</div>
           <div style={{ fontSize: 13, marginTop: 4 }}>Add your first project to see it here.</div>
         </div>
       )}
@@ -658,47 +699,47 @@ const ProjectTable = () => {
         return (
           <div key={year} style={{
             marginBottom: 28,
-            borderRadius: 18,
-            border: '1.5px solid #e8dece',
+            borderRadius: 16,
+            border: '1px solid #ececec',
             overflow: 'hidden',
-            boxShadow: '0 2px 0 #e2d9c8, 0 6px 24px rgba(160,130,90,0.07)',
+            boxShadow: '0 1px 3px rgba(16,24,40,0.04)',
           }}>
             <div style={{
               display: 'flex', alignItems: 'center', justifyContent: 'space-between',
               padding: '14px 22px',
-              background: '#faf6ee',
-              borderBottom: '1px solid #e8dece',
+              background: '#fafafa',
+              borderBottom: '1px solid #ececec',
             }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{
                   width: 36, height: 36, borderRadius: 10,
-                  background: '#f5ece0', border: '1.5px solid #e8dece',
+                  background: '#eef2ff', border: '1px solid #e0e7ff',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   fontSize: 16, flexShrink: 0,
                 }}>
                   📊
                 </div>
                 <div>
-                  <div style={{ fontSize: 14, fontWeight: 600, color: '#2e2318', fontFamily: "'Lora', serif" }}>
-                    Calendar Year {year}
+                  <div style={{ fontSize: 14, fontWeight: 600, color: '#18181b', letterSpacing: '-0.2px' }}>
+                    FY {fyLabel(year)}
                   </div>
-                  <div style={{ fontSize: 11, color: '#9a8775', marginTop: 1, fontFamily: "'DM Sans', sans-serif" }}>
+                  <div style={{ fontSize: 11, color: '#6b7280', marginTop: 1, fontFamily: "'Inter', sans-serif" }}>
                     {filteredProjects.length} active project{filteredProjects.length !== 1 ? 's' : ''}
                   </div>
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                 <div style={{
-                  background: '#fdf3e7', border: '1.5px solid #f0c490',
-                  color: '#a05e2a', padding: '3px 12px', borderRadius: 20,
-                  fontSize: 11, fontWeight: 500, fontFamily: "'DM Sans', sans-serif",
+                  background: '#fffbeb', border: '1px solid #fde68a',
+                  color: '#b45309', padding: '3px 12px', borderRadius: 20,
+                  fontSize: 11, fontWeight: 500, fontFamily: "'Inter', sans-serif",
                 }}>
                   To Receive: {fmt(grandYearAmt)}
                 </div>
                 <div style={{
-                  background: '#f5f8f0', border: '1.5px solid #c8deb0',
-                  color: '#7a9e5a', padding: '3px 12px', borderRadius: 20,
-                  fontSize: 11, fontWeight: 500, fontFamily: "'DM Sans', sans-serif",
+                  background: '#f0fdf4', border: '1px solid #bbf7d0',
+                  color: '#16a34a', padding: '3px 12px', borderRadius: 20,
+                  fontSize: 11, fontWeight: 500, fontFamily: "'Inter', sans-serif",
                 }}>
                   Received: {fmt(grandYearPaid)}
                 </div>
@@ -736,7 +777,7 @@ const ProjectTable = () => {
                           }}
                         >
                           <span>All Year</span>
-                          <span className="q-months">Jan–Dec</span>
+                          <span className="q-months">Apr–Mar</span>
                         </div>
                         {Object.entries(QUARTERS).map(([q, months]) => (
                           <div
@@ -758,7 +799,7 @@ const ProjectTable = () => {
               </div>
             </div>
 
-            <div style={{ padding: 20, background: '#fffdf8' }}>
+            <div style={{ padding: 20, background: '#ffffff' }}>
               <div className="proj-table-scroll">
                 <table className="proj-table">
                   <thead>
@@ -767,10 +808,10 @@ const ProjectTable = () => {
                         className="col-name head"
                         rowSpan={2}
                         style={{
-                          padding: '10px 16px', textAlign: 'left', fontSize: 10,
-                          fontWeight: 500, color: '#b08a5e', letterSpacing: 1,
-                          textTransform: 'uppercase', borderBottom: '1.5px solid #e8dece',
-                          background: '#faf6ee', fontFamily: "'DM Sans', sans-serif",
+                          padding: '11px 16px', textAlign: 'left', fontSize: 10.5,
+                          fontWeight: 500, color: '#9ca3af', letterSpacing: 0.3,
+                          borderBottom: '1px solid #ececec',
+                          background: '#fafafa', fontFamily: "'Inter', sans-serif",
                         }}
                       >
                         Project Track
@@ -779,10 +820,10 @@ const ProjectTable = () => {
                         <th key={m} colSpan={2} className="th-month">{m}</th>
                       ))}
                       <th colSpan={2} style={{
-                        background: '#f5ece0', color: '#a05e2a', textAlign: 'center',
-                        fontSize: 10, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase',
-                        padding: '10px 8px', borderBottom: '1px solid #e8dece',
-                        fontFamily: "'DM Sans', sans-serif",
+                        background: '#eef2ff', color: '#4338ca', textAlign: 'center',
+                        fontSize: 10.5, fontWeight: 600, letterSpacing: 0.3,
+                        padding: '11px 8px', borderBottom: '1px solid #ececec',
+                        fontFamily: "'Inter', sans-serif",
                       }}>
                         {quarterFilter[year] ? `${quarterFilter[year]} Total` : 'Year Total'}
                       </th>
@@ -794,8 +835,8 @@ const ProjectTable = () => {
                           <th className="th-sub-proj paid">Received</th>
                         </React.Fragment>
                       ))}
-                      <th className="th-total-proj" style={{ borderRight: '1px solid #f0ebe0' }}>Received</th>
-                      <th className="th-total-proj" style={{ color: '#9a8775', background: '#faf6ee' }}>To Be Received</th>
+                      <th className="th-total-proj" style={{ borderRight: '1px solid #f4f4f5' }}>Received</th>
+                      <th className="th-total-proj" style={{ color: '#9ca3af', background: '#fafafa' }}>To Be Received</th>
                     </tr>
                   </thead>
 
@@ -808,21 +849,21 @@ const ProjectTable = () => {
                       const yrTotalAmt  = visibleMonths.reduce((s, m) => s + (data[m]?.amt  || 0), 0);
 
                       return (
-                        <tr key={project._id} className="proj-data-row" style={{ borderBottom: '1px solid #f0ebe0' }}>
+                        <tr key={project._id} className="proj-data-row" style={{ borderBottom: '1px solid #f4f4f5' }}>
                           {/* ─── PROJECT NAME CELL with delete button ─── */}
                           <td className="col-name td-proj-name">
                             <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
                               <ProjectAvatar name={project.projectName || '?'} />
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontSize: 13, fontWeight: 500, color: '#2e2318', fontFamily: "'DM Sans', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                <div style={{ fontSize: 13, fontWeight: 500, color: '#18181b', fontFamily: "'Inter', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis' }}>
                                   {project.projectName}
                                 </div>
-                                <div style={{ fontSize: 10, color: '#b0a090', marginTop: 2, fontFamily: "'DM Sans', sans-serif" }}>
+                                <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, fontFamily: "'Inter', sans-serif" }}>
                                   <span style={{
                                     display: 'inline-block',
-                                    background: '#fdf3e7', border: '1px solid #f0c490',
-                                    color: '#a05e2a', borderRadius: 4, padding: '1px 5px',
-                                    fontFamily: 'monospace', fontSize: 9, fontWeight: 600,
+                                    background: '#eef2ff', border: '1px solid #e0e7ff',
+                                    color: '#4338ca', borderRadius: 4, padding: '1px 5px',
+                                    fontSize: 9, fontWeight: 600,
                                     textTransform: 'uppercase',
                                   }}>
                                     {project.projectType || 'monthly'}
@@ -850,7 +891,8 @@ const ProjectTable = () => {
 
                           {visibleMonths.map(m => {
                             const cell = data[m];
-                            const isEditingPay = editingPayment?.projectId === project._id && editingPayment?.month === m && editingPayment?.year === year;
+                            const cellYear = cell?.calYear ?? year;
+                            const isEditingPay = editingPayment?.projectId === project._id && editingPayment?.month === m && editingPayment?.year === cellYear;
 
                             if (!cell || !cell.active) {
                               return <td key={m} className="td-proj-inactive" colSpan={2}>—</td>;
@@ -858,12 +900,12 @@ const ProjectTable = () => {
 
                             return (
                               <React.Fragment key={m}>
-                                <td className="td-proj-amt" onClick={() => openCalculatorModal(project, m, year)}>
+                                <td className="td-proj-amt" onClick={() => openCalculatorModal(project, m, cellYear)}>
                                   <div>{fmt(cell.amt)}</div>
-                                  <span style={{ fontSize: 9, color: '#c97844', textDecoration: 'underline' }}>Configure</span>
+                                  <span style={{ fontSize: 9, color: '#4f46e5', textDecoration: 'underline' }}>Configure</span>
                                 </td>
 
-                                <td className="td-proj-paid" onClick={() => !isEditingPay && startPaymentEdit(project._id, m, year, cell.paid)}>
+                                <td className="td-proj-paid" onClick={() => !isEditingPay && startPaymentEdit(project._id, m, cellYear, cell.paid)}>
                                   {isEditingPay ? (
                                     <input
                                       ref={inputRef}
@@ -881,10 +923,10 @@ const ProjectTable = () => {
                             );
                           })}
 
-                          <td style={{ textAlign: 'right', padding: '10px 12px', fontFamily: 'monospace', fontSize: 12, fontWeight: 600, color: '#7a9e5a', borderBottom: '1px solid #f0ebe0', borderRight: '1px solid #f0ebe0', background: '#f5f8f0' }}>
+                          <td style={{ textAlign: 'right', padding: '10px 12px', fontVariantNumeric: 'tabular-nums', fontSize: 12, fontWeight: 600, color: '#16a34a', borderBottom: '1px solid #f4f4f5', borderRight: '1px solid #f4f4f5', background: '#f0fdf4' }}>
                             {fmt(yrTotalPaid)}
                           </td>
-                          <td style={{ textAlign: 'right', padding: '10px 12px', fontFamily: 'monospace', fontSize: 12, color: '#b0a090', borderBottom: '1px solid #f0ebe0', background: '#faf6ee' }}>
+                          <td style={{ textAlign: 'right', padding: '10px 12px', fontVariantNumeric: 'tabular-nums', fontSize: 12, color: '#9ca3af', borderBottom: '1px solid #f4f4f5', background: '#fafafa' }}>
                             {fmt(yrTotalAmt)}
                           </td>
                         </tr>
@@ -895,14 +937,14 @@ const ProjectTable = () => {
                       <td
                         className="col-name"
                         style={{
-                          padding: '10px 16px', fontSize: 10, fontWeight: 500, color: '#8c7a68',
-                          textTransform: 'uppercase', letterSpacing: 0.8,
-                          borderTop: '1.5px solid #e8dece', background: '#faf6ee', textAlign: 'left',
-                          fontFamily: "'DM Sans', sans-serif",
+                          padding: '10px 16px', fontSize: 10.5, fontWeight: 500, color: '#6b7280',
+                          letterSpacing: 0.3,
+                          borderTop: '1px solid #ececec', background: '#fafafa', textAlign: 'left',
+                          fontFamily: "'Inter', sans-serif",
                         }}
                       >
                         Monthly Totals
-                        <div style={{ fontSize: 9, color: '#c5b49e', marginTop: 2, fontWeight: 400 }}>{quarterFilter[year] ? `${quarterFilter[year]}: ${QUARTERS[quarterFilter[year]].join(', ')}` : 'All projects combined'}</div>
+                        <div style={{ fontSize: 9, color: '#9ca3af', marginTop: 2, fontWeight: 400 }}>{quarterFilter[year] ? `${quarterFilter[year]}: ${QUARTERS[quarterFilter[year]].join(', ')}` : 'All projects combined'}</div>
                       </td>
 
                       {visibleMonths.map(m => {
@@ -910,20 +952,20 @@ const ProjectTable = () => {
                         const hasActivity = totalAmt > 0 || totalPaid > 0;
                         return (
                           <React.Fragment key={m}>
-                            <td style={{ color: hasActivity ? '#b5672f' : '#d4c8b8', fontFamily: 'monospace' }}>
+                            <td style={{ color: hasActivity ? '#d97706' : '#d1d5db', fontVariantNumeric: 'tabular-nums' }}>
                               {hasActivity ? fmt(totalAmt) : '—'}
                             </td>
-                            <td style={{ color: hasActivity ? '#7a9e5a' : '#d4c8b8', borderRight: '1.5px solid #e8dece', fontFamily: 'monospace' }}>
+                            <td style={{ color: hasActivity ? '#16a34a' : '#d1d5db', borderRight: '1px solid #ececec', fontVariantNumeric: 'tabular-nums' }}>
                               {hasActivity ? fmt(totalPaid) : '—'}
                             </td>
                           </React.Fragment>
                         );
                       })}
 
-                      <td style={{ color: '#7a9e5a', fontWeight: 700, background: '#f5f8f0', fontFamily: 'monospace' }}>
+                      <td style={{ color: '#16a34a', fontWeight: 700, background: '#f0fdf4', fontVariantNumeric: 'tabular-nums' }}>
                         {fmt(grandYearPaid)}
                       </td>
-                      <td style={{ color: '#b0a090', background: '#faf6ee', fontFamily: 'monospace' }}>
+                      <td style={{ color: '#9ca3af', background: '#fafafa', fontVariantNumeric: 'tabular-nums' }}>
                         {fmt(grandYearAmt)}
                       </td>
                     </tr>
@@ -935,10 +977,10 @@ const ProjectTable = () => {
         );
       })}
 
-      <p style={{ marginTop: 8, fontSize: 11, color: '#c5b49e', textAlign: 'center', fontFamily: "'DM Sans', sans-serif" }}>
+      <p style={{ marginTop: 8, fontSize: 11, color: '#9ca3af', textAlign: 'center', fontFamily: "'Inter', sans-serif" }}>
         Scroll right to see all months &nbsp;·&nbsp;
-        Click <span style={{ color: '#b5672f' }}>To Receive</span> to configure &nbsp;·&nbsp;
-        Click <span style={{ color: '#7a9e5a' }}>Received</span> to edit
+        Click <span style={{ color: '#d97706' }}>To Receive</span> to configure &nbsp;·&nbsp;
+        Click <span style={{ color: '#16a34a' }}>Received</span> to edit
       </p>
 
       {/* ─── CALCULATOR MODAL ─── */}
@@ -948,16 +990,16 @@ const ProjectTable = () => {
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
               <div style={{
                 width: 36, height: 36, borderRadius: 10,
-                background: '#fdf3e7', border: '1.5px solid #f0c490',
+                background: '#eef2ff', border: '1px solid #e0e7ff',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16,
               }}>
                 🧮
               </div>
               <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: '#2e2318', fontFamily: "'Lora', serif" }}>
+                <div style={{ fontSize: 14, fontWeight: 600, color: '#18181b', letterSpacing: '-0.2px' }}>
                   Configure {modalConfig.type.toUpperCase()} Track
                 </div>
-                <div style={{ fontSize: 11, color: '#9a8775', marginTop: 1, fontFamily: "'DM Sans', sans-serif" }}>
+                <div style={{ fontSize: 11, color: '#6b7280', marginTop: 1, fontFamily: "'Inter', sans-serif" }}>
                   {modalConfig.month} {modalConfig.year} &nbsp;·&nbsp; {modalConfig.project.projectName}
                 </div>
               </div>
@@ -992,14 +1034,14 @@ const ProjectTable = () => {
            {modalConfig.type === 'monthly' && (
               <>
                 <div style={{
-                  background: '#faf6ee', border: '1.5px solid #e8dece',
-                  padding: '10px 12px', borderRadius: 8, fontSize: 11,
-                  color: '#8c7a68', marginBottom: 14, fontFamily: "'DM Sans', sans-serif",
+                  background: '#fafafa', border: '1px solid #ececec',
+                  padding: '10px 12px', borderRadius: 10, fontSize: 11.5,
+                  color: '#6b7280', marginBottom: 14, fontFamily: "'Inter', sans-serif",
                 }}>
-                  <div>Monthly rate: <span style={{ color: '#b5672f', fontFamily: 'monospace', fontWeight: 600 }}>
+                  <div>Monthly rate: <span style={{ color: '#d97706', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
                   {fmt(modalConfig.project.expectedAmount || 0)}
                 </span></div>
-                <div style={{ marginTop: 3, color: '#c5b49e' }}>
+                <div style={{ marginTop: 3, color: '#9ca3af' }}>
                   Prorated by days worked ÷ total days
                 </div>
                 </div>
@@ -1017,10 +1059,10 @@ const ProjectTable = () => {
           {/* Computed Total Preview */}
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            background: '#faf6ee', border: '1.5px solid #e8dece',
+            background: '#fafafa', border: '1px solid #ececec',
             borderRadius: 10, padding: '12px 14px', marginBottom: 16,
           }}>
-            <div style={{ fontSize: 12, fontWeight: 600, color: '#8c7a68', fontFamily: "'DM Sans', sans-serif" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: '#6b7280', fontFamily: "'Inter', sans-serif" }}>
               Computed Total
             </div>
             {(() => {
@@ -1035,7 +1077,7 @@ const ProjectTable = () => {
                 base = (monthlyRate / (parseFloat(totalMonthDays) || 1)) * (parseFloat(daysWorkedMonthly) || 0);
               }
               return (
-                <div style={{ fontSize: 14, fontWeight: 700, fontFamily: 'monospace', color: '#b5672f' }}>
+                <div style={{ fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: '#d97706' }}>
                   {fmt(base)}
                 </div>
               );
@@ -1046,10 +1088,10 @@ const ProjectTable = () => {
               <button
                 onClick={() => setModalConfig(null)}
                 style={{
-                  padding: '8px 14px', background: '#f5f0e8',
-                  border: '1.5px solid #e8dece', borderRadius: 8,
+                  padding: '9px 16px', background: '#fff',
+                  border: '1px solid #ececec', borderRadius: 10,
                   fontSize: 12, cursor: 'pointer', fontWeight: 500,
-                  color: '#8c7a68', fontFamily: "'DM Sans', sans-serif",
+                  color: '#4b5563', fontFamily: "'Inter', sans-serif",
                 }}
               >
                 Cancel
@@ -1057,11 +1099,10 @@ const ProjectTable = () => {
               <button
                 onClick={saveModalCalculation}
                 style={{
-                  padding: '8px 16px', background: '#c97844',
-                  border: 'none', borderRadius: 8,
-                  fontSize: 12, cursor: 'pointer', fontWeight: 600,
-                  color: '#fff', fontFamily: "'DM Sans', sans-serif",
-                  boxShadow: '0 2px 0 #a05e2a',
+                  padding: '9px 18px', background: '#18181b',
+                  border: 'none', borderRadius: 10,
+                  fontSize: 12, cursor: 'pointer', fontWeight: 500,
+                  color: '#fff', fontFamily: "'Inter', sans-serif",
                 }}
               >
                 Save & Compute
@@ -1078,16 +1119,16 @@ const ProjectTable = () => {
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
               <div style={{
                 width: 40, height: 40, borderRadius: 12, flexShrink: 0,
-                background: '#fdf0ea', border: '1.5px solid #e8b89a',
+                background: '#fef2f2', border: '1px solid #fecaca',
                 display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
               }}>
                 🗑️
               </div>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 600, color: '#2e2318', fontFamily: "'Lora', serif" }}>
+                <div style={{ fontSize: 15, fontWeight: 600, color: '#18181b', letterSpacing: '-0.2px' }}>
                   Delete Project
                 </div>
-                <div style={{ fontSize: 11, color: '#9a8775', marginTop: 2, fontFamily: "'DM Sans', sans-serif" }}>
+                <div style={{ fontSize: 11, color: '#6b7280', marginTop: 2, fontFamily: "'Inter', sans-serif" }}>
                   This action cannot be undone
                 </div>
               </div>
@@ -1096,19 +1137,19 @@ const ProjectTable = () => {
             {/* Project preview */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: 10,
-              background: '#faf6ee', border: '1.5px solid #e8dece',
+              background: '#fafafa', border: '1px solid #ececec',
               borderRadius: 10, padding: '10px 14px', marginBottom: 18,
             }}>
               <ProjectAvatar name={deleteConfirm.project.projectName || '?'} />
               <div>
-                <div style={{ fontSize: 13, fontWeight: 500, color: '#2e2318', fontFamily: "'DM Sans', sans-serif" }}>
+                <div style={{ fontSize: 13, fontWeight: 500, color: '#18181b', fontFamily: "'Inter', sans-serif" }}>
                   {deleteConfirm.project.projectName}
                 </div>
-                <div style={{ fontSize: 10, color: '#b0a090', marginTop: 2, fontFamily: "'DM Sans', sans-serif" }}>
+                <div style={{ fontSize: 10, color: '#9ca3af', marginTop: 2, fontFamily: "'Inter', sans-serif" }}>
                   <span style={{
-                    background: '#fdf3e7', border: '1px solid #f0c490',
-                    color: '#a05e2a', borderRadius: 4, padding: '1px 5px',
-                    fontFamily: 'monospace', fontSize: 9, fontWeight: 600,
+                    background: '#eef2ff', border: '1px solid #e0e7ff',
+                    color: '#4338ca', borderRadius: 4, padding: '1px 5px',
+                    fontSize: 9, fontWeight: 600,
                     textTransform: 'uppercase', display: 'inline-block',
                   }}>
                     {deleteConfirm.project.projectType || 'monthly'}
@@ -1123,8 +1164,8 @@ const ProjectTable = () => {
             </div>
 
             <p style={{
-              fontSize: 12, color: '#9a8775', margin: '0 0 20px',
-              fontFamily: "'DM Sans', sans-serif", lineHeight: 1.6,
+              fontSize: 12.5, color: '#6b7280', margin: '0 0 20px',
+              fontFamily: "'Inter', sans-serif", lineHeight: 1.6,
             }}>
               All monthly breakdowns and payment records for this project will be permanently removed.
             </p>
@@ -1134,11 +1175,11 @@ const ProjectTable = () => {
                 onClick={() => setDeleteConfirm(null)}
                 disabled={deleting}
                 style={{
-                  padding: '8px 16px', background: '#f5f0e8',
-                  border: '1.5px solid #e8dece', borderRadius: 8,
+                  padding: '9px 16px', background: '#fff',
+                  border: '1px solid #ececec', borderRadius: 10,
                   fontSize: 12, cursor: deleting ? 'not-allowed' : 'pointer',
-                  fontWeight: 500, color: '#8c7a68',
-                  fontFamily: "'DM Sans', sans-serif",
+                  fontWeight: 500, color: '#4b5563',
+                  fontFamily: "'Inter', sans-serif",
                   opacity: deleting ? 0.6 : 1,
                 }}
               >
@@ -1148,13 +1189,13 @@ const ProjectTable = () => {
                 onClick={confirmDelete}
                 disabled={deleting}
                 style={{
-                  padding: '8px 18px',
-                  background: deleting ? '#d4a090' : '#c0522a',
-                  border: 'none', borderRadius: 8,
+                  padding: '9px 18px',
+                  background: deleting ? '#f87171' : '#dc2626',
+                  border: 'none', borderRadius: 10,
                   fontSize: 12, cursor: deleting ? 'not-allowed' : 'pointer',
                   fontWeight: 600, color: '#fff',
-                  fontFamily: "'DM Sans', sans-serif",
-                  boxShadow: deleting ? 'none' : '0 2px 0 #8c3010',
+                  fontFamily: "'Inter', sans-serif",
+                  boxShadow: deleting ? 'none' : '0 2px 8px rgba(220,38,38,0.25)',
                   display: 'flex', alignItems: 'center', gap: 6,
                   transition: 'background 0.15s',
                 }}

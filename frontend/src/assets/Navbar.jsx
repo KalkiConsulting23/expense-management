@@ -10,12 +10,28 @@ const Navbar = () => {
   const dropdownRef = useRef(null)
   const analyticsRef = useRef(null)
 
+  // Map current route → top bar label. Default to "Dashboard".
+  const TITLE_MAP = {
+    '/': 'Dashboard',
+    '/employee': 'Add Expense',
+    '/expensemaster': 'Expense Master',
+    '/salestable': 'Sales',
+    '/salesform': 'Add Sale',
+    '/salesanl': 'Sales Analytics',
+    '/projecttable': 'Projects',
+    '/project': 'Add Project',
+    '/projectmaster': 'Project Master',
+    '/projectanl': 'Project Analytics',
+    '/expenseanl': 'Expense Analytics',
+  }
+  const pageTitle = TITLE_MAP[location.pathname] || 'Dashboard'
+
   const navItems = [
     {
       label: 'Expense',
-      path: '/',
+      path: '/employeetable',
       icon: (
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
           <polyline points="14 2 14 8 20 8"/>
           <line x1="16" y1="13" x2="8" y2="13"/>
@@ -27,7 +43,7 @@ const Navbar = () => {
       label: 'Sales',
       path: '/salestable',
       icon: (
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/>
           <polyline points="16 7 22 7 22 13"/>
         </svg>
@@ -37,7 +53,7 @@ const Navbar = () => {
       label: 'Projects',
       path: '/projecttable',
       icon: (
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="3" width="20" height="14" rx="2"/>
           <path d="M8 21h8M12 17v4"/>
         </svg>
@@ -47,7 +63,7 @@ const Navbar = () => {
       label: 'Expense Master',
       path: '/expensemaster',
       icon: (
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <rect x="3" y="3" width="18" height="18" rx="2"/>
           <line x1="3" y1="9" x2="21" y2="9"/>
           <line x1="3" y1="15" x2="21" y2="15"/>
@@ -59,7 +75,7 @@ const Navbar = () => {
       label: 'Project Master',
       path: '/projectmaster',
       icon: (
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="3" width="20" height="14" rx="2"/>
           <path d="M8 21h8M12 17v4"/>
           <line x1="7" y1="8" x2="17" y2="8"/>
@@ -99,39 +115,61 @@ const Navbar = () => {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         *, *::before, *::after { box-sizing: border-box; }
 
-        .hamburger-btn {
+        /* Full-width fixed top bar holding the hamburger + page label */
+        .topbar {
           position: fixed;
-          top: 0;
-          left: 0;
+          top: 0; left: 0; right: 0;
+          z-index: 200;
+          height: 56px;
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          padding: 0 16px;
+          background: rgba(255,255,255,0.85);
+          backdrop-filter: blur(8px);
+          -webkit-backdrop-filter: blur(8px);
+          border-bottom: 1px solid #ececec;
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+        /* Spacer that occupies the same height so page content starts below the bar */
+        .topbar-spacer { height: 56px; width: 100%; flex-shrink: 0; }
+
+        .topbar-title {
+          font-size: 16px;
+          font-weight: 600;
+          color: #18181b;
+          letter-spacing: -0.2px;
+        }
+
+        .hamburger-btn {
           z-index: 200;
           width: 40px;
           height: 40px;
-          border-radius: 0 0 10px 0;
-          border: none;
-          border-right: 1.5px solid #e8dece;
-          border-bottom: 1.5px solid #e8dece;
-          background: #fffdf8;
+          border-radius: 10px;
+          border: 1px solid #e5e7eb;
+          background: #ffffff;
           display: flex;
           align-items: center;
           justify-content: center;
           cursor: pointer;
           transition: background 0.18s ease;
-          box-shadow: 2px 2px 0 #e2d9c8;
+          box-shadow: 0 1px 2px rgba(16,24,40,0.05);
+          flex-shrink: 0;
         }
-        .hamburger-btn:hover { background: #fdf0e0; }
-        .hamburger-btn.open { background: #fdf0e0; border-color: #d4b090; }
+        .hamburger-btn:hover { background: #f9fafb; }
+        .hamburger-btn.open { background: #f3f4f6; border-color: #d1d5db; }
         .hamburger-lines { display: flex; flex-direction: column; gap: 4px; width: 16px; }
         .hamburger-lines span {
-          display: block; height: 1.5px; border-radius: 2px;
-          background: #c97844; transition: none;
+          display: block; height: 1.6px; border-radius: 2px;
+          background: #4b5563;
         }
 
         .sidebar-overlay {
           position: fixed; inset: 0;
-          background: rgba(46, 35, 24, 0.35);
+          background: rgba(17, 24, 39, 0.35);
           z-index: 99; backdrop-filter: blur(2px);
           animation: fadeIn 0.2s ease;
         }
@@ -139,107 +177,101 @@ const Navbar = () => {
 
         .navbar {
           position: fixed; top: 0; left: 0;
-          height: 100vh; width: 240px;
-          background: #fffdf8;
+          height: 100vh; width: 248px;
+          background: #ffffff;
           display: flex; flex-direction: column;
           z-index: 100;
-          font-family: 'DM Sans', sans-serif;
-          border-right: 1.5px solid #e8dece;
-          box-shadow: 2px 0 0 #e2d9c8, 4px 0 24px rgba(160,130,90,0.08);
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+          border-right: 1px solid #ececec;
           transform: translateX(-100%);
           transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1);
         }
         .navbar.open { transform: translateX(0); }
 
         .navbar-brand {
-          display: flex; align-items: center; gap: 11px;
-          padding: 0 18px 0 50px; height: 40px;
-          cursor: pointer; border-bottom: 1.5px solid #e8dece; flex-shrink: 0;
+          display: flex; align-items: center; justify-content: space-between; gap: 10px;
+          padding: 16px 16px; flex-shrink: 0;
+          cursor: pointer;
+          border-bottom: 1px solid #f1f1f1;
         }
+        .navbar-brand-left { display: flex; align-items: center; gap: 10px; }
         .brand-logo {
-          width: 30px; height: 30px; border-radius: 8px;
-          background: #c97844; display: flex; align-items: center; justify-content: center;
-          font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0;
-          font-family: 'DM Sans', sans-serif;
+          width: 32px; height: 32px; border-radius: 9px;
+          background: #18181b; display: flex; align-items: center; justify-content: center;
+          flex-shrink: 0;
         }
-        .brand-text { display: flex; flex-direction: column; line-height: 1.2; }
-        .brand-name { font-family: 'Lora', serif; font-size: 12px; font-weight: 600; color: #2e2318; }
-        .brand-sub {
-          font-size: 9px; font-weight: 500; color: #b08a5e;
-          letter-spacing: 1.4px; text-transform: uppercase; margin-top: 2px;
-        }
+        .brand-logo svg { color: #fff; }
+        .brand-name { font-size: 15px; font-weight: 600; color: #18181b; letter-spacing: -0.2px; }
+        .brand-chevrons { color: #9ca3af; display: flex; }
 
         .navbar-inner {
-          flex: 1; overflow-y: auto; padding: 14px 10px;
-          display: flex; flex-direction: column; gap: 2px; scrollbar-width: none;
+          flex: 1; overflow-y: auto; padding: 8px 12px 12px;
+          display: flex; flex-direction: column; gap: 1px; scrollbar-width: none;
         }
         .navbar-inner::-webkit-scrollbar { display: none; }
 
         .nav-section-label {
-          font-size: 10px; font-weight: 500; color: #b08a5e;
-          letter-spacing: 1.4px; text-transform: uppercase; padding: 10px 12px 6px;
+          font-size: 11px; font-weight: 500; color: #9ca3af;
+          letter-spacing: 0.3px; padding: 14px 10px 6px;
         }
-        .nav-btn {
-          display: flex; align-items: center; gap: 10px;
-          width: 100%; padding: 9px 12px;
-          border-radius: 10px; border: none;
-          border-left: 3px solid transparent;
-          background: none; font-family: 'DM Sans', sans-serif;
-          font-size: 13px; font-weight: 500; color: #9a8775;
-          cursor: pointer; text-align: left; transition: all 0.15s;
-        }
-        .nav-btn:hover { background: #f5ede0; color: #2e2318; }
-        .nav-btn.active { background: #fff2e8; color: #c97844; border-left-color: #c97844; }
 
-        .nav-btn.master-btn {
-          border: 1px dashed #d4b090;
-          color: #8c7a68;
-          background: #fdf8f2;
-          margin-top: 2px;
+        .nav-btn {
+          display: flex; align-items: center; gap: 11px;
+          width: 100%; padding: 8px 10px;
+          border-radius: 8px; border: none;
+          background: none; font-family: inherit;
+          font-size: 13.5px; font-weight: 500; color: #4b5563;
+          cursor: pointer; text-align: left; transition: all 0.13s;
         }
-        .nav-btn.master-btn:hover { background: #f5ede0; color: #2e2318; border-color: #c97844; }
-        .nav-btn.master-btn.active {
-          background: #fff2e8; color: #c97844;
-          border-left-color: #c97844; border-color: #c97844;
-        }
+        .nav-btn svg { color: #6b7280; flex-shrink: 0; }
+        .nav-btn:hover { background: #f7f7f7; color: #18181b; }
+        .nav-btn:hover svg { color: #18181b; }
+        .nav-btn.active { background: #f3f4f6; color: #18181b; font-weight: 600; }
+        .nav-btn.active svg { color: #18181b; }
+
+        .nav-btn.master-btn { color: #4b5563; }
+        .nav-btn.master-btn.active { background: #f3f4f6; color: #18181b; }
 
         .nav-divider {
           height: 1px;
-          background: linear-gradient(to right, #e8dece, transparent);
-          margin: 8px 2px;
+          background: #f1f1f1;
+          margin: 10px 4px;
         }
-        .year-badge { font-size: 10px; font-weight: 500; color: #c5b49e; padding: 0 12px 4px; letter-spacing: 0.8px; }
-        .nav-add-wrapper { position: relative; margin-top: 2px; }
+
+        .nav-add-wrapper { position: relative; margin-top: 1px; }
         .nav-add-btn {
           display: flex; align-items: center; justify-content: space-between;
-          width: 100%; padding: 10px 12px; border-radius: 10px; border: none;
-          background: #c97844; font-family: 'DM Sans', sans-serif;
-          font-size: 11px; font-weight: 500; color: #fff; cursor: pointer;
-          transition: all 0.15s; letter-spacing: 1px; text-transform: uppercase;
+          width: 100%; padding: 8px 10px; border-radius: 8px; border: none;
+          background: none; font-family: inherit;
+          font-size: 13.5px; font-weight: 500; color: #4b5563; cursor: pointer;
+          transition: all 0.13s;
         }
-        .nav-add-btn:hover { background: #b5672f; }
-        .nav-add-btn-left { display: flex; align-items: center; gap: 8px; }
-        .nav-add-chevron { color: rgba(255,255,255,0.7); transition: transform 0.15s ease; }
+        .nav-add-btn:hover { background: #f7f7f7; color: #18181b; }
+        .nav-add-btn:hover svg { color: #18181b; }
+        .nav-add-btn-left { display: flex; align-items: center; gap: 11px; }
+        .nav-add-btn-left svg { color: #6b7280; }
+        .nav-add-chevron { color: #9ca3af; transition: transform 0.15s ease; }
         .nav-add-chevron.open { transform: rotate(180deg); }
 
-        .nav-analytics-wrapper { position: relative; margin-top: 6px; }
+        .nav-analytics-wrapper { position: relative; margin-top: 1px; }
         .nav-analytics-btn {
           display: flex; align-items: center; justify-content: space-between;
-          width: 100%; padding: 10px 12px; border-radius: 10px;
-          border: 1.5px solid #e0d4c0; background: #faf6ee;
-          font-family: 'DM Sans', sans-serif; font-size: 11px; font-weight: 500;
-          color: #8c7a68; cursor: pointer; transition: all 0.15s;
-          letter-spacing: 1px; text-transform: uppercase;
+          width: 100%; padding: 8px 10px; border-radius: 8px; border: none;
+          background: none; font-family: inherit;
+          font-size: 13.5px; font-weight: 500; color: #4b5563; cursor: pointer;
+          transition: all 0.13s;
         }
-        .nav-analytics-btn:hover { background: #f5ede0; border-color: #c97844; color: #2e2318; }
-        .nav-analytics-btn-left { display: flex; align-items: center; gap: 8px; }
-        .nav-analytics-chevron { color: #c5b49e; transition: transform 0.15s ease; }
+        .nav-analytics-btn:hover { background: #f7f7f7; color: #18181b; }
+        .nav-analytics-btn:hover svg { color: #18181b; }
+        .nav-analytics-btn-left { display: flex; align-items: center; gap: 11px; }
+        .nav-analytics-btn-left svg { color: #6b7280; }
+        .nav-analytics-chevron { color: #9ca3af; transition: transform 0.15s ease; }
         .nav-analytics-chevron.open { transform: rotate(180deg); }
 
         .nav-add-dropdown {
-          background: #fffdf8; border: 1.5px solid #e0d4c0; border-radius: 12px;
-          overflow: hidden; margin-top: 6px;
-          box-shadow: 0 2px 0 #e2d9c8, 0 8px 24px rgba(160,130,90,0.10);
+          background: #ffffff; border: 1px solid #ececec; border-radius: 10px;
+          overflow: hidden; margin: 4px 0 2px 8px;
+          box-shadow: 0 4px 16px rgba(16,24,40,0.08);
           animation: fadeDown 0.12s ease;
         }
         @keyframes fadeDown {
@@ -248,37 +280,50 @@ const Navbar = () => {
         }
         .nav-add-dropdown-item {
           display: flex; align-items: center; gap: 10px;
-          width: 100%; padding: 10px 14px; border: none; background: none;
-          font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 400;
-          color: #9a8775; cursor: pointer; text-align: left; transition: all 0.12s;
+          width: 100%; padding: 9px 13px; border: none; background: none;
+          font-family: inherit; font-size: 13px; font-weight: 500;
+          color: #4b5563; cursor: pointer; text-align: left; transition: all 0.12s;
         }
-        .nav-add-dropdown-item:hover { background: #f5ede0; color: #2e2318; }
-        .nav-add-dropdown-divider { height: 1px; background: #e8dece; }
+        .nav-add-dropdown-item svg { color: #6b7280; flex-shrink: 0; }
+        .nav-add-dropdown-item:hover { background: #f7f7f7; color: #18181b; }
+        .nav-add-dropdown-item:hover svg { color: #18181b; }
+        .nav-add-dropdown-divider { height: 1px; background: #f1f1f1; }
 
         .sidebar-user {
-          display: flex; flex-direction: column; gap: 4px;
-          padding: 16px 18px; border-top: 1.5px solid #e8dece; flex-shrink: 0;
+          display: flex; align-items: center; gap: 10px;
+          padding: 12px 16px; border-top: 1px solid #f1f1f1; flex-shrink: 0;
         }
+        .user-avatar {
+          width: 32px; height: 32px; border-radius: 50%;
+          background: #18181b; color: #fff; flex-shrink: 0;
+          display: flex; align-items: center; justify-content: center;
+          font-size: 12px; font-weight: 600;
+        }
+        .user-meta { display: flex; flex-direction: column; line-height: 1.3; overflow: hidden; }
         .user-name {
-          font-family: 'Lora', serif; font-size: 13px; font-weight: 600; color: #2e2318;
+          font-size: 13px; font-weight: 600; color: #18181b;
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
         }
         .user-role {
-          font-size: 10px; font-weight: 500; color: #b08a5e;
+          font-size: 11px; font-weight: 400; color: #9ca3af;
           white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-          text-transform: uppercase; letter-spacing: 0.8px;
         }
       `}</style>
 
-      <button
-        className={`hamburger-btn${sidebarOpen ? ' open' : ''}`}
-        onClick={() => setSidebarOpen(prev => !prev)}
-        aria-label="Toggle navigation"
-      >
-        <div className="hamburger-lines">
-          <span /><span /><span />
-        </div>
-      </button>
+      <div className="topbar">
+        <button
+          className={`hamburger-btn${sidebarOpen ? ' open' : ''}`}
+          onClick={() => setSidebarOpen(prev => !prev)}
+          aria-label="Toggle navigation"
+        >
+          <div className="hamburger-lines">
+            <span /><span /><span />
+          </div>
+        </button>
+        <span className="topbar-title">{pageTitle}</span>
+      </div>
+      {/* Spacer pushes page content below the fixed top bar */}
+      <div className="topbar-spacer" />
 
       {sidebarOpen && (
         <div className="sidebar-overlay" onClick={handleOverlayClick} />
@@ -286,10 +331,19 @@ const Navbar = () => {
 
       <nav className={`navbar${sidebarOpen ? ' open' : ''}`}>
         <div className="navbar-brand" onClick={() => { navigate('/'); setSidebarOpen(false) }}>
-          <div className="brand-logo">KC</div>
-          <div className="brand-text">
+          <div className="navbar-brand-left">
+            <div className="brand-logo">
+              <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 2a10 10 0 1 0 10 10A6 6 0 0 1 12 2z"/>
+              </svg>
+            </div>
             <span className="brand-name">Kalki Consulting</span>
-            <span className="brand-sub">Management Portal</span>
+          </div>
+          <div className="brand-chevrons">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="7 15 12 20 17 15"/>
+              <polyline points="7 9 12 4 17 9"/>
+            </svg>
           </div>
         </div>
 
@@ -339,17 +393,17 @@ const Navbar = () => {
           })()}
 
           <div className="nav-divider" />
-          <span className="year-badge">{new Date().getFullYear()}</span>
+          <span className="nav-section-label" style={{ paddingTop: 0 }}>Actions</span>
 
           <div className="nav-add-wrapper" ref={dropdownRef}>
             <button className="nav-add-btn" onClick={() => setDropdownOpen(prev => !prev)}>
               <div className="nav-add-btn-left">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                 </svg>
                 Add New
               </div>
-              <svg className={`nav-add-chevron${dropdownOpen ? ' open' : ''}`} width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <svg className={`nav-add-chevron${dropdownOpen ? ' open' : ''}`} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="6 9 12 15 18 9"/>
               </svg>
             </button>
@@ -357,7 +411,7 @@ const Navbar = () => {
             {dropdownOpen && (
               <div className="nav-add-dropdown">
                 <button className="nav-add-dropdown-item" onClick={() => handleAddNavigate('/employee')}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
                     <circle cx="9" cy="7" r="4"/>
                     <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
@@ -367,14 +421,14 @@ const Navbar = () => {
                 </button>
                 <div className="nav-add-dropdown-divider" />
                 <button className="nav-add-dropdown-item" onClick={() => handleAddNavigate('/project')}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
                   </svg>
                   Project
                 </button>
                 <div className="nav-add-dropdown-divider" />
                 <button className="nav-add-dropdown-item" onClick={() => handleAddNavigate('/salesform')}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                   </svg>
                   Sales
@@ -386,14 +440,14 @@ const Navbar = () => {
           <div className="nav-analytics-wrapper" ref={analyticsRef}>
             <button className="nav-analytics-btn" onClick={() => setAnalyticsOpen(prev => !prev)}>
               <div className="nav-analytics-btn-left">
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="18" y1="20" x2="18" y2="10"/>
                   <line x1="12" y1="20" x2="12" y2="4"/>
                   <line x1="6" y1="20" x2="6" y2="14"/>
                 </svg>
                 View Analytics
               </div>
-              <svg className={`nav-analytics-chevron${analyticsOpen ? ' open' : ''}`} width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <svg className={`nav-analytics-chevron${analyticsOpen ? ' open' : ''}`} width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="6 9 12 15 18 9"/>
               </svg>
             </button>
@@ -401,14 +455,14 @@ const Navbar = () => {
             {analyticsOpen && (
               <div className="nav-add-dropdown">
                 <button className="nav-add-dropdown-item" onClick={() => handleAnalyticsNavigate('/projectanl')}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
                   </svg>
                   Project Analytics
                 </button>
                 <div className="nav-add-dropdown-divider" />
                 <button className="nav-add-dropdown-item" onClick={() => handleAnalyticsNavigate('/salesanl')}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"/>
                     <polyline points="16 7 22 7 22 13"/>
                   </svg>
@@ -416,7 +470,7 @@ const Navbar = () => {
                 </button>
                 <div className="nav-add-dropdown-divider" />
                 <button className="nav-add-dropdown-item" onClick={() => handleAnalyticsNavigate('/expenseanl')}>
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
                     <polyline points="14 2 14 8 20 8"/>
                     <line x1="16" y1="13" x2="8" y2="13"/>
@@ -430,8 +484,11 @@ const Navbar = () => {
         </div>
 
         <div className="sidebar-user">
-          <span className="user-name">Prasang Sachdev</span>
-          <span className="user-role">Owner</span>
+          <div className="user-avatar">PS</div>
+          <div className="user-meta">
+            <span className="user-name">Prasang Sachdev</span>
+            <span className="user-role">Owner</span>
+          </div>
         </div>
       </nav>
     </>

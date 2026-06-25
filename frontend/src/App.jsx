@@ -16,13 +16,13 @@ const Projectmaster = lazy(() => import('./assets/projectmaster'))
 
 const PageLoader = () => (
   <div style={{
-    background: '#f5f0e8', minHeight: '100vh', display: 'flex',
+    background: '#f7f7f8', minHeight: '100vh', display: 'flex',
     alignItems: 'center', justifyContent: 'center', gap: 12,
-    fontFamily: "system-ui, sans-serif", color: '#9a8775'
+    fontFamily: "'Inter', system-ui, sans-serif", color: '#6b7280'
   }}>
     <div style={{
-      width: 24, height: 24, border: '2.5px solid #e8dece',
-      borderTopColor: '#c97844', borderRadius: '50%',
+      width: 24, height: 24, border: '2.5px solid #ececec',
+      borderTopColor: '#18181b', borderRadius: '50%',
       animation: 'spin 0.7s linear infinite'
     }} />
     Loading view…
@@ -35,9 +35,10 @@ function App() {
     <BrowserRouter>
       <Suspense fallback={<PageLoader />}>
         <Navbar />
-        <div style={{ minHeight: '100vh', background: '#f5f0e8' }}>
+        <div style={{ minHeight: '100vh', background: '#f7f7f8' }}>
           <Routes>
-            <Route path="/"               element={<EmployeeTable />} />
+            <Route path="/"               element={<Projectanl />} />
+            <Route path="/employeetable"  element={<EmployeeTable />} />
             <Route path="/employee"       element={<Employee />} />
 
             <Route path="/projecttable"   element={<Projecttable />} />

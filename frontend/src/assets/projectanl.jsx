@@ -19,18 +19,31 @@ const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
 
 const MONTH_ORDER = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-const PALETTE = {
-  expected: '#4a5568',
-  billed:   '#f6ad55',
-  collected:'#68d391',
-  outstanding: '#fc8181',
-  accent1: '#f6ad55',
-  accent2: '#68d391',
-  accent3: '#76e4f7',
-  accent4: '#b794f4',
+// ─── Light SaaS theme tokens ───
+const COLORS = {
+  bg:        '#f7f7f8',
+  card:      '#ffffff',
+  cardAlt:   '#fafafa',
+  border:    '#ececec',
+  borderSoft:'#f1f1f1',
+  grid:      '#eef0f2',
+  text:      '#18181b',
+  sub:       '#6b7280',
+  muted:     '#9ca3af',
 };
 
-const PROJECT_COLORS = ['#f6ad55','#68d391','#76e4f7','#b794f4','#fc8181','#f687b3'];
+const PALETTE = {
+  expected: '#94a3b8',   // slate (neutral baseline)
+  billed:   '#d97706',   // amber
+  collected:'#16a34a',   // emerald
+  outstanding: '#dc2626',// rose
+  accent1: '#d97706',    // amber  (billed)
+  accent2: '#16a34a',    // emerald (collected)
+  accent3: '#2563eb',    // blue   (trend / billed)
+  accent4: '#7c3aed',    // purple (comparison)
+};
+
+const PROJECT_COLORS = ['#4f46e5','#0891b2','#7c3aed','#0d9488','#db2777','#ea580c'];
 
 // ─── HOOKS ───
 function useProjects() {
@@ -89,7 +102,7 @@ function GroupedBarChart({ data, keys, colors, height = 220 }) {
     svg.append('g').attr('class', 'grid')
       .call(d3.axisLeft(y).tickSize(-iW).tickFormat('').ticks(4))
       .call(g => g.select('.domain').remove())
-      .call(g => g.selectAll('line').attr('stroke', '#2d3748').attr('stroke-dasharray', '3,3'));
+      .call(g => g.selectAll('line').attr('stroke', COLORS.grid).attr('stroke-dasharray', '3,3'));
 
     const groups = svg.append('g').selectAll('.group').data(data).join('g')
       .attr('class', 'group')
@@ -109,13 +122,13 @@ function GroupedBarChart({ data, keys, colors, height = 220 }) {
 
     svg.append('g').attr('transform', `translate(0,${iH})`)
       .call(d3.axisBottom(x0).tickSize(0))
-      .call(g => g.select('.domain').attr('stroke','#2d3748'))
-      .call(g => g.selectAll('text').attr('fill','#a0aec0').attr('font-size', 11).attr('dy', 14));
+      .call(g => g.select('.domain').attr('stroke', COLORS.border))
+      .call(g => g.selectAll('text').attr('fill', COLORS.muted).attr('font-size', 11).attr('dy', 14));
 
     svg.append('g')
       .call(d3.axisLeft(y).ticks(4).tickFormat(fmt))
       .call(g => g.select('.domain').remove())
-      .call(g => g.selectAll('text').attr('fill','#a0aec0').attr('font-size', 10));
+      .call(g => g.selectAll('text').attr('fill', COLORS.muted).attr('font-size', 10));
   }, [data, keys, colors, height]);
 
   return <svg ref={svgRef} style={{ width: '100%', height, display: 'block' }} />;
@@ -140,9 +153,9 @@ function TrendAreaChart({ data, height = 200 }) {
       .append('g').attr('transform', `translate(${margin.left},${margin.top})`);
 
     const defs = svg.append('defs');
-    [['gradAmt', PALETTE.accent1], ['gradPaid', PALETTE.accent2]].forEach(([id, color]) => {
+    [['gradAmt', PALETTE.accent3], ['gradPaid', PALETTE.accent2]].forEach(([id, color]) => {
       const g = defs.append('linearGradient').attr('id', id).attr('x1',0).attr('y1',0).attr('x2',0).attr('y2',1);
-      g.append('stop').attr('offset','5%').attr('stop-color', color).attr('stop-opacity', 0.3);
+      g.append('stop').attr('offset','5%').attr('stop-color', color).attr('stop-opacity', 0.22);
       g.append('stop').attr('offset','95%').attr('stop-color', color).attr('stop-opacity', 0);
     });
 
@@ -153,7 +166,7 @@ function TrendAreaChart({ data, height = 200 }) {
     svg.append('g').attr('class','grid')
       .call(d3.axisLeft(y).tickSize(-iW).tickFormat('').ticks(4))
       .call(g => g.select('.domain').remove())
-      .call(g => g.selectAll('line').attr('stroke','#2d3748').attr('stroke-dasharray','3,3'));
+      .call(g => g.selectAll('line').attr('stroke', COLORS.grid).attr('stroke-dasharray','3,3'));
 
     const areaGen = key => d3.area()
       .x(d => x(d.month))
@@ -165,10 +178,10 @@ function TrendAreaChart({ data, height = 200 }) {
       .y(d => y(d[key]))
       .curve(d3.curveMonotoneX);
 
-    [['amt','gradAmt', PALETTE.accent1], ['paid','gradPaid', PALETTE.accent2]].forEach(([key, grad, color]) => {
+    [['amt','gradAmt', PALETTE.accent3], ['paid','gradPaid', PALETTE.accent2]].forEach(([key, grad, color]) => {
       svg.append('path').datum(data).attr('fill', `url(#${grad})`).attr('d', areaGen(key));
       const path = svg.append('path').datum(data)
-        .attr('fill','none').attr('stroke', color).attr('stroke-width', 2)
+        .attr('fill','none').attr('stroke', color).attr('stroke-width', 2.2)
         .attr('d', lineGen(key));
       const len = path.node().getTotalLength();
       path.attr('stroke-dasharray', len).attr('stroke-dashoffset', len)
@@ -177,13 +190,13 @@ function TrendAreaChart({ data, height = 200 }) {
 
     svg.append('g').attr('transform', `translate(0,${iH})`)
       .call(d3.axisBottom(x).tickSize(0))
-      .call(g => g.select('.domain').attr('stroke','#2d3748'))
-      .call(g => g.selectAll('text').attr('fill','#a0aec0').attr('font-size',10).attr('dy',14));
+      .call(g => g.select('.domain').attr('stroke', COLORS.border))
+      .call(g => g.selectAll('text').attr('fill', COLORS.muted).attr('font-size',10).attr('dy',14));
 
     svg.append('g')
       .call(d3.axisLeft(y).ticks(4).tickFormat(fmt))
       .call(g => g.select('.domain').remove())
-      .call(g => g.selectAll('text').attr('fill','#a0aec0').attr('font-size',10));
+      .call(g => g.selectAll('text').attr('fill', COLORS.muted).attr('font-size',10));
   }, [data, height]);
 
   return <svg ref={svgRef} style={{ width:'100%', height, display:'block' }} />;
@@ -210,6 +223,7 @@ function DonutChart({ data, colors, height = 200 }) {
 
     svg.selectAll('path').data(pie(data)).join('path')
       .attr('fill', (_, i) => colors[i % colors.length])
+      .attr('stroke', COLORS.card).attr('stroke-width', 2)
       .attr('d', arc)
       .style('opacity', 0)
       .transition().duration(600).delay((_, i) => i * 80)
@@ -217,10 +231,10 @@ function DonutChart({ data, colors, height = 200 }) {
 
     const total = d3.sum(data, d => d.value);
     svg.append('text').attr('text-anchor','middle').attr('dy','-0.2em')
-      .attr('fill','#e2e8f0').attr('font-size', 13).attr('font-weight', 700)
+      .attr('fill', COLORS.text).attr('font-size', 14).attr('font-weight', 700)
       .text(fmt(total));
-    svg.append('text').attr('text-anchor','middle').attr('dy','1.2em')
-      .attr('fill','#718096').attr('font-size', 10)
+    svg.append('text').attr('text-anchor','middle').attr('dy','1.3em')
+      .attr('fill', COLORS.muted).attr('font-size', 10)
       .text('Total');
   }, [data, colors, height]);
 
@@ -249,12 +263,12 @@ function HBarChart({ data, height = 220 }) {
       const bh = rowH * 0.38;
 
       svg.append('text').attr('x', 0).attr('y', y - 2)
-        .attr('fill','#a0aec0').attr('font-size', 10)
+        .attr('fill', COLORS.sub).attr('font-size', 10)
         .text(d.name);
 
       svg.append('rect').attr('x', 0).attr('y', y + 4)
         .attr('width', iW).attr('height', bh)
-        .attr('fill','#2d3748').attr('rx', 4);
+        .attr('fill', COLORS.grid).attr('rx', 4);
 
       svg.append('rect').attr('x', 0).attr('y', y + 4)
         .attr('width', 0).attr('height', bh)
@@ -274,26 +288,27 @@ function HBarChart({ data, height = 220 }) {
 
 const StatCard = ({ label, value, sub, color }) => (
   <div style={{
-    background: 'linear-gradient(135deg,#1a202c,#2d3748)',
-    border: `1px solid ${color}40`,
+    background: COLORS.card,
+    border: `1px solid ${COLORS.border}`,
     borderTop: `3px solid ${color}`,
-    borderRadius: 10,
+    borderRadius: 14,
     padding: '18px 20px',
     position: 'relative',
     overflow: 'hidden',
+    boxShadow: '0 1px 3px rgba(16,24,40,0.04)',
   }}>
-    <div style={{ position:'absolute', bottom:-20, right:-20, width:70, height:70, borderRadius:'50%', background:`${color}12` }} />
-    <p style={{ color:'#718096', fontSize:10, letterSpacing:'0.14em', textTransform:'uppercase', marginBottom:8 }}>{label}</p>
-    <p style={{ color:'#f7fafc', fontSize:24, fontWeight:800, fontFamily:"'Courier New', monospace", letterSpacing:'-0.02em', margin:0 }}>{value}</p>
-    {sub && <p style={{ color, fontSize:11, marginTop:5 }}>{sub}</p>}
+    <div style={{ position:'absolute', bottom:-20, right:-20, width:70, height:70, borderRadius:'50%', background:`${color}10` }} />
+    <p style={{ color: COLORS.muted, fontSize:11, letterSpacing:'0.2px', marginBottom:8, margin:'0 0 8px' }}>{label}</p>
+    <p style={{ color: COLORS.text, fontSize:24, fontWeight:700, fontVariantNumeric:'tabular-nums', letterSpacing:'-0.5px', margin:0 }}>{value}</p>
+    {sub && <p style={{ color, fontSize:11.5, marginTop:5, margin:'5px 0 0' }}>{sub}</p>}
   </div>
 );
 
-const Panel = ({ title, accent = '#f6ad55', children, style = {} }) => (
-  <div style={{ background:'#1a202c', border:'1px solid #2d3748', borderRadius:12, padding:'20px 18px', ...style }}>
+const Panel = ({ title, accent = '#4f46e5', children, style = {} }) => (
+  <div style={{ background: COLORS.card, border:`1px solid ${COLORS.border}`, borderRadius:16, padding:'20px 18px', boxShadow:'0 1px 3px rgba(16,24,40,0.04)', ...style }}>
     <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:16 }}>
       <div style={{ width:3, height:18, background:accent, borderRadius:2 }} />
-      <h3 style={{ color:'#e2e8f0', fontSize:12, fontWeight:700, letterSpacing:'0.1em', textTransform:'uppercase', margin:0 }}>{title}</h3>
+      <h3 style={{ color: COLORS.text, fontSize:13, fontWeight:600, letterSpacing:'-0.1px', margin:0 }}>{title}</h3>
     </div>
     {children}
   </div>
@@ -302,7 +317,7 @@ const Panel = ({ title, accent = '#f6ad55', children, style = {} }) => (
 const LegendDot = ({ color, label }) => (
   <div style={{ display:'flex', alignItems:'center', gap:5 }}>
     <div style={{ width:8, height:8, borderRadius:'50%', background:color }} />
-    <span style={{ color:'#718096', fontSize:11 }}>{label}</span>
+    <span style={{ color: COLORS.sub, fontSize:11.5 }}>{label}</span>
   </div>
 );
 
@@ -311,9 +326,9 @@ const Projectanl = () => {
   const [selected, setSelected] = useState('all');
 
   if (loading) return (
-    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background:'#0d1117', color:'#4a5568', fontFamily:'sans-serif', fontSize:14 }}>
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background: COLORS.bg, color: COLORS.sub, fontFamily:"'Inter', sans-serif", fontSize:14 }}>
       <div style={{ textAlign:'center' }}>
-        <div style={{ width:32, height:32, border:'2px solid #f6ad55', borderTopColor:'transparent', borderRadius:'50%', margin:'0 auto 12px', animation:'spin 0.8s linear infinite' }} />
+        <div style={{ width:32, height:32, border:`2.5px solid ${COLORS.border}`, borderTopColor:'#18181b', borderRadius:'50%', margin:'0 auto 12px', animation:'spin 0.8s linear infinite' }} />
         Loading project data…
         <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       </div>
@@ -321,13 +336,13 @@ const Projectanl = () => {
   );
 
   if (error) return (
-    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background:'#0d1117', color:'#fc8181', fontFamily:'sans-serif', fontSize:14 }}>
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background: COLORS.bg, color:'#dc2626', fontFamily:"'Inter', sans-serif", fontSize:14 }}>
       Failed to load: {error}
     </div>
   );
 
   if (!projects.length) return (
-    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background:'#0d1117', color:'#718096', fontFamily:'sans-serif' }}>
+    <div style={{ display:'flex', alignItems:'center', justifyContent:'center', height:'100vh', background: COLORS.bg, color: COLORS.muted, fontFamily:"'Inter', sans-serif" }}>
       No projects found.
     </div>
   );
@@ -377,20 +392,21 @@ const Projectanl = () => {
   return (
     <div style={{
       minHeight: '100vh',
-      background: '#0d1117',
-      fontFamily: "'IBM Plex Mono', 'Courier New', monospace",
-      color: '#e2e8f0',
-      padding: '28px 24px',
+      background: COLORS.bg,
+      fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, sans-serif",
+      color: COLORS.text,
+      padding: '32px 24px',
     }}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');`}</style>
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:28, flexWrap:'wrap', gap:12 }}>
         <div>
-          <p style={{ color:'#f6ad55', fontSize:10, letterSpacing:'0.25em', textTransform:'uppercase', margin:'0 0 6px' }}>Project Intelligence</p>
-          <h1 style={{ fontSize:24, fontWeight:900, color:'#f7fafc', letterSpacing:'-0.03em', margin:0 }}>Revenue Analytics</h1>
+          <p style={{ color: COLORS.muted, fontSize:11, letterSpacing:'0.4px', textTransform:'uppercase', margin:'0 0 6px', fontWeight:500 }}>Project Intelligence</p>
+          <h1 style={{ fontSize:24, fontWeight:600, color: COLORS.text, letterSpacing:'-0.5px', margin:0 }}>Revenue Analytics</h1>
         </div>
         <select
           value={selected}
           onChange={e => setSelected(e.target.value)}
-          style={{ background:'#1a202c', border:'1px solid #2d3748', borderRadius:8, color:'#e2e8f0', padding:'8px 12px', fontSize:12, cursor:'pointer', outline:'none', fontFamily:'inherit' }}
+          style={{ background: COLORS.card, border:`1px solid ${COLORS.border}`, borderRadius:9, color: COLORS.text, padding:'9px 12px', fontSize:13, cursor:'pointer', outline:'none', fontFamily:'inherit' }}
         >
           <option value="all">All Projects</option>
           {projects.map(p => <option key={p._id || p.id} value={p._id || p.id}>{p.projectName}</option>)}
@@ -398,8 +414,8 @@ const Projectanl = () => {
       </div>
 
       <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))', gap:14, marginBottom:24 }}>
-        <StatCard label="Contract Value"   value={fmt(totalExpected)}   sub={`${active.length} project${active.length !== 1 ? 's' : ''}`} color={PALETTE.accent1} />
-        <StatCard label="Total Billed"     value={fmt(totalBilled)}     sub={`${pct(totalBilled, totalExpected)}% of contract`}           color={PALETTE.accent3} />
+        <StatCard label="Contract Value"   value={fmt(totalExpected)}   sub={`${active.length} project${active.length !== 1 ? 's' : ''}`} color={PALETTE.accent3} />
+        <StatCard label="Total Billed"     value={fmt(totalBilled)}     sub={`${pct(totalBilled, totalExpected)}% of contract`}           color={PALETTE.accent1} />
         <StatCard label="Total Collected"  value={fmt(totalCollected)}  sub={`${pct(totalCollected, totalBilled)}% collection rate`}       color={PALETTE.accent2} />
         <StatCard label="Outstanding"      value={fmt(totalOutstanding)} sub={totalOutstanding > 0 ? 'Pending recovery' : 'Fully cleared'} color={PALETTE.outstanding} />
       </div>
@@ -407,19 +423,19 @@ const Projectanl = () => {
       <div style={{ display:'grid', gridTemplateColumns:'2fr 1fr', gap:16, marginBottom:16 }}>
         <Panel title="Monthly Revenue Trend" accent={PALETTE.accent3}>
           <div style={{ display:'flex', gap:16, marginBottom:10 }}>
-            <LegendDot color={PALETTE.accent1} label="Billed" />
+            <LegendDot color={PALETTE.accent3} label="Billed" />
             <LegendDot color={PALETTE.accent2} label="Collected" />
           </div>
           <TrendAreaChart data={trendData} height={200} />
         </Panel>
 
-        <Panel title="By Project Type" accent={PALETTE.accent1}>
+        <Panel title="By Project Type" accent={PALETTE.accent4}>
           <DonutChart data={donutData} colors={PROJECT_COLORS} height={180} />
           <div style={{ display:'flex', flexDirection:'column', gap:5, marginTop:10 }}>
             {donutData.map((d, i) => (
               <div key={d.name} style={{ display:'flex', justifyContent:'space-between' }}>
                 <LegendDot color={PROJECT_COLORS[i % PROJECT_COLORS.length]} label={d.name} />
-                <span style={{ color:'#a0aec0', fontSize:11 }}>{fmt(d.value)}</span>
+                <span style={{ color: COLORS.sub, fontSize:11.5, fontVariantNumeric:'tabular-nums' }}>{fmt(d.value)}</span>
               </div>
             ))}
           </div>
@@ -448,11 +464,11 @@ const Projectanl = () => {
 
       <Panel title="Project Summary" accent={PALETTE.accent4}>
         <div style={{ overflowX:'auto' }}>
-          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12.5 }}>
             <thead>
-              <tr style={{ borderBottom:'1px solid #2d3748' }}>
+              <tr style={{ borderBottom:`1px solid ${COLORS.border}` }}>
                 {['Project','Type','Contract','Billed','Collected','Outstanding','Progress'].map(h => (
-                  <th key={h} style={{ textAlign:'left', padding:'8px 12px', color:'#4a5568', fontWeight:700, letterSpacing:'0.08em', textTransform:'uppercase', fontSize:10, whiteSpace:'nowrap' }}>{h}</th>
+                  <th key={h} style={{ textAlign:'left', padding:'10px 12px', color: COLORS.muted, fontWeight:500, letterSpacing:'0.3px', fontSize:10.5, whiteSpace:'nowrap' }}>{h}</th>
                 ))}
               </tr>
             </thead>
@@ -466,22 +482,24 @@ const Projectanl = () => {
                 return (
                   <tr key={pid}
                     onClick={() => setSelected(selected === pid ? 'all' : pid)}
-                    style={{ borderBottom:'1px solid #1a202c', cursor:'pointer', background: selected === pid ? '#1a202c' : 'transparent', transition:'background 0.15s' }}
+                    style={{ borderBottom:`1px solid ${COLORS.borderSoft}`, cursor:'pointer', background: selected === pid ? '#f3f4f6' : 'transparent', transition:'background 0.15s' }}
+                    onMouseEnter={e => { if (selected !== pid) e.currentTarget.style.background = COLORS.cardAlt; }}
+                    onMouseLeave={e => { if (selected !== pid) e.currentTarget.style.background = 'transparent'; }}
                   >
-                    <td style={{ padding:'10px 12px', color:'#f7fafc', fontWeight:700 }}>{p.projectName}</td>
-                    <td style={{ padding:'10px 12px' }}>
-                      <span style={{ background:`${color}20`, color, borderRadius:4, padding:'2px 7px', fontSize:10, fontWeight:700 }}>{p.projectType}</span>
+                    <td style={{ padding:'11px 12px', color: COLORS.text, fontWeight:600 }}>{p.projectName}</td>
+                    <td style={{ padding:'11px 12px' }}>
+                      <span style={{ background:`${color}18`, color, borderRadius:5, padding:'2px 8px', fontSize:10.5, fontWeight:600 }}>{p.projectType}</span>
                     </td>
-                    <td style={{ padding:'10px 12px', color:'#e2e8f0' }}>{fmt(p.expectedAmount)}</td>
-                    <td style={{ padding:'10px 12px', color: PALETTE.accent1 }}>{fmt(billed)}</td>
-                    <td style={{ padding:'10px 12px', color: PALETTE.accent2 }}>{fmt(collected)}</td>
-                    <td style={{ padding:'10px 12px', color: PALETTE.outstanding }}>{fmt(billed - collected)}</td>
-                    <td style={{ padding:'10px 12px', minWidth:110 }}>
+                    <td style={{ padding:'11px 12px', color: COLORS.text, fontVariantNumeric:'tabular-nums' }}>{fmt(p.expectedAmount)}</td>
+                    <td style={{ padding:'11px 12px', color: PALETTE.billed, fontVariantNumeric:'tabular-nums' }}>{fmt(billed)}</td>
+                    <td style={{ padding:'11px 12px', color: PALETTE.collected, fontVariantNumeric:'tabular-nums' }}>{fmt(collected)}</td>
+                    <td style={{ padding:'11px 12px', color: PALETTE.outstanding, fontVariantNumeric:'tabular-nums' }}>{fmt(billed - collected)}</td>
+                    <td style={{ padding:'11px 12px', minWidth:110 }}>
                       <div style={{ display:'flex', alignItems:'center', gap:7 }}>
-                        <div style={{ flex:1, height:5, background:'#2d3748', borderRadius:3, overflow:'hidden' }}>
+                        <div style={{ flex:1, height:5, background: COLORS.grid, borderRadius:3, overflow:'hidden' }}>
                           <div style={{ width:`${progress}%`, height:'100%', background:color, borderRadius:3, transition:'width 0.5s' }} />
                         </div>
-                        <span style={{ color, fontSize:11, fontWeight:700, minWidth:28 }}>{progress}%</span>
+                        <span style={{ color, fontSize:11, fontWeight:700, minWidth:28, fontVariantNumeric:'tabular-nums' }}>{progress}%</span>
                       </div>
                     </td>
                   </tr>
@@ -490,7 +508,7 @@ const Projectanl = () => {
             </tbody>
           </table>
         </div>
-        <p style={{ color:'#4a5568', fontSize:10, marginTop:12 }}>↑ Click a row to filter all charts to that project.</p>
+        <p style={{ color: COLORS.muted, fontSize:11, marginTop:12 }}>↑ Click a row to filter all charts to that project.</p>
       </Panel>
     </div>
   );

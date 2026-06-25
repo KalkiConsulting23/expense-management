@@ -59,7 +59,7 @@ const AutocompleteInput = ({ value, onChange, suggestions, placeholder, hasError
     return (
       <>
         {text.slice(0, idx)}
-        <mark style={{ background: "#dbeafe", color: "#1e3a8a", padding: 0, borderRadius: 2 }}>
+        <mark style={{ background: "#f3f4f6", color: "#18181b", padding: 0, borderRadius: 2, fontWeight: 600 }}>
           {text.slice(idx, idx + value.length)}
         </mark>
         {text.slice(idx + value.length)}
@@ -118,6 +118,13 @@ const Employee = () => {
   const [recurringData, setRecurringData] = useState({ amount: "", startDate: "", endDate: "" });
   const [oneTimeData, setOneTimeData]     = useState({ amount: "", date: "" });
   const [errors, setErrors]               = useState({});
+  const [toast, setToast]                 = useState(null);
+  const [success, setSuccess]             = useState(false);
+
+  const showToast = (msg) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 3000);
+  };
 
   // Fetch existing expense types + names for autocomplete
   useEffect(() => {
@@ -211,6 +218,7 @@ const Employee = () => {
       setExpenseTypeError(newErrors.expenseType || "");
       setExpenseNameError(newErrors.expenseName || "");
       setErrors(newErrors);
+      showToast("Please fill in all required fields.");
       return;
     }
 
@@ -231,7 +239,7 @@ const Employee = () => {
 
       if (!response.ok) {
         const err = await response.json();
-        alert(err.message || "Server error. Please try again.");
+        showToast(err.message || "Server error. Please try again.");
         return;
       }
 
@@ -240,19 +248,40 @@ const Employee = () => {
       // SMART CACHE INVALIDATION
       sessionStorage.removeItem(CACHE_KEY);
 
-      navigate("/");
+      setSuccess(true);
+      setTimeout(() => {
+        setSuccess(false);
+        navigate("/employeetable");
+      }, 2800);
     } catch (err) {
       console.error(err);
-      alert("Something went wrong!");
+      showToast("Something went wrong!");
     }
   };
 
-  const handleCancel = () => navigate("/");
+  const handleCancel = () => navigate("/employeetable");
+
+  // ── Live receipt preview values (display only) ──
+  const previewAmount = type === "recurring" ? recurringData.amount : oneTimeData.amount;
+  const previewAmountNum = Number(previewAmount);
+  const previewAmountStr =
+    previewAmount && !isNaN(previewAmountNum)
+      ? previewAmountNum.toLocaleString("en-IN")
+      : null;
+  const fmtNiceDate = (val) => {
+    if (!val) return null;
+    const d = type === "recurring" ? new Date(val) : parseDate(val);
+    if (isNaN(d?.getTime?.())) return val;
+    return d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+  };
+  const previewStart = type === "recurring" ? fmtNiceDate(recurringData.startDate) : null;
+  const previewEnd   = type === "recurring" ? fmtNiceDate(recurringData.endDate) : null;
+  const previewDate  = type === "one-time" ? fmtNiceDate(oneTimeData.date) : null;
 
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=DM+Sans:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
         input[type=number]::-webkit-inner-spin-button,
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; }
@@ -260,82 +289,117 @@ const Employee = () => {
 
         .ep-page {
           min-height: 100vh;
-          background: #eef3fb;
+          background:
+            radial-gradient(1200px 400px at 100% -10%, rgba(79,70,229,0.05), transparent 60%),
+            radial-gradient(900px 360px at -10% 110%, rgba(22,163,74,0.05), transparent 60%),
+            #f7f7f8;
           display: flex;
           align-items: flex-start;
           justify-content: center;
-          padding: 40px 16px 60px;
-          font-family: 'DM Sans', sans-serif;
+          padding: 40px 16px 64px;
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         }
 
-        /* ── Bento grid shell ── */
-        .ep-bento {
+        /* ── Elevated split card ── */
+        .ep-shell {
           width: 100%;
-          max-width: 920px;
-          display: grid;
-          grid-template-columns: 1fr 1.6fr;
-          grid-auto-rows: min-content;
-          gap: 16px;
-        }
-        .ep-tile {
+          max-width: 880px;
           background: #ffffff;
-          border: 1.5px solid #dde6f4;
-          border-radius: 22px;
-          box-shadow: 0 2px 0 #e6edf8, 0 8px 32px rgba(30,58,138,0.07);
-          overflow: visible;
+          border: 1px solid #ececec;
+          border-radius: 20px;
+          box-shadow: 0 1px 3px rgba(16,24,40,0.04), 0 18px 50px -28px rgba(16,24,40,0.22);
+          overflow: hidden;
         }
 
-        /* Hero tile (left, spans both rows) — rounded gradient */
-        .ep-tile-hero {
-          grid-row: span 2;
-          background: linear-gradient(160deg, #1e3a8a 0%, #2563eb 55%, #60a5fa 100%);
-          color: #ffffff;
-          padding: 30px 28px;
-          display: flex;
-          flex-direction: column;
-          justify-content: space-between;
-          min-height: 100%;
-          border: none;
-          border-radius: 26px;
-          box-shadow: 0 10px 34px rgba(30,58,138,0.28);
+        /* Header band with accent rail */
+        .ep-band {
+          position: relative;
+          padding: 26px 28px 24px;
+          border-bottom: 1px solid #f1f1f1;
+          background: linear-gradient(180deg, #fcfcfd, #ffffff);
         }
-        .ep-hero-eyebrow { font-size: 10px; font-weight: 500; letter-spacing: 2px; text-transform: uppercase; color: #bfdbfe; margin-bottom: 10px; }
-        .ep-hero-title { font-family: 'Lora', serif; font-size: 26px; font-weight: 600; line-height: 1.18; }
-        .ep-hero-sub { font-size: 13px; color: #dbeafe; margin-top: 10px; line-height: 1.5; }
-        .ep-hero-foot { font-size: 12px; color: #bfdbfe; margin-top: 24px; }
-        .ep-hero-foot .star { color: #ffffff; }
+        .ep-band::before {
+          content: '';
+          position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+          background: linear-gradient(180deg, #4f46e5, #16a34a);
+        }
+        .ep-band-eyebrow { font-size: 11px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase; color: #4f46e5; margin-bottom: 8px; display: flex; align-items: center; gap: 8px; }
+        .ep-band-eyebrow::after { content: ''; flex: 0 0 26px; height: 1px; background: #e0e7ff; }
+        .ep-band-title { font-size: 25px; font-weight: 600; line-height: 1.15; letter-spacing: -0.5px; color: #18181b; }
+        .ep-band-sub { font-size: 13.5px; color: #6b7280; margin-top: 7px; line-height: 1.5; max-width: 460px; }
 
-        /* Tile headers/body */
-        .ep-tile-pad { padding: 22px 24px; }
-        .ep-section-divider { font-family: 'Lora', serif; font-size: 13px; font-style: italic; color: #2563eb; display: flex; align-items: center; gap: 8px; margin-bottom: 18px; margin-top: 0; }
-        .ep-section-divider::before, .ep-section-divider::after { content: ''; flex: 1; height: 1px; background: #dde6f4; }
+        /* Body: form (left) + live receipt (right) */
+        .ep-body { display: grid; grid-template-columns: 1.45fr 1fr; }
+        .ep-form-col { padding: 24px 26px; border-right: 1px solid #f1f1f1; display: flex; flex-direction: column; gap: 22px; }
+
+        /* Live receipt / ledger stub */
+        .ep-receipt {
+          background:
+            linear-gradient(180deg, #fbfbfc, #fafafa);
+          padding: 24px 22px;
+          display: flex; flex-direction: column;
+          position: relative;
+        }
+        .ep-receipt::after {
+          content: '';
+          position: absolute; left: 0; right: 0; bottom: 0; height: 14px;
+          background:
+            radial-gradient(8px 10px at 10px -2px, transparent 6px, #ffffff 6.5px) repeat-x;
+          background-size: 20px 14px;
+        }
+        .ep-rc-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+        .ep-rc-tag { font-size: 10px; font-weight: 600; letter-spacing: 0.8px; text-transform: uppercase; color: #9ca3af; }
+        .ep-rc-pill { font-size: 10px; font-weight: 600; padding: 3px 9px; border-radius: 99px; letter-spacing: 0.3px; }
+        .ep-rc-pill.recurring { background: #eef2ff; color: #4338ca; border: 1px solid #e0e7ff; }
+        .ep-rc-pill.onetime { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+        .ep-rc-amount { font-size: 34px; font-weight: 700; color: #18181b; letter-spacing: -1px; font-variant-numeric: tabular-nums; margin: 14px 0 2px; line-height: 1; }
+        .ep-rc-amount .cur { font-size: 20px; color: #9ca3af; font-weight: 600; margin-right: 3px; vertical-align: 4px; }
+        .ep-rc-amount.empty { color: #d1d5db; }
+        .ep-rc-name { font-size: 13.5px; font-weight: 600; color: #374151; min-height: 18px; }
+        .ep-rc-name.empty { color: #cbd5e1; font-weight: 500; }
+        .ep-rc-type { font-size: 11.5px; color: #9ca3af; margin-top: 2px; min-height: 16px; }
+
+        .ep-rc-rule { height: 1px; background: repeating-linear-gradient(90deg, #e5e7eb 0 6px, transparent 6px 12px); margin: 18px 0 14px; }
+
+        .ep-rc-row { display: flex; align-items: center; justify-content: space-between; padding: 7px 0; font-size: 12px; }
+        .ep-rc-row .k { color: #9ca3af; }
+        .ep-rc-row .v { color: #374151; font-weight: 500; font-variant-numeric: tabular-nums; }
+        .ep-rc-row .v.muted { color: #cbd5e1; font-weight: 400; }
+
+        .ep-rc-foot { margin-top: auto; padding-top: 18px; font-size: 10.5px; color: #b0b0b5; display: flex; align-items: center; gap: 6px; }
+        .ep-rc-foot .dot { width: 5px; height: 5px; border-radius: 50%; background: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,0.12); }
+
+        /* Tile headers/body (kept for section dividers/fields) */
+        .ep-section-divider { font-size: 12px; font-weight: 600; color: #6b7280; display: flex; align-items: center; gap: 10px; margin-bottom: 16px; margin-top: 0; }
+        .ep-section-divider::after { content: ''; flex: 1; height: 1px; background: #f1f1f1; }
 
         .ep-field { display: flex; flex-direction: column; margin-bottom: 16px; }
         .ep-field:last-child { margin-bottom: 0; }
-        .ep-label { font-size: 11px; font-weight: 500; color: #51607c; letter-spacing: 1px; text-transform: uppercase; margin-bottom: 7px; }
-        .ep-required { color: #2563eb; margin-left: 2px; }
-        .ep-input { width: 100%; padding: 11px 15px; border-radius: 12px; border: 1.5px solid #d7e1f3; background: #f5f8fe; color: #1e293b; font-size: 14px; font-family: 'DM Sans', sans-serif; outline: none; transition: border-color 0.18s, background 0.18s; }
-        .ep-input::placeholder { color: #a9bbd6; }
-        .ep-input:focus { border-color: #2563eb; background: #fff; }
-        .ep-input.err { border-color: #1e3a8a; background: #eef3fb; }
-        .ep-input.has-prefix { padding-left: 30px; }
-        .ep-hint { font-size: 11px; color: #94a3b8; margin-top: 5px; }
-        .ep-err  { font-size: 11px; color: #1e3a8a; font-weight: 500; margin-top: 5px; }
+        .ep-label { font-size: 12px; font-weight: 500; color: #4b5563; letter-spacing: 0.2px; margin-bottom: 7px; }
+        .ep-required { color: #dc2626; margin-left: 2px; }
+        .ep-input { width: 100%; padding: 11px 14px; border-radius: 10px; border: 1px solid #ececec; background: #fafafa; color: #18181b; font-size: 14px; font-family: 'Inter', sans-serif; outline: none; transition: border-color 0.18s, background 0.18s, box-shadow 0.18s; }
+        .ep-input::placeholder { color: #b0b0b5; }
+        .ep-input:focus { border-color: #18181b; background: #fff; box-shadow: 0 0 0 3px rgba(24,24,27,0.06); }
+        .ep-input:hover:not(:focus) { border-color: #d1d5db; }
+        .ep-input.err { border-color: #dc2626; background: #fef2f2; }
+        .ep-input.has-prefix { padding-left: 28px; }
+        .ep-hint { font-size: 11.5px; color: #9ca3af; margin-top: 5px; }
+        .ep-err  { font-size: 11.5px; color: #dc2626; font-weight: 500; margin-top: 5px; }
         .ep-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
         .ep-prefix-wrap { position: relative; display: flex; align-items: center; }
-        .ep-prefix { position: absolute; left: 13px; font-size: 14px; color: #51607c; pointer-events: none; z-index: 1; }
-        .ep-tab-row { display: flex; border: 1.5px solid #d7e1f3; border-radius: 14px; background: #f5f8fe; overflow: hidden; margin-bottom: 18px; }
-        .ep-tab { flex: 1; padding: 10px 0; border: none; background: transparent; cursor: pointer; font-size: 12px; font-weight: 500; color: #51607c; font-family: 'DM Sans', sans-serif; transition: all 0.15s; letter-spacing: 0.3px; }
-        .ep-tab:hover { color: #1e3a8a; }
-        .ep-tab.active { color: #fff; background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); font-weight: 500; }
+        .ep-prefix { position: absolute; left: 13px; font-size: 14px; color: #9ca3af; pointer-events: none; z-index: 1; }
+        .ep-tab-row { display: flex; border: 1px solid #ececec; border-radius: 10px; background: #f3f4f6; overflow: hidden; margin-bottom: 18px; padding: 3px; gap: 3px; }
+        .ep-tab { flex: 1; padding: 9px 0; border: none; background: transparent; cursor: pointer; font-size: 12.5px; font-weight: 500; color: #6b7280; font-family: 'Inter', sans-serif; transition: all 0.15s; border-radius: 7px; }
+        .ep-tab:hover { color: #18181b; }
+        .ep-tab.active { color: #18181b; background: #ffffff; font-weight: 600; box-shadow: 0 1px 2px rgba(16,24,40,0.06); }
 
-        .ep-footer { display: flex; justify-content: space-between; align-items: center; padding: 18px 24px; }
-        .ep-footer-note { font-size: 12px; color: #94a3b8; }
+        .ep-footer { display: flex; justify-content: space-between; align-items: center; padding: 18px 26px; border-top: 1px solid #f1f1f1; background: #fcfcfd; }
+        .ep-footer-note { font-size: 12px; color: #9ca3af; }
         .ep-btn-group { display: flex; gap: 8px; }
-        .ep-btn-cancel { padding: 10px 20px; border-radius: 12px; border: 1.5px solid #d7e1f3; background: transparent; font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500; color: #51607c; cursor: pointer; transition: all 0.15s; }
-        .ep-btn-cancel:hover { background: #eef3fb; color: #1e293b; border-color: #b9cbed; }
-        .ep-btn-submit { display: flex; align-items: center; gap: 7px; padding: 10px 22px; border-radius: 12px; border: none; background: linear-gradient(135deg, #1e3a8a 0%, #2563eb 100%); font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500; color: #fff; cursor: pointer; transition: filter 0.15s, transform 0.1s; letter-spacing: 0.3px; }
-        .ep-btn-submit:hover { filter: brightness(1.08); transform: translateY(-1px); }
+        .ep-btn-cancel { padding: 10px 20px; border-radius: 10px; border: 1px solid #ececec; background: #fff; font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500; color: #4b5563; cursor: pointer; transition: all 0.15s; }
+        .ep-btn-cancel:hover { background: #f7f7f8; color: #18181b; border-color: #d1d5db; }
+        .ep-btn-submit { display: flex; align-items: center; gap: 7px; padding: 10px 22px; border-radius: 10px; border: none; background: #18181b; font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500; color: #fff; cursor: pointer; transition: background 0.15s, transform 0.1s; }
+        .ep-btn-submit:hover { background: #000; transform: translateY(-1px); }
         .ep-btn-submit:active { transform: translateY(0); }
 
         /* ── Autocomplete dropdown ── */
@@ -344,9 +408,9 @@ const Employee = () => {
           top: calc(100% + 6px);
           left: 0; right: 0;
           background: #ffffff;
-          border: 1.5px solid #d7e1f3;
+          border: 1px solid #ececec;
           border-radius: 12px;
-          box-shadow: 0 6px 24px rgba(30,58,138,0.15);
+          box-shadow: 0 6px 24px rgba(16,24,40,0.10);
           list-style: none;
           overflow: hidden;
           z-index: 100;
@@ -360,109 +424,266 @@ const Employee = () => {
           gap: 8px;
           padding: 9px 12px;
           font-size: 13.5px;
-          color: #1e293b;
-          border-radius: 9px;
+          color: #4b5563;
+          border-radius: 8px;
           cursor: pointer;
           transition: background 0.12s;
-          font-family: 'DM Sans', sans-serif;
+          font-family: 'Inter', sans-serif;
         }
         .ep-autocomplete-item:hover,
         .ep-autocomplete-item.active {
-          background: #dbeafe;
-          color: #1e3a8a;
+          background: #f7f7f8;
+          color: #18181b;
         }
         .ep-ac-icon { font-size: 12px; flex-shrink: 0; opacity: 0.7; }
 
+        /* ── Error toast (bottom-right) ── */
+        .ep-toast { position: fixed; bottom: 28px; right: 28px; padding: 13px 18px; border-radius: 12px; font-family: 'Inter', sans-serif; font-size: 13px; font-weight: 500; display: flex; align-items: center; gap: 10px; z-index: 9999; box-shadow: 0 8px 28px rgba(16,24,40,0.16); animation: toastIn 0.28s cubic-bezier(0.18,0.89,0.32,1.28); max-width: 340px; background: #ffffff; color: #dc2626; border: 1px solid #fecaca; }
+        .ep-toast-ic { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 700; color: #fff; flex-shrink: 0; background: #ef4444; }
+        @keyframes toastIn { from { opacity: 0; transform: translateY(16px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+        /* ── Full-screen success overlay ── */
+        .ep-overlay {
+          position: fixed; inset: 0; z-index: 10000;
+          display: flex; align-items: center; justify-content: center;
+          background: rgba(247,247,248,0.72);
+          backdrop-filter: blur(10px) saturate(1.1);
+          -webkit-backdrop-filter: blur(10px) saturate(1.1);
+          animation: ovFade 0.4s ease forwards;
+          font-family: 'Inter', sans-serif;
+        }
+        @keyframes ovFade { from { opacity: 0; } to { opacity: 1; } }
+
+        .ep-ov-panel {
+          position: relative;
+          width: 100%; max-width: 380px; margin: 0 20px;
+          background: rgba(255,255,255,0.85);
+          border: 1px solid rgba(255,255,255,0.9);
+          border-radius: 24px;
+          padding: 40px 36px 32px;
+          text-align: center;
+          box-shadow: 0 24px 80px rgba(16,24,40,0.18), 0 2px 8px rgba(16,24,40,0.06);
+          animation: panelIn 0.5s cubic-bezier(0.18,0.89,0.32,1.28) forwards;
+          overflow: hidden;
+        }
+        @keyframes panelIn { from { opacity: 0; transform: translateY(18px) scale(0.95); } to { opacity: 1; transform: translateY(0) scale(1); } }
+
+        .ep-ov-glow {
+          position: absolute; top: -40px; left: 50%; transform: translateX(-50%);
+          width: 260px; height: 260px; border-radius: 50%;
+          background: radial-gradient(circle, rgba(34,197,94,0.16) 0%, rgba(34,197,94,0) 70%);
+          pointer-events: none;
+        }
+
+        .ep-ov-check { position: relative; width: 76px; height: 76px; margin: 0 auto 22px; }
+        .ep-ov-check > svg { width: 100%; height: 100%; transform: rotate(-90deg); }
+        .ep-ov-ring {
+          fill: none; stroke: #22c55e; stroke-width: 4; stroke-linecap: round;
+          stroke-dasharray: 226; stroke-dashoffset: 226;
+          animation: ringDraw 0.7s ease forwards 0.15s;
+        }
+        @keyframes ringDraw { to { stroke-dashoffset: 0; } }
+        .ep-ov-disc {
+          position: absolute; inset: 12px; border-radius: 50%;
+          background: linear-gradient(135deg, #22c55e, #16a34a);
+          display: flex; align-items: center; justify-content: center;
+          transform: scale(0); animation: discPop 0.45s cubic-bezier(0.18,0.89,0.32,1.28) forwards 0.45s;
+          box-shadow: 0 6px 18px rgba(34,197,94,0.35);
+        }
+        @keyframes discPop { from { transform: scale(0); } 60% { transform: scale(1.12); } to { transform: scale(1); } }
+        .ep-ov-tick { width: 30px; height: 30px; transform: none !important; }
+        .ep-ov-tick path {
+          fill: none; stroke: #fff; stroke-width: 3; stroke-linecap: round; stroke-linejoin: round;
+          stroke-dasharray: 40; stroke-dashoffset: 40;
+          animation: tickDraw 0.4s ease forwards 0.7s;
+        }
+        @keyframes tickDraw { to { stroke-dashoffset: 0; } }
+
+        .ep-ov-title {
+          font-size: 21px; font-weight: 600; color: #18181b; letter-spacing: -0.3px;
+          margin-bottom: 7px; opacity: 0; animation: fadeUp 0.45s ease forwards 0.7s;
+        }
+        .ep-ov-sub {
+          font-size: 13.5px; color: #6b7280; line-height: 1.5;
+          opacity: 0; animation: fadeUp 0.45s ease forwards 0.82s;
+        }
+        @keyframes fadeUp { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+        .ep-ov-progress {
+          margin-top: 24px; height: 4px; width: 100%;
+          background: #eef0f2; border-radius: 99px; overflow: hidden;
+          opacity: 0; animation: fadeUp 0.4s ease forwards 0.95s;
+        }
+        .ep-ov-bar {
+          height: 100%; width: 100%;
+          background: linear-gradient(90deg, #22c55e, #16a34a);
+          border-radius: 99px;
+          transform-origin: left;
+          transform: scaleX(0);
+          animation: barFill 1.8s linear forwards 1s;
+        }
+        @keyframes barFill { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+
+        .ep-ov-foot {
+          margin-top: 12px; font-size: 11.5px; color: #9ca3af;
+          display: flex; align-items: center; justify-content: center; gap: 6px;
+          opacity: 0; animation: fadeUp 0.4s ease forwards 1s;
+        }
+        .ep-ov-dot { width: 5px; height: 5px; border-radius: 50%; background: #22c55e; animation: pulse 1s ease-in-out infinite; }
+        @keyframes pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
+
         @media (max-width: 760px) {
-          .ep-bento { grid-template-columns: 1fr; }
-          .ep-tile-hero { grid-row: auto; min-height: auto; }
-          .ep-tile-pad { padding: 20px 18px; }
+          .ep-body { grid-template-columns: 1fr; }
+          .ep-form-col { border-right: none; border-bottom: 1px solid #f1f1f1; padding: 20px 18px; }
+          .ep-receipt { padding: 20px 18px 26px; }
+          .ep-band { padding: 22px 20px 20px; }
+          .ep-band-title { font-size: 22px; }
           .ep-footer { padding: 16px 18px; }
           .ep-grid { grid-template-columns: 1fr; }
+          .ep-toast { left: 16px; right: 16px; bottom: 16px; max-width: none; }
         }
       `}</style>
 
       <div className="ep-page">
-        <div className="ep-bento">
+        <div className="ep-shell">
 
-          {/* Hero tile */}
-          <div className="ep-tile-hero">
-            <div>
-              <div className="ep-hero-eyebrow">Expense Entry</div>
-              <div className="ep-hero-title">Add New Expense</div>
-              <div className="ep-hero-sub">Fill in the details to register a recurring or one-time expense record.</div>
-            </div>
-            <div className="ep-hero-foot"><span className="star">*</span> Required fields</div>
+          {/* Header band with accent rail */}
+          <div className="ep-band">
+            <div className="ep-band-eyebrow">Expense Entry</div>
+            <div className="ep-band-title">Add New Expense</div>
+            <div className="ep-band-sub">Fill in the details to register a recurring or one-time expense record. Your entry previews on the right as you type.</div>
           </div>
 
-          {/* Details tile */}
-          <div className="ep-tile ep-tile-pad">
-            <div className="ep-section-divider">Expense details</div>
+          {/* Body: form (left) + live receipt (right) */}
+          <div className="ep-body">
 
-            {/* Expense Type — with autocomplete */}
-            <div className="ep-field">
-              <label className="ep-label">Expense Type <span className="ep-required">*</span></label>
-              <AutocompleteInput
-                value={expenseType}
-                onChange={(val) => { setExpenseType(val); if (expenseTypeError) setExpenseTypeError(""); }}
-                suggestions={existingTypes}
-                placeholder="e.g. Salary, Rent, Utilities…"
-                hasError={!!expenseTypeError}
-                onBlur={() => {}}
-                autoFocus
-              />
-              {expenseTypeError
-                ? <span className="ep-err">⚠ {expenseTypeError}</span>
-                : <span className="ep-hint">The broad category this expense belongs to</span>}
+            {/* ── Form column ── */}
+            <div className="ep-form-col">
+
+              {/* Expense details */}
+              <div>
+                <div className="ep-section-divider">Expense details</div>
+
+                {/* Expense Type — with autocomplete */}
+                <div className="ep-field">
+                  <label className="ep-label">Expense Type <span className="ep-required">*</span></label>
+                  <AutocompleteInput
+                    value={expenseType}
+                    onChange={(val) => { setExpenseType(val); if (expenseTypeError) setExpenseTypeError(""); }}
+                    suggestions={existingTypes}
+                    placeholder="e.g. Salary, Rent, Utilities…"
+                    hasError={!!expenseTypeError}
+                    onBlur={() => {}}
+                    autoFocus
+                  />
+                  {expenseTypeError
+                    ? <span className="ep-err">⚠ {expenseTypeError}</span>
+                    : <span className="ep-hint">The broad category this expense belongs to</span>}
+                </div>
+
+                {/* Expense Name — now with autocomplete */}
+                <div className="ep-field">
+                  <label className="ep-label">Expense Name <span className="ep-required">*</span></label>
+                  <AutocompleteInput
+                    value={expenseName}
+                    onChange={(val) => { setExpenseName(val); if (expenseNameError) setExpenseNameError(""); }}
+                    suggestions={nameSuggestions}
+                    placeholder="e.g. Office Supplies, Rahul Salary…"
+                    hasError={!!expenseNameError}
+                    onBlur={() => {}}
+                  />
+                  {expenseNameError
+                    ? <span className="ep-err">⚠ {expenseNameError}</span>
+                    : <span className="ep-hint">
+                        {expenseType.trim() && nameSuggestions.length > 0
+                          ? `Existing names under "${expenseType.trim()}" — or type a new one`
+                          : "The specific label for this expense record"}
+                      </span>}
+                </div>
+              </div>
+
+              {/* Amount & schedule */}
+              <div>
+                <div className="ep-section-divider">Amount &amp; schedule</div>
+
+                <div className="ep-tab-row">
+                  {TABS.map((tab) => (
+                    <button
+                      key={tab}
+                      className={`ep-tab${type === tab ? " active" : ""}`}
+                      onClick={() => handleTabChange(tab)}
+                    >
+                      {tab === "recurring" ? "🔁 Recurring" : "⚡ One-Time"}
+                    </button>
+                  ))}
+                </div>
+
+                {type === "recurring" ? (
+                  <RecurringForm data={recurringData} errors={errors} onChange={handleRecurringChange} />
+                ) : (
+                  <OneTimeForm data={oneTimeData} errors={errors} onChange={handleOneTimeChange} />
+                )}
+              </div>
             </div>
 
-            {/* Expense Name — now with autocomplete */}
-            <div className="ep-field">
-              <label className="ep-label">Expense Name <span className="ep-required">*</span></label>
-              <AutocompleteInput
-                value={expenseName}
-                onChange={(val) => { setExpenseName(val); if (expenseNameError) setExpenseNameError(""); }}
-                suggestions={nameSuggestions}
-                placeholder="e.g. Office Supplies, Rahul Salary…"
-                hasError={!!expenseNameError}
-                onBlur={() => {}}
-              />
-              {expenseNameError
-                ? <span className="ep-err">⚠ {expenseNameError}</span>
-                : <span className="ep-hint">
-                    {expenseType.trim() && nameSuggestions.length > 0
-                      ? `Existing names under "${expenseType.trim()}" — or type a new one`
-                      : "The specific label for this expense record"}
-                  </span>}
+            {/* ── Live receipt / ledger stub ── */}
+            <div className="ep-receipt">
+              <div className="ep-rc-head">
+                <span className="ep-rc-tag">Draft entry</span>
+                <span className={`ep-rc-pill ${type === "recurring" ? "recurring" : "onetime"}`}>
+                  {type === "recurring" ? "Recurring" : "One-time"}
+                </span>
+              </div>
+
+              <div className={`ep-rc-amount${previewAmountStr ? "" : " empty"}`}>
+                <span className="cur">₹</span>{previewAmountStr || "0"}
+              </div>
+              <div className={`ep-rc-name${expenseName.trim() ? "" : " empty"}`}>
+                {expenseName.trim() || "Expense name"}
+              </div>
+              <div className="ep-rc-type">
+                {expenseType.trim() || "Category"}
+              </div>
+
+              <div className="ep-rc-rule" />
+
+              {type === "recurring" ? (
+                <>
+                  <div className="ep-rc-row">
+                    <span className="k">Frequency</span>
+                    <span className="v">Every month</span>
+                  </div>
+                  <div className="ep-rc-row">
+                    <span className="k">Starts</span>
+                    <span className={`v${previewStart ? "" : " muted"}`}>{previewStart || "—"}</span>
+                  </div>
+                  <div className="ep-rc-row">
+                    <span className="k">Ends</span>
+                    <span className={`v${previewEnd ? "" : " muted"}`}>{previewEnd || "Ongoing"}</span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="ep-rc-row">
+                    <span className="k">Type</span>
+                    <span className="v">Single payment</span>
+                  </div>
+                  <div className="ep-rc-row">
+                    <span className="k">Date</span>
+                    <span className={`v${previewDate ? "" : " muted"}`}>{previewDate || "—"}</span>
+                  </div>
+                </>
+              )}
+
+              <div className="ep-rc-foot">
+                <span className="dot" /> Live preview · saved on submit
+              </div>
             </div>
           </div>
 
-          {/* Amount & schedule tile */}
-          <div className="ep-tile ep-tile-pad">
-            <div className="ep-section-divider">Amount &amp; schedule</div>
-
-            <div className="ep-tab-row">
-              {TABS.map((tab) => (
-                <button
-                  key={tab}
-                  className={`ep-tab${type === tab ? " active" : ""}`}
-                  onClick={() => handleTabChange(tab)}
-                >
-                  {tab === "recurring" ? "🔁 Recurring" : "⚡ One-Time"}
-                </button>
-              ))}
-            </div>
-
-            {type === "recurring" ? (
-              <RecurringForm data={recurringData} errors={errors} onChange={handleRecurringChange} />
-            ) : (
-              <OneTimeForm data={oneTimeData} errors={errors} onChange={handleOneTimeChange} />
-            )}
-          </div>
-
-          {/* Footer tile (spans full width) */}
-          <div className="ep-tile ep-footer" style={{ gridColumn: "1 / -1" }}>
-            <span className="ep-footer-note"><span style={{ color: "#2563eb" }}>*</span> Required fields</span>
+          {/* Footer */}
+          <div className="ep-footer">
+            <span className="ep-footer-note"><span style={{ color: "#dc2626" }}>*</span> Required fields</span>
             <div className="ep-btn-group">
               <button className="ep-btn-cancel" onClick={handleCancel}>Cancel</button>
               <button className="ep-btn-submit" onClick={handleSubmit}>
@@ -474,6 +695,39 @@ const Employee = () => {
 
         </div>
       </div>
+
+      {/* Error toast (bottom-right) */}
+      {toast && (
+        <div className="ep-toast">
+          <span className="ep-toast-ic">!</span>
+          {toast}
+        </div>
+      )}
+
+      {/* Full-screen success overlay */}
+      {success && (
+        <div className="ep-overlay">
+          <div className="ep-ov-panel">
+            <div className="ep-ov-glow" />
+            <div className="ep-ov-check">
+              <svg viewBox="0 0 80 80">
+                <circle className="ep-ov-ring" cx="40" cy="40" r="36" />
+              </svg>
+              <div className="ep-ov-disc">
+                <svg className="ep-ov-tick" viewBox="0 0 24 24">
+                  <path d="M5 12.5l4.5 4.5L19 7.5" />
+                </svg>
+              </div>
+            </div>
+            <div className="ep-ov-title">Expense added</div>
+            <div className="ep-ov-sub">Your expense record has been saved successfully.</div>
+            <div className="ep-ov-progress"><div className="ep-ov-bar" /></div>
+            <div className="ep-ov-foot">
+              <span className="ep-ov-dot" /> Redirecting to expenses&hellip;
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };
