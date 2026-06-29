@@ -120,8 +120,8 @@ function resolveRecordForMonth(mergedEmp, monthIndex, year) {
   return mergedEmp._records.find(r => isMonthActive(r, monthIndex, year)) || null
 }
 
-function buildMonthData(emp, year, paidMap = {}) {
-  let carry = 0
+function buildMonthData(emp, year, paidMap = {}, openingCarry = 0) {
+  let carry = openingCarry
   const result = {}
   FY_MONTHS.forEach((m) => {
     const i     = MONTHS.indexOf(m)
@@ -167,12 +167,21 @@ function recalcEmployee(emp, year, oldData, changedMonth, newPaidValue) {
   return buildMonthData(emp, year, paidMap)
 }
 
-function rebuildAllYearsForEmp(emp) {
+// Build all years for one emp, chaining closing carry → next year's opening.
+function buildChainedYears(emp) {
   const result = {}
+  let openingCarry = 0
   getEmployeeYears(emp).forEach(year => {
-    result[`${emp._id}_${year}`] = buildMonthData(emp, year, buildPaidMapForYear(emp, year))
+    const data = buildMonthData(emp, year, buildPaidMapForYear(emp, year), openingCarry)
+    result[`${emp._id}_${year}`] = data
+    const lastActive = [...FY_MONTHS].reverse().find(m => data[m]?.active)
+    openingCarry = lastActive ? (data[lastActive].carry || 0) : openingCarry
   })
   return result
+}
+
+function rebuildAllYearsForEmp(emp) {
+  return buildChainedYears(emp)
 }
 
 function getEmployeeYears(emp) {
@@ -346,6 +355,7 @@ const DeleteModal = memo(function DeleteModal({ expense, onConfirm, onCancel, de
     </div>
   )
 })
+
 
 const TrashBtn = memo(function TrashBtn({ onClick }) {
   const [hover, setHover] = useState(false)
@@ -561,7 +571,12 @@ const RecurringYearTable = memo(function RecurringYearTable({
     activeEmps.forEach(emp => {
       const data = monthData[`${emp._id}_${year}`] || {}
       const totalPaid = visibleMonths.reduce((s, m) => s + (data[m]?.paid || 0), 0)
-      const totalAmt  = visibleMonths.reduce((s, m) => s + (data[m]?.active ? (data[m]?.amt || 0) : 0), 0)
+      const totalAmt  = visibleMonths.reduce((s, m) => {
+        const c = data[m]
+        if (!c || !c.active) return s
+        const covered = c.paid === 0 && c.carry <= 0   // blank, prepaid
+        return covered ? s : s + (c.amt || 0)
+      }, 0)
       const lastActiveMonth = [...visibleMonths].reverse().find(m => data[m]?.active)
       const endCarry = lastActiveMonth ? (data[lastActiveMonth]?.carry || 0) : 0
       map[emp._id] = { paid: totalPaid, amt: totalAmt, due: Math.max(0, endCarry) }
@@ -605,6 +620,7 @@ const RecurringYearTable = memo(function RecurringYearTable({
           Click any <strong>Amt</strong> cell to change the monthly amount from that month onwards. Carry-forward will recalculate automatically.
         </div>
       )}
+
 
       <div className="emp-table-scroll">
         <table className="emp-table">
@@ -687,6 +703,15 @@ const RecurringYearTable = memo(function RecurringYearTable({
 
                     const hasCarry  = cell.carry > 0
                     const hasCredit = cell.carry < 0
+                    // Covered = no payment made this month, yet prior credit fully
+                    // absorbed what was due (ending balance is zero or still credit).
+                    const isCovered = cell.paid === 0 && cell.carry <= 0
+
+                    // Fully prepaid months are hidden entirely — rendered blank
+                    // like an inactive month, since nothing is owed or paid here.
+                    if (isCovered) {
+                      return <React.Fragment key={m}><td className="td-inactive" colSpan={2}>—</td></React.Fragment>
+                    }
 
                     return (
                       <React.Fragment key={m}>
@@ -746,7 +771,12 @@ const RecurringYearTable = memo(function RecurringYearTable({
                 Grand Total
               </td>
               {visibleMonths.map((m) => {
-                const tAmt  = activeEmps.reduce((s, e) => s + (monthData[`${e._id}_${year}`]?.[m]?.amt  || 0), 0)
+                const tAmt  = activeEmps.reduce((s, e) => {
+                  const c = monthData[`${e._id}_${year}`]?.[m]
+                  if (!c || !c.active) return s
+                  const covered = c.paid === 0 && c.carry <= 0   // blank, prepaid
+                  return covered ? s : s + (c.amt || 0)
+                }, 0)
                 const tPaid = activeEmps.reduce((s, e) => s + (monthData[`${e._id}_${year}`]?.[m]?.paid || 0), 0)
                 return (
                   <React.Fragment key={m}>
@@ -1211,6 +1241,7 @@ const EmployeeTable = () => {
   const [overrideTarget,     setOverrideTarget]     = useState(null)
   const [savingOverride,     setSavingOverride]     = useState(false)
 
+
   const mergedRecurring = useMemo(
     () => mergeRecurringByName(allExpenses.filter(e => e.type === 'recurring')),
     [allExpenses]
@@ -1225,9 +1256,7 @@ const EmployeeTable = () => {
   const buildAllMonthData = useCallback((mergedList) => {
     const initial = {}
     mergedList.forEach(emp => {
-      getEmployeeYears(emp).forEach(year => {
-        initial[`${emp._id}_${year}`] = buildMonthData(emp, year, buildPaidMapForYear(emp, year))
-      })
+      Object.assign(initial, buildChainedYears(emp))
     })
     return initial
   }, [])
@@ -1372,6 +1401,7 @@ const EmployeeTable = () => {
       setSavingOverride(false)
     }
   }, [overrideTarget, resolveRealId])
+
 
   const handleDeleteRequest = useCallback((expense) => { setDeleteTarget(expense) }, [])
 
