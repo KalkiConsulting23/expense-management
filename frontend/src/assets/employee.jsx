@@ -646,7 +646,7 @@ const Employee = () => {
               </div>
 
               <div className="ep-rc-rule" />
-
+              
               {type === "recurring" ? (
                 <>
                   <div className="ep-rc-row">

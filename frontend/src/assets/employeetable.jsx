@@ -98,6 +98,14 @@ function mergeRecurringByName(recurringRecords) {
       (r.amountOverrides || []).map(ov => ({ ...ov, _srcId: r._id }))
     )
 
+    // carryForward is stored per date-range record (so it can change when an
+    // expense's rate/record changes over time). For the checkbox shown on the
+    // merged row, reflect whichever record is active *today*, falling back to
+    // the most recent record if nothing is active right now.
+    const today = new Date()
+    const todaysRecord = sorted.find(r => isMonthActive(r, today.getMonth(), today.getFullYear()))
+    const cfSourceRecord = todaysRecord || sorted[sorted.length - 1]
+
     merged.push({
       _id: `merged::${name}`,
       _merged: true,
@@ -109,6 +117,7 @@ function mergeRecurringByName(recurringRecords) {
       startDate: earliest.startDate,
       endDate: latestEnd ? latestEnd.toISOString() : null,
       amountOverrides: allOverrides,
+      carryForward: cfSourceRecord.carryForward !== false,
     })
   })
 
@@ -136,13 +145,31 @@ function buildMonthData(emp, year, paidMap = {}, openingCarry = 0) {
       result[m] = { amt: 0, paid: 0, carry: 0, active: false }
       return
     }
-    const baseAmount = activeRec.amount
-    const overrides  = activeRec.amountOverrides
-    const baseAmt    = getEffectiveAmount(baseAmount, overrides, i, calYr)
-    const paid       = paidMap[m] !== undefined ? paidMap[m] : 0
-    const totalDue   = baseAmt + carry
-    carry            = totalDue - paid
-    result[m]        = { amt: baseAmt, paid, carry, active: true, _srcId: activeRec._id }
+    // carryForward defaults to true unless explicitly disabled on the record
+    // that is active for this specific month (a merged expense can switch
+    // between records with different settings over its lifetime).
+    const carryForwardEnabled = activeRec.carryForward !== false
+
+    const baseAmount    = activeRec.amount
+    const overrides     = activeRec.amountOverrides
+    const baseAmt       = getEffectiveAmount(baseAmount, overrides, i, calYr)
+    const paid          = paidMap[m] !== undefined ? paidMap[m] : 0
+    // Only pull in the incoming balance from the previous month if THIS
+    // record has carry-forward enabled; otherwise this month starts fresh.
+    const incomingCarry = carryForwardEnabled ? carry : 0
+    const totalDue       = baseAmt + incomingCarry
+    const monthEndCarry  = totalDue - paid
+    result[m]        = {
+      amt: baseAmt,
+      paid,
+      carry: monthEndCarry,
+      active: true,
+      _srcId: activeRec._id,
+      carryForward: carryForwardEnabled,
+    }
+    // Propagate the balance to next month only when carry-forward is on for
+    // this record — this is what stops the amount from compounding.
+    carry = carryForwardEnabled ? monthEndCarry : 0
   })
   return result
 }
@@ -367,6 +394,91 @@ const TrashBtn = memo(function TrashBtn({ onClick }) {
   )
 })
 
+// ─── Carry-Forward Icon Button (matches TrashBtn sizing/style) ───────────────
+const CarryForwardIconBtn = memo(function CarryForwardIconBtn({ on, onClick, saving }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      disabled={saving}
+      title={on ? 'Carry-forward is ON — click to turn off' : 'Carry-forward is OFF — click to turn on'}
+      style={{
+        width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+        border: hover ? `1px solid ${on ? '#c7d2fe' : '#ececec'}` : '1px solid transparent',
+        background: hover ? (on ? '#eef2ff' : '#f3f4f6') : 'transparent',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        cursor: saving ? 'wait' : 'pointer', fontSize: 13, transition: 'all 0.15s',
+        color: on ? '#4f46e5' : '#c5c5c9',
+        opacity: saving ? 0.5 : 1,
+      }}
+    >
+      🔁
+    </button>
+  )
+})
+
+// ─── Carry-Forward Confirm Modal ──────────────────────────────────────────────
+const CarryForwardModal = memo(function CarryForwardModal({ emp, currentlyOn, onConfirm, onCancel, saving }) {
+  const turningOff = currentlyOn
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 1050, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(17,24,39,0.4)', backdropFilter: 'blur(4px)' }}
+      onClick={onCancel}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: '#ffffff', border: '1px solid #ececec',
+          borderRadius: 20, boxShadow: '0 24px 60px rgba(16,24,40,0.22)',
+          padding: '32px 32px 24px', maxWidth: 380, width: '90vw',
+          fontFamily: "'Inter', sans-serif",
+        }}
+      >
+        <div style={{
+          width: 52, height: 52, borderRadius: 14,
+          background: turningOff ? '#fff7ed' : '#eef2ff',
+          border: `1px solid ${turningOff ? '#fed7aa' : '#e0e7ff'}`,
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, marginBottom: 16,
+        }}>
+          {turningOff ? '⏸️' : '🔁'}
+        </div>
+        <div style={{ fontSize: 17, fontWeight: 600, color: '#18181b', marginBottom: 8, letterSpacing: '-0.2px' }}>
+          {turningOff ? 'Turn Off Carry-Forward?' : 'Turn On Carry-Forward?'}
+        </div>
+        <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 12, lineHeight: 1.5 }}>
+          {emp.expenseName || emp.name}
+        </div>
+        <div style={{ background: '#fafafa', border: '1px solid #ececec', borderRadius: 12, padding: '12px 16px', marginBottom: 22, fontSize: 12.5, color: '#6b7280', lineHeight: 1.6 }}>
+          {turningOff
+            ? "Any unpaid balance for this expense will no longer roll into next month's due amount. Each month will start fresh."
+            : "Unpaid balance for this expense will start rolling into next month's due amount again."}
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button onClick={onCancel} disabled={saving} style={{ flex: 1, padding: '9px 0', borderRadius: 10, border: '1px solid #ececec', background: '#fff', color: '#4b5563', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'Inter', sans-serif" }}>Cancel</button>
+          <button
+            onClick={onConfirm}
+            disabled={saving}
+            style={{
+              flex: 1, padding: '9px 0', borderRadius: 10, border: 'none',
+              background: saving ? '#c7d2fe' : (turningOff ? '#d97706' : '#4f46e5'),
+              color: '#fff', fontSize: 13, fontWeight: 500, cursor: saving ? 'wait' : 'pointer',
+              fontFamily: "'Inter', sans-serif", boxShadow: '0 2px 8px rgba(79,70,229,0.2)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            }}
+          >
+            {saving
+              ? (<><div style={{ width: 13, height: 13, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />Saving…</>)
+              : (turningOff ? 'Turn Off' : 'Turn On')
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+})
+
 // ─── Amount Override Modal ────────────────────────────────────────────────────
 const AmountOverrideModal = memo(function AmountOverrideModal({
   emp, month, year, currentAmt, existingOverride, onSave, onRemove, onCancel, saving
@@ -560,7 +672,8 @@ const OneTimeExpensesTable = memo(function OneTimeExpensesTable({ expenses, onDe
 const RecurringYearTable = memo(function RecurringYearTable({
   year, activeEmps, monthData, editing, editVal, inputRef,
   setEditVal, handleEditStart, handleEditCommit, setEditing, savingCell,
-  onDeleteRequest, onAmountOverrideRequest
+  onDeleteRequest, onAmountOverrideRequest,
+  onCarryForwardRequest, savingCarryForwardId
 }) {
   const [period, setPeriod] = useState('full')
   const [amtEditMode, setAmtEditMode] = useState(false)
@@ -659,17 +772,25 @@ const RecurringYearTable = memo(function RecurringYearTable({
             {activeEmps.map((emp) => {
               const key  = `${emp._id}_${year}`
               const data = monthData[key] || {}
+              const cfChecked = emp.carryForward !== false
+              const cfSaving  = savingCarryForwardId === emp._id
 
               return (
                 <tr key={emp._id} className="data-row">
                   <td className="col-name td-emp">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <Avatar name={emp.expenseName || emp.name || '?'} />
                       <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 13, fontWeight: 500, color: '#18181b', fontFamily: "'Inter', sans-serif" }}>
+                        <div
+                          title={emp.expenseName || emp.name}
+                          style={{
+                            fontSize: 13, fontWeight: 500, color: '#18181b', fontFamily: "'Inter', sans-serif",
+                            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                          }}
+                        >
                           {emp.expenseName || emp.name}
                         </div>
-                        <div style={{ fontSize: 10.5, color: '#9ca3af', marginTop: 2, fontFamily: "'Inter', sans-serif" }}>
+                        <div style={{ fontSize: 10.5, color: '#9ca3af', marginTop: 2, fontFamily: "'Inter', sans-serif", overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                           <span style={{ color: '#d97706', fontVariantNumeric: 'tabular-nums' }}>{fmt(emp.amount)}/mo base</span>
                           {emp.amountOverrides?.length > 0 && (
                             <span style={{
@@ -683,7 +804,16 @@ const RecurringYearTable = memo(function RecurringYearTable({
                           )}
                         </div>
                       </div>
-                      <TrashBtn onClick={() => onDeleteRequest(emp)} />
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                        {onCarryForwardRequest && (
+                          <CarryForwardIconBtn
+                            on={cfChecked}
+                            saving={cfSaving}
+                            onClick={() => onCarryForwardRequest(emp)}
+                          />
+                        )}
+                        <TrashBtn onClick={() => onDeleteRequest(emp)} />
+                      </div>
                     </div>
                   </td>
 
@@ -732,11 +862,11 @@ const RecurringYearTable = memo(function RecurringYearTable({
                             )}
                             <span>{fmt(cell.amt)}</span>
                           </div>
-                          {hasCarry  && <div style={{ fontSize: 10, color: '#d97706', marginTop: 2 }}>carry: {fmt(cell.carry)} →</div>}
-                          {hasCredit && <div style={{ fontSize: 10, color: '#16a34a', marginTop: 2 }}>credit: {fmt(Math.abs(cell.carry))} →</div>}
+                          {cell.carryForward !== false && hasCarry  && <div style={{ fontSize: 10, color: '#d97706', marginTop: 2 }}>carry: {fmt(cell.carry)} →</div>}
+                          {cell.carryForward !== false && hasCredit && <div style={{ fontSize: 10, color: '#16a34a', marginTop: 2 }}>credit: {fmt(Math.abs(cell.carry))} →</div>}
                         </td>
                         <td
-                          className={`td-paid${hasCarry ? ' has-carry' : ''}${isSaving ? ' saving' : ''}`}
+                          className={`td-paid${(hasCarry && cell.carryForward !== false) ? ' has-carry' : ''}${isSaving ? ' saving' : ''}`}
                           onClick={() => !isEditing && !isSaving && handleEditStart(emp._id, m, year, cell.paid)}
                           title={isSaving ? 'Saving...' : 'Click to edit paid amount'}
                         >
@@ -750,8 +880,8 @@ const RecurringYearTable = memo(function RecurringYearTable({
                             <div>
                               <div>{fmt(cell.paid)}</div>
                               {isSaving  && <span className="saving-badge">saving…</span>}
-                              {!isSaving && hasCarry  && <span className="carry-badge">+{fmt(cell.carry)}</span>}
-                              {!isSaving && hasCredit && <span className="credit-badge">-{fmt(Math.abs(cell.carry))}</span>}
+                              {!isSaving && cell.carryForward !== false && hasCarry  && <span className="carry-badge">+{fmt(cell.carry)}</span>}
+                              {!isSaving && cell.carryForward !== false && hasCredit && <span className="credit-badge">-{fmt(Math.abs(cell.carry))}</span>}
                             </div>
                           )}
                         </td>
@@ -804,7 +934,9 @@ const RecurringYearTable = memo(function RecurringYearTable({
 const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
   typeName, recurringEmps, oneTimeEmps, monthData, editing, editVal, inputRef,
   setEditVal, handleEditStart, handleEditCommit, setEditing, savingCell,
-  onDeleteRequest, onAmountOverrideRequest, defaultOpen = true
+  onDeleteRequest, onAmountOverrideRequest,
+  onCarryForwardRequest, savingCarryForwardId,
+  defaultOpen = true
 }) {
   const [open, setOpen] = useState(defaultOpen)
   const [oneTimePeriod, setOneTimePeriod] = useState('full')
@@ -849,6 +981,8 @@ const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
                 handleEditCommit={handleEditCommit} setEditing={setEditing}
                 savingCell={savingCell} onDeleteRequest={onDeleteRequest}
                 onAmountOverrideRequest={onAmountOverrideRequest}
+                onCarryForwardRequest={onCarryForwardRequest}
+                savingCarryForwardId={savingCarryForwardId}
               />
             )
           })}
@@ -1241,6 +1375,9 @@ const EmployeeTable = () => {
   const [overrideTarget,     setOverrideTarget]     = useState(null)
   const [savingOverride,     setSavingOverride]     = useState(false)
 
+  const [savingCarryForwardId, setSavingCarryForwardId] = useState(null)
+  const [carryForwardTarget,   setCarryForwardTarget]   = useState(null)
+
 
   const mergedRecurring = useMemo(
     () => mergeRecurringByName(allExpenses.filter(e => e.type === 'recurring')),
@@ -1402,6 +1539,46 @@ const EmployeeTable = () => {
     }
   }, [overrideTarget, resolveRealId])
 
+  // Clicking the carry-forward icon just opens the confirm modal.
+  const handleCarryForwardRequest = useCallback((emp) => {
+    setCarryForwardTarget(emp)
+  }, [])
+
+  // Confirming in the modal actually flips the flag. Resolves the record
+  // active "now" (today's month/FY) so the change applies going forward.
+  const handleCarryForwardConfirm = useCallback(async () => {
+    if (!carryForwardTarget) return
+    const emp      = carryForwardTarget
+    const newVal   = !(emp.carryForward !== false) // flip current state
+    const today    = new Date()
+    const todayFY  = toFYStartYear(today)
+    const todayMon = MONTHS[today.getMonth()]
+    const realId   = resolveRealId(emp._id, todayMon, todayFY)
+    if (!realId) { setCarryForwardTarget(null); return }
+
+    setSavingCarryForwardId(emp._id)
+
+    // Optimistic update
+    setAllExpenses(prev => {
+      const updated = prev.map(e => e._id === realId ? { ...e, carryForward: newVal } : e)
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify(updated))
+      return updated
+    })
+
+    try {
+      await fetch(`${API_BASE}/employee/update-carry-forward/${realId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ carryForward: newVal }),
+      })
+    } catch (err) {
+      console.error('Failed to update carry-forward:', err)
+    } finally {
+      setSavingCarryForwardId(null)
+      setCarryForwardTarget(null)
+    }
+  }, [carryForwardTarget, resolveRealId])
+
 
   const handleDeleteRequest = useCallback((expense) => { setDeleteTarget(expense) }, [])
 
@@ -1485,6 +1662,15 @@ const EmployeeTable = () => {
           saving={savingOverride}
         />
       )}
+      {carryForwardTarget && (
+        <CarryForwardModal
+          emp={carryForwardTarget}
+          currentlyOn={carryForwardTarget.carryForward !== false}
+          onConfirm={handleCarryForwardConfirm}
+          onCancel={() => { if (!savingCarryForwardId) setCarryForwardTarget(null) }}
+          saving={savingCarryForwardId === carryForwardTarget._id}
+        />
+      )}
 
       <div style={{ marginBottom: 28, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div>
@@ -1496,7 +1682,8 @@ const EmployeeTable = () => {
             {totalOneTime} one-time &nbsp;·&nbsp;
             Financial year (Apr–Mar) &nbsp;·&nbsp;
             Click <span style={{ color: '#16a34a', fontWeight: 500 }}>Paid</span> to edit &nbsp;·&nbsp;
-            <span style={{ color: '#4f46e5' }}>✏️ Edit amounts</span> to change monthly rates
+            <span style={{ color: '#4f46e5' }}>✏️ Edit amounts</span> to change monthly rates &nbsp;·&nbsp;
+            <span style={{ color: '#4338ca' }}>CF</span> checkbox toggles carry-forward
           </p>
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -1530,6 +1717,8 @@ const EmployeeTable = () => {
             setEditing={setEditing} savingCell={savingCell}
             onDeleteRequest={handleDeleteRequest}
             onAmountOverrideRequest={handleAmountOverrideRequest}
+            onCarryForwardRequest={handleCarryForwardRequest}
+            savingCarryForwardId={savingCarryForwardId}
             defaultOpen={idx === 0}
           />
         )
@@ -1540,7 +1729,8 @@ const EmployeeTable = () => {
         Scroll right to see all months &nbsp;·&nbsp;
         Click any <span style={{ color: '#16a34a' }}>Paid</span> cell to edit &nbsp;·&nbsp;
         Use <span style={{ color: '#4f46e5' }}>✏️ Edit amounts</span> to change rates mid-year &nbsp;·&nbsp;
-        <span style={{ color: '#4f46e5' }}>●</span> = overridden month
+        <span style={{ color: '#4f46e5' }}>●</span> = overridden month &nbsp;·&nbsp;
+        <span style={{ color: '#4338ca' }}>CF</span> checkbox = carry-forward on/off
       </p>
     </div>
   )
