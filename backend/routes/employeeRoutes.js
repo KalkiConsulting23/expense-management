@@ -1,190 +1,234 @@
-const express = require("express");
+const express = require('express');
 const router = express.Router();
-const Employee = require("../models/employee");
+const Employee = require('../models/employee');
 
-// ── Create Employee ──────────────────────────────────────────────────────
-router.post("/add", async (req, res) => {
+// Coerce assorted truthy/falsy inputs into a real boolean.
+const coerceBool = (v) => {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'string') return v === 'true' || v === 'yes' || v === '1';
+  return !!v;
+};
+
+const isValidId = (id) => /^[0-9a-fA-F]{24}$/.test(id);
+
+// ─── ADD EXPENSE ───
+router.post('/add', async (req, res) => {
   try {
-    const { expenseType, expenseName, type, amount, startDate, endDate, date } = req.body;
-
-    if (!expenseType) {
-      console.log("ERROR: expenseType is missing from req.body");
-      return res.status(400).json({
-        message: "expenseType is missing.",
-        receivedBody: req.body,
-      });
-    }
-
-    const data = {
-      expenseType: expenseType.trim(),
-      expenseName: expenseName.trim(),
+    const {
+      expenseName,
+      expenseType,
       type,
-      amount: Number(amount),
-    };
+      amount,
+      startDate,
+      endDate,
+      date,
+      carryForward,
+    } = req.body;
 
-    if (type === "recurring") {
-      if (!startDate) {
-        return res.status(400).json({ message: "startDate is required for recurring expenses." });
-      }
-      data.startDate = new Date(startDate);
-      if (endDate) data.endDate = new Date(endDate);
-    }
+    const newEmployee = new Employee({
+      expenseName,
+      expenseType,
+      type: type || 'recurring',
+      amount: amount || 0,
+      startDate,
+      endDate: endDate || null,
+      date: date || null,
+      carryForward: carryForward !== undefined ? coerceBool(carryForward) : true,
+      amountOverrides: [],
+      payments: [],
+    });
 
-    if (type === "one-time") {
-      if (!date) {
-        return res.status(400).json({ message: "date is required for one-time expenses." });
-      }
-
-      let parsedDate;
-      if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(date)) {
-        const [day, month, year] = date.split("/");
-        parsedDate = new Date(`${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`);
-      } else if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(date)) {
-        const [day, month, year] = date.split("-");
-        parsedDate = new Date(`${year}-${month.padStart(2, "0")}-${day.padStart(2, "0")}`);
-      } else if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-        parsedDate = new Date(date);
-      } else {
-        parsedDate = new Date(date);
-      }
-
-      if (!parsedDate || isNaN(parsedDate.getTime())) {
-        return res.status(400).json({
-          message: `Invalid date value: "${date}". Use formats: YYYY-MM-DD, DD/MM/YYYY, or DD-MM-YYYY.`,
-        });
-      }
-
-      data.date = parsedDate;
-    }
-
-    const employee = new Employee(data);
-    await employee.save();
-
-    res.status(201).json({ message: "Employee added successfully", employee });
+    await newEmployee.save();
+    res.status(201).json(newEmployee);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(400).json({ message: 'Failed adding expense.', error: err.message });
   }
 });
 
-// ── Get All Employees ────────────────────────────────────────────────────
-router.get("/all", async (req, res) => {
+// ─── GET ALL EXPENSES ───
+router.get('/all', async (req, res) => {
   try {
     const employees = await Employee.find({});
     res.status(200).json(employees);
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Server error', error: err.message });
   }
 });
 
-// ── Update a single month's paid amount ──────────────────────────────────
-router.patch("/update-payment/:id", async (req, res) => {
+// ─── UPDATE PAYMENT (per month/year) ───
+router.patch('/update-payment/:id', async (req, res) => {
   try {
+    const { id } = req.params;
+    if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
+
     const { year, month, paid } = req.body;
+    const employee = await Employee.findById(id);
+    if (!employee) return res.status(404).json({ message: 'Expense not found.' });
 
-    const employee = await Employee.findOne({ _id: req.params.id });
-    if (!employee) return res.status(404).json({ message: "Employee not found" });
-
-    const index = employee.payments.findIndex(
-      (p) => p.year === year && p.month === month
+    const idx = (employee.payments || []).findIndex(
+      p => p.year === Number(year) && p.month === month
     );
 
-    if (index > -1) {
-      employee.payments[index].paid = paid;
+    let updateQuery;
+    if (idx > -1) {
+      updateQuery = { $set: { [`payments.${idx}.paid`]: Number(paid) } };
     } else {
-      employee.payments.push({ year, month, paid });
+      updateQuery = { $push: { payments: { year: Number(year), month, paid: Number(paid) } } };
     }
 
-    await employee.save();
-    res.status(200).json({ message: "Payment updated", payments: employee.payments });
+    const updated = await Employee.findByIdAndUpdate(id, updateQuery, { new: true });
+    res.status(200).json({ message: 'Payment updated.', employee: updated });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Failed updating payment.', error: err.message });
   }
 });
 
-// ── Add or update an amount override for a specific month ─────────────────
-// Body: { year: Number, month: String, amount: Number }
-// Effect: from that month+year onwards the expense uses `amount` instead of
-//         the base amount (until the next override, if any).
-router.patch("/update-amount-override/:id", async (req, res) => {
+// ─── UPDATE AMOUNT OVERRIDE ───
+router.patch('/update-amount-override/:id', async (req, res) => {
   try {
+    const { id } = req.params;
+    if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
+
     const { year, month, amount } = req.body;
+    const employee = await Employee.findById(id);
+    if (!employee) return res.status(404).json({ message: 'Expense not found.' });
 
-    if (!year || !month || amount === undefined) {
-      return res.status(400).json({ message: "year, month, and amount are required." });
-    }
-    if (typeof amount !== "number" || amount <= 0) {
-      return res.status(400).json({ message: "amount must be a positive number." });
-    }
-
-    const employee = await Employee.findById(req.params.id);
-    if (!employee) return res.status(404).json({ message: "Employee not found" });
-    if (employee.type !== "recurring") {
-      return res.status(400).json({ message: "Amount overrides are only supported for recurring expenses." });
-    }
-
-    const index = employee.amountOverrides.findIndex(
-      (ov) => ov.year === year && ov.month === month
+    const idx = (employee.amountOverrides || []).findIndex(
+      ov => ov.year === Number(year) && ov.month === month
     );
 
-    if (index > -1) {
-      // Update existing override for this month
-      employee.amountOverrides[index].amount = amount;
+    let updateQuery;
+    if (idx > -1) {
+      updateQuery = { $set: { [`amountOverrides.${idx}.amount`]: Number(amount) } };
     } else {
-      // Add new override
-      employee.amountOverrides.push({ year, month, amount });
+      updateQuery = { $push: { amountOverrides: { year: Number(year), month, amount: Number(amount) } } };
     }
 
-    await employee.save();
-    res.status(200).json({
-      message: "Amount override saved",
-      amountOverrides: employee.amountOverrides,
-    });
+    const updated = await Employee.findByIdAndUpdate(id, updateQuery, { new: true });
+    res.status(200).json({ message: 'Amount override updated.', employee: updated });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Failed updating amount override.', error: err.message });
   }
 });
 
-// ── Remove an amount override for a specific month ────────────────────────
-// Body: { year: Number, month: String }
-// Effect: that month reverts to the previous override or base amount.
-router.delete("/remove-amount-override/:id", async (req, res) => {
+// ─── REMOVE AMOUNT OVERRIDE ───
+router.delete('/remove-amount-override/:id', async (req, res) => {
   try {
+    const { id } = req.params;
+    if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
+
     const { year, month } = req.body;
 
-    if (!year || !month) {
-      return res.status(400).json({ message: "year and month are required." });
-    }
-
-    const employee = await Employee.findById(req.params.id);
-    if (!employee) return res.status(404).json({ message: "Employee not found" });
-
-    const before = employee.amountOverrides.length;
-    employee.amountOverrides = employee.amountOverrides.filter(
-      (ov) => !(ov.year === year && ov.month === month)
+    const updated = await Employee.findByIdAndUpdate(
+      id,
+      { $pull: { amountOverrides: { year: Number(year), month } } },
+      { new: true }
     );
+    if (!updated) return res.status(404).json({ message: 'Expense not found.' });
 
-    if (employee.amountOverrides.length === before) {
-      return res.status(404).json({ message: "No override found for that month." });
-    }
-
-    await employee.save();
-    res.status(200).json({
-      message: "Amount override removed",
-      amountOverrides: employee.amountOverrides,
-    });
+    res.status(200).json({ message: 'Amount override removed.', employee: updated });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Failed removing amount override.', error: err.message });
   }
 });
 
-// ── Delete Employee ───────────────────────────────────────────────────────
-router.delete("/delete/:id", async (req, res) => {
+// ─── UPDATE CARRY-FORWARD ───
+router.patch('/update-carry-forward/:id', async (req, res) => {
   try {
-    const deleted = await Employee.findOneAndDelete({ _id: req.params.id });
-    if (!deleted) return res.status(404).json({ message: "Employee not found" });
-    res.status(200).json({ message: "Employee deleted successfully" });
+    const { id } = req.params;
+    if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
+
+    const { carryForward } = req.body;
+
+    const updated = await Employee.findByIdAndUpdate(
+      id,
+      { $set: { carryForward: coerceBool(carryForward) } },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ message: 'Expense not found.' });
+
+    res.status(200).json({ message: 'Carry-forward updated.', employee: updated });
   } catch (err) {
-    res.status(500).json({ message: err.message });
+    res.status(500).json({ message: 'Failed updating carry-forward.', error: err.message });
+  }
+});
+
+// ─── CONVERT RECURRING → ONE-TIME ───
+router.patch('/convert-to-onetime/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
+
+    const { amount, date } = req.body;
+
+    const updated = await Employee.findByIdAndUpdate(
+      id,
+      {
+        $set: {
+          type: 'one-time',
+          amount: Number(amount),
+          date,
+          carryForward: true,
+          amountOverrides: [],
+          payments: [],
+          endDate: null,
+        },
+      },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ message: 'Expense not found.' });
+
+    res.status(200).json({ message: 'Converted to one-time.', employee: updated });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed converting to one-time.', error: err.message });
+  }
+});
+
+// ─── EDIT ONE-TIME EXPENSE ───
+// Updates name, amount, type, and/or date of an existing one-time expense.
+// Only fields that are actually sent are updated (partial update).
+router.patch('/update-onetime/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
+
+    const { expenseName, amount, expenseType, date } = req.body;
+
+    const setFields = {};
+    if (expenseName !== undefined) setFields.expenseName = expenseName;
+    if (amount !== undefined)      setFields.amount = Number(amount);
+    if (expenseType !== undefined) setFields.expenseType = expenseType;
+    if (date !== undefined)        setFields.date = date;
+
+    if (Object.keys(setFields).length === 0) {
+      return res.status(400).json({ message: 'No fields to update.' });
+    }
+
+    const updated = await Employee.findByIdAndUpdate(
+      id,
+      { $set: setFields },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ message: 'Expense not found.' });
+
+    res.status(200).json({ message: 'One-time expense updated.', employee: updated });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed updating one-time expense.', error: err.message });
+  }
+});
+
+// ─── DELETE EXPENSE ───
+router.delete('/delete/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
+
+    const deleted = await Employee.findOneAndDelete({ _id: id });
+    if (!deleted) return res.status(404).json({ message: 'Expense not found.' });
+
+    res.status(200).json({ message: 'Expense deleted successfully.', id });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed to delete expense.', error: err.message });
   }
 });
 

@@ -35,15 +35,26 @@ const typeConfig = {
   monthly: { icon: "📅", label: "Monthly" },
 };
 
+// Shared blank-form shape so every reset stays consistent
+const BLANK_FORM = {
+  projectScope: "domestic",
+  projectName: "", projectType: "", currency: "INR",
+  startDate: "", endDate: "", expectedAmount: "",
+  defaultHourlyRate: "", defaultDailyRate: "",
+  daysCycle: "30",
+  includeGst: false,
+};
+
+// Preview helper: how many months forward this cycle pushes earned income
+const monthsForwardPreview = (cycle) => {
+  const c = Number(cycle);
+  if (!c || c <= 15) return 0;
+  return Math.floor(c / 30);
+};
+
 const AddProject = () => {
   const navigate = useNavigate();
-  const [formData, setFormData] = useState({
-    projectScope: "domestic",
-    projectName: "", projectType: "", currency: "INR",
-    startDate: "", endDate: "", expectedAmount: "",
-    defaultHourlyRate: "", defaultDailyRate: "",
-    includeGst: false,
-  });
+  const [formData, setFormData] = useState({ ...BLANK_FORM });
   const [errors, setErrors]   = useState({});
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -128,6 +139,9 @@ const AddProject = () => {
     if (formData.startDate && formData.endDate && formData.endDate < formData.startDate) {
       e.endDate = "End date must be after start date";
     }
+    if (!formData.daysCycle || Number(formData.daysCycle) <= 0) {
+      e.daysCycle = "Enter a valid days cycle";
+    }
     if (formData.projectType === "monthly") {
       if (!formData.expectedAmount || Number(formData.expectedAmount) <= 0) {
         e.expectedAmount = "Expected amount is required";
@@ -179,6 +193,7 @@ const AddProject = () => {
       currency:          formData.currency,
       startDate:         formData.startDate,
       endDate:           formData.endDate,
+      daysCycle:         Number(formData.daysCycle),
     };
 
     setLoading(true);
@@ -200,7 +215,7 @@ const AddProject = () => {
       sessionStorage.removeItem(PROJECT_CACHE_KEY);
 
       setSuccess(true);
-      setFormData({ projectScope: "domestic", projectName: "", projectType: "", currency: "INR", startDate: "", endDate: "", expectedAmount: "", defaultHourlyRate: "", defaultDailyRate: "", includeGst: false });
+      setFormData({ ...BLANK_FORM });
       setErrors({});
       setTimeout(() => {
         setSuccess(false);
@@ -214,7 +229,7 @@ const AddProject = () => {
   };
 
   const handleCancel = () => {
-    setFormData({ projectScope: "domestic", projectName: "", projectType: "", currency: "INR", startDate: "", endDate: "", expectedAmount: "", defaultHourlyRate: "", defaultDailyRate: "", includeGst: false });
+    setFormData({ ...BLANK_FORM });
     setErrors({});
     setSuccess(false);
     navigate("/projecttable");
@@ -236,6 +251,8 @@ const AddProject = () => {
   const inrFmt = (n) => n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 
   const curRate = fxRates[formData.currency] || 1;
+
+  const fwd = monthsForwardPreview(formData.daysCycle);
 
   // ─── Domestic: GST toggle ───
   // Ticking GST folds 18% INTO the visible field value; unticking removes it.
@@ -334,6 +351,7 @@ const AddProject = () => {
         .ap-input.has-prefix { padding-left: 34px; }
         .ap-prefix-wrap { position: relative; display: flex; align-items: center; }
         .ap-prefix { position: absolute; left: 13px; font-size: 14px; color: #9ca3af; pointer-events: none; z-index: 1; }
+        .ap-suffix { position: absolute; right: 13px; font-size: 12.5px; color: #9ca3af; pointer-events: none; }
         .ap-date-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
         .ap-field { display: flex; flex-direction: column; }
         .ap-err { font-size: 11.5px; color: #dc2626; font-weight: 500; margin-top: 5px; }
@@ -359,6 +377,8 @@ const AddProject = () => {
         .ap-gst-label { font-size: 13px; font-weight: 500; color: #4b5563; }
         .ap-gst-hint { font-size: 12px; color: #6b7280; background: #fafafa; padding: 9px 13px; border-radius: 10px; border: 1px dashed #d1d5db; line-height: 1.5; }
         .ap-gst-hint strong { color: #18181b; }
+        .ap-cycle-hint { font-size: 12px; color: #6b7280; background: #fafafa; padding: 9px 13px; border-radius: 10px; border: 1px dashed #d1d5db; line-height: 1.5; margin-top: 7px; }
+        .ap-cycle-hint strong { color: #18181b; }
         .ap-section-label { font-size: 12px; font-weight: 600; color: #6b7280; display: flex; align-items: center; gap: 10px; margin: 4px 0; }
         .ap-section-label::after { content: ''; flex: 1; height: 1px; background: #f1f1f1; }
         .ap-info-box { font-size: 12px; color: #6b7280; background: #fafafa; padding: 12px 15px; border-radius: 10px; border: 1px dashed #d1d5db; line-height: 1.6; }
@@ -533,6 +553,31 @@ const AddProject = () => {
                 <div className="ap-label">End Date <span className="ap-required">*</span></div>
                 <input className={`ap-input${errors.endDate ? " err" : ""}`} name="endDate" value={formData.endDate} onChange={handleChange} type="date" min={formData.startDate} />
                 {errors.endDate && <div className="ap-err">⚠ {errors.endDate}</div>}
+              </div>
+            </div>
+
+            <div className="ap-field">
+              <div className="ap-label">Payment Days Cycle <span className="ap-required">*</span></div>
+              <div className="ap-prefix-wrap">
+                <input
+                  className={`ap-input${errors.daysCycle ? " err" : ""}`}
+                  name="daysCycle"
+                  value={formData.daysCycle}
+                  onChange={handleChange}
+                  placeholder="e.g. 30"
+                  type="number"
+                  min="1"
+                  style={{ paddingRight: 46 }}
+                />
+                <span className="ap-suffix">days</span>
+              </div>
+              {errors.daysCycle && <div className="ap-err">⚠ {errors.daysCycle}</div>}
+              <div className="ap-cycle-hint">
+                {fwd === 0 ? (
+                  <>Earned income stays in the <strong>same month</strong> it was worked.</>
+                ) : (
+                  <>Earned income is forwarded <strong>{fwd} month{fwd > 1 ? "s" : ""}</strong> ahead in the income tracker.</>
+                )}
               </div>
             </div>
 

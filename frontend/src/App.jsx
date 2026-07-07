@@ -13,6 +13,7 @@ const Projectanl    = lazy(() => import('./assets/projectanl'))
 const Expenseanl    = lazy(() => import('./assets/expenseanl'))
 const Expensemaster = lazy(() => import('./assets/expensemaster'))
 const Projectmaster = lazy(() => import('./assets/projectmaster'))
+const Incometracker = lazy(() => import('./assets/incometracker'))
 
 const PageLoader = () => (
   <div style={{
@@ -53,6 +54,8 @@ function App() {
 
             <Route path="/expensemaster"  element={<Expensemaster />} />
             <Route path="/projectmaster"  element={<Projectmaster />} />
+
+            <Route path="/incometracker"  element={<Incometracker />} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>

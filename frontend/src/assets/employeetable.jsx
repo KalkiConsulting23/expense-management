@@ -394,6 +394,17 @@ const TrashBtn = memo(function TrashBtn({ onClick }) {
   )
 })
 
+// ─── Edit Icon Button (pencil) ───────────────────────────────────────────────
+const EditBtn = memo(function EditBtn({ onClick }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button onClick={onClick} onMouseEnter={() => setHover(true)} onMouseLeave={() => setHover(false)} title="Edit expense"
+      style={{ width: 28, height: 28, borderRadius: 8, flexShrink: 0, border: hover ? '1px solid #c7d2fe' : '1px solid transparent', background: hover ? '#eef2ff' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 12, transition: 'all 0.15s', color: hover ? '#4f46e5' : '#9ca3af' }}>
+      ✏️
+    </button>
+  )
+})
+
 // ─── Carry-Forward Icon Button (matches TrashBtn sizing/style) ───────────────
 const CarryForwardIconBtn = memo(function CarryForwardIconBtn({ on, onClick, saving }) {
   const [hover, setHover] = useState(false)
@@ -415,6 +426,30 @@ const CarryForwardIconBtn = memo(function CarryForwardIconBtn({ on, onClick, sav
       }}
     >
       🔁
+    </button>
+  )
+})
+
+// ─── Convert-to-One-Time Icon Button ─────────────────────────────────────────
+const ConvertIconBtn = memo(function ConvertIconBtn({ onClick, saving }) {
+  const [hover, setHover] = useState(false)
+  return (
+    <button
+      onClick={onClick}
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      disabled={saving}
+      title="Convert this recurring expense to a one-time expense"
+      style={{
+        width: 28, height: 28, borderRadius: 8, flexShrink: 0,
+        border: hover ? '1px solid #fde68a' : '1px solid transparent',
+        background: hover ? '#fffbeb' : 'transparent',
+        display: 'flex', alignItems: 'center', justifyContent: 'center',
+        cursor: saving ? 'wait' : 'pointer', fontSize: 13, transition: 'all 0.15s',
+        color: '#d97706', opacity: saving ? 0.5 : 1,
+      }}
+    >
+      ⚡
     </button>
   )
 })
@@ -471,6 +506,210 @@ const CarryForwardModal = memo(function CarryForwardModal({ emp, currentlyOn, on
             {saving
               ? (<><div style={{ width: 13, height: 13, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />Saving…</>)
               : (turningOff ? 'Turn Off' : 'Turn On')
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+})
+
+// ─── Convert to One-Time Modal ────────────────────────────────────────────────
+const ConvertToOneTimeModal = memo(function ConvertToOneTimeModal({
+  emp, defaultAmount, defaultDate, onConfirm, onCancel, saving
+}) {
+  const [amount, setAmount] = useState(String(defaultAmount || ''))
+  const [date, setDate]     = useState(defaultDate || '')
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select() }, 30)
+  }, [])
+
+  const parsedAmt = parseInt(amount)
+  const valid = !isNaN(parsedAmt) && parsedAmt > 0 && !!date
+
+  const recordCount = emp._merged ? emp._records.length : 1
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 1150, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(17,24,39,0.45)', backdropFilter: 'blur(4px)' }}
+      onClick={onCancel}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ background: '#ffffff', border: '1px solid #ececec', borderRadius: 22, boxShadow: '0 24px 60px rgba(16,24,40,0.25)', padding: '30px 30px 24px', maxWidth: 400, width: '92vw', fontFamily: "'Inter', sans-serif" }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 20 }}>
+          <div style={{ width: 46, height: 46, borderRadius: 12, background: '#fffbeb', border: '1px solid #fde68a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>⚡</div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: '#18181b', letterSpacing: '-0.2px' }}>
+              Convert to One-Time
+            </div>
+            <div style={{ fontSize: 12, color: '#6b7280', marginTop: 3 }}>
+              {emp.expenseName || emp.name}
+            </div>
+          </div>
+        </div>
+
+        <div style={{ background: '#fff7ed', border: '1px solid #fed7aa', borderRadius: 12, padding: '10px 14px', marginBottom: 18, fontSize: 11.5, color: '#b45309', lineHeight: 1.6 }}>
+          ⚠️ This removes the recurring expense from the recurring table and adds it as a single one-time entry. Payment history, amount overrides, and carry-forward will be cleared.
+          {recordCount > 1 && (
+            <div style={{ marginTop: 6, color: '#dc2626', fontWeight: 600 }}>
+              Note: this name has {recordCount} date-range records. Only the one active for the chosen date will be converted — the others remain recurring.
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 11.5, fontWeight: 500, color: '#6b7280', letterSpacing: 0.2, display: 'block', marginBottom: 6 }}>
+            One-time amount
+          </label>
+          <div style={{ position: 'relative' }}>
+            <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontVariantNumeric: 'tabular-nums', fontSize: 15, fontWeight: 600 }}>₹</span>
+            <input
+              ref={inputRef}
+              type="number"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              style={{ width: '100%', padding: '11px 12px 11px 28px', border: '1px solid #18181b', borderRadius: 10, background: '#ffffff', fontVariantNumeric: 'tabular-nums', fontSize: 16, fontWeight: 600, color: '#18181b', outline: 'none', boxShadow: '0 0 0 3px rgba(24,24,27,0.06)' }}
+            />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ fontSize: 11.5, fontWeight: 500, color: '#6b7280', letterSpacing: 0.2, display: 'block', marginBottom: 6 }}>
+            Date
+          </label>
+          <input
+            type="date"
+            value={date}
+            onChange={e => setDate(e.target.value)}
+            style={{ width: '100%', padding: '11px 12px', border: '1px solid #ececec', borderRadius: 10, background: '#ffffff', fontSize: 14, color: '#18181b', outline: 'none', fontFamily: "'Inter', sans-serif" }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={onCancel} disabled={saving} style={{ flex: 1, padding: '9px 0', borderRadius: 10, border: '1px solid #ececec', background: '#fff', color: '#4b5563', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'Inter', sans-serif" }}>
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm(parsedAmt, date)}
+            disabled={saving || !valid}
+            style={{
+              flex: 2, padding: '9px 0', borderRadius: 10, border: 'none',
+              background: (saving || !valid) ? '#e5e7eb' : '#d97706',
+              color: (saving || !valid) ? '#9ca3af' : '#fff',
+              fontSize: 13, fontWeight: 600, cursor: (saving || !valid) ? 'not-allowed' : 'pointer',
+              fontFamily: "'Inter', sans-serif", display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            }}
+          >
+            {saving
+              ? <><div style={{ width: 13, height: 13, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />Converting…</>
+              : 'Convert to One-Time'
+            }
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+})
+
+// ─── Edit One-Time Modal ──────────────────────────────────────────────────────
+const EditOneTimeModal = memo(function EditOneTimeModal({ expense, onSave, onCancel, saving }) {
+  const [name, setName]       = useState(expense.expenseName || '')
+  const [amount, setAmount]   = useState(String(expense.amount || ''))
+  const [expType, setExpType] = useState(expense.expenseType || '')
+  const [date, setDate]       = useState(
+    expense.date ? parseUTCDate(expense.date).toISOString().slice(0, 10) : ''
+  )
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    setTimeout(() => { inputRef.current?.focus(); inputRef.current?.select() }, 30)
+  }, [])
+
+  const parsedAmt = parseInt(amount)
+  const valid = name.trim() && !isNaN(parsedAmt) && parsedAmt > 0 && !!date
+
+  return (
+    <div
+      style={{ position: 'fixed', inset: 0, zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(17,24,39,0.45)', backdropFilter: 'blur(4px)' }}
+      onClick={onCancel}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{ background: '#ffffff', border: '1px solid #ececec', borderRadius: 22, boxShadow: '0 24px 60px rgba(16,24,40,0.25)', padding: '30px 30px 24px', maxWidth: 420, width: '92vw', fontFamily: "'Inter', sans-serif" }}
+      >
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 20 }}>
+          <div style={{ width: 46, height: 46, borderRadius: 12, background: '#fffbeb', border: '1px solid #fde68a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>✏️</div>
+          <div>
+            <div style={{ fontSize: 16, fontWeight: 600, color: '#18181b', letterSpacing: '-0.2px' }}>Edit One-Time Expense</div>
+            <div style={{ fontSize: 12, color: '#6b7280', marginTop: 3 }}>Update the details below</div>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 11.5, fontWeight: 500, color: '#6b7280', letterSpacing: 0.2, display: 'block', marginBottom: 6 }}>Expense name</label>
+          <input
+            ref={inputRef}
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            style={{ width: '100%', padding: '11px 12px', border: '1px solid #18181b', borderRadius: 10, background: '#ffffff', fontSize: 14, fontWeight: 500, color: '#18181b', outline: 'none', boxShadow: '0 0 0 3px rgba(24,24,27,0.06)', fontFamily: "'Inter', sans-serif" }}
+          />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 11.5, fontWeight: 500, color: '#6b7280', letterSpacing: 0.2, display: 'block', marginBottom: 6 }}>Expense type</label>
+          <input
+            type="text"
+            value={expType}
+            onChange={e => setExpType(e.target.value)}
+            placeholder="e.g. Travel, Software"
+            style={{ width: '100%', padding: '11px 12px', border: '1px solid #ececec', borderRadius: 10, background: '#ffffff', fontSize: 14, color: '#18181b', outline: 'none', fontFamily: "'Inter', sans-serif" }}
+          />
+        </div>
+
+        <div style={{ marginBottom: 14 }}>
+          <label style={{ fontSize: 11.5, fontWeight: 500, color: '#6b7280', letterSpacing: 0.2, display: 'block', marginBottom: 6 }}>Amount</label>
+          <div style={{ position: 'relative' }}>
+            <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontVariantNumeric: 'tabular-nums', fontSize: 15, fontWeight: 600 }}>₹</span>
+            <input
+              type="number"
+              value={amount}
+              onChange={e => setAmount(e.target.value)}
+              style={{ width: '100%', padding: '11px 12px 11px 28px', border: '1px solid #18181b', borderRadius: 10, background: '#ffffff', fontVariantNumeric: 'tabular-nums', fontSize: 16, fontWeight: 600, color: '#18181b', outline: 'none', boxShadow: '0 0 0 3px rgba(24,24,27,0.06)' }}
+            />
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 20 }}>
+          <label style={{ fontSize: 11.5, fontWeight: 500, color: '#6b7280', letterSpacing: 0.2, display: 'block', marginBottom: 6 }}>Date</label>
+          <input
+            type="date"
+            value={date}
+            onChange={e => setDate(e.target.value)}
+            style={{ width: '100%', padding: '11px 12px', border: '1px solid #ececec', borderRadius: 10, background: '#ffffff', fontSize: 14, color: '#18181b', outline: 'none', fontFamily: "'Inter', sans-serif" }}
+          />
+        </div>
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={onCancel} disabled={saving} style={{ flex: 1, padding: '9px 0', borderRadius: 10, border: '1px solid #ececec', background: '#fff', color: '#4b5563', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'Inter', sans-serif" }}>Cancel</button>
+          <button
+            onClick={() => onSave({ expenseName: name.trim(), amount: parsedAmt, expenseType: expType.trim(), date })}
+            disabled={saving || !valid}
+            style={{
+              flex: 2, padding: '9px 0', borderRadius: 10, border: 'none',
+              background: (saving || !valid) ? '#e5e7eb' : '#18181b',
+              color: (saving || !valid) ? '#9ca3af' : '#fff',
+              fontSize: 13, fontWeight: 600, cursor: (saving || !valid) ? 'not-allowed' : 'pointer',
+              fontFamily: "'Inter', sans-serif", display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+            }}
+          >
+            {saving
+              ? <><div style={{ width: 13, height: 13, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />Saving…</>
+              : 'Save Changes'
             }
           </button>
         </div>
@@ -607,7 +846,7 @@ const AmountOverrideModal = memo(function AmountOverrideModal({
 })
 
 // ─── One-Time table (period-aware) ────────────────────────────────────────────
-const OneTimeExpensesTable = memo(function OneTimeExpensesTable({ expenses, onDeleteRequest, activePeriodMonths }) {
+const OneTimeExpensesTable = memo(function OneTimeExpensesTable({ expenses, onDeleteRequest, onEditRequest, activePeriodMonths }) {
   const filtered = useMemo(() => {
     if (!activePeriodMonths) return expenses
     return expenses.filter(exp => {
@@ -631,7 +870,7 @@ const OneTimeExpensesTable = memo(function OneTimeExpensesTable({ expenses, onDe
           <thead>
             <tr>
               {['#', 'Expense Name', 'Amount', 'Date', ''].map((h, i) => (
-                <th key={i} style={{ background: '#fafafa', color: '#9ca3af', padding: '11px 16px', textAlign: i === 2 ? 'right' : 'left', fontSize: 10.5, fontWeight: 500, letterSpacing: 0.3, borderBottom: '1px solid #f1f1f1', borderRight: i < 4 ? '1px solid #f4f4f5' : 'none', fontFamily: "'Inter', sans-serif", width: i === 4 ? 48 : undefined }}>{h}</th>
+                <th key={i} style={{ background: '#fafafa', color: '#9ca3af', padding: '11px 16px', textAlign: i === 2 ? 'right' : 'left', fontSize: 10.5, fontWeight: 500, letterSpacing: 0.3, borderBottom: '1px solid #f1f1f1', borderRight: i < 4 ? '1px solid #f4f4f5' : 'none', fontFamily: "'Inter', sans-serif", width: i === 4 ? 88 : undefined }}>{h}</th>
               ))}
             </tr>
           </thead>
@@ -649,8 +888,11 @@ const OneTimeExpensesTable = memo(function OneTimeExpensesTable({ expenses, onDe
                 <td style={{ padding: '12px 16px', borderBottom: '1px solid #f4f4f5', fontSize: 12.5, color: '#6b7280', borderRight: '1px solid #f4f4f5', fontFamily: "'Inter', sans-serif" }}>
                   {parseUTCDate(exp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                 </td>
-                <td style={{ padding: '8px 10px', borderBottom: '1px solid #f4f4f5', textAlign: 'center', width: 48 }}>
-                  <TrashBtn onClick={() => onDeleteRequest(exp)} />
+                <td style={{ padding: '8px 10px', borderBottom: '1px solid #f4f4f5', textAlign: 'center', width: 88 }}>
+                  <div style={{ display: 'flex', gap: 2, justifyContent: 'center' }}>
+                    {onEditRequest && <EditBtn onClick={() => onEditRequest(exp)} />}
+                    <TrashBtn onClick={() => onDeleteRequest(exp)} />
+                  </div>
                 </td>
               </tr>
             ))}
@@ -673,7 +915,8 @@ const RecurringYearTable = memo(function RecurringYearTable({
   year, activeEmps, monthData, editing, editVal, inputRef,
   setEditVal, handleEditStart, handleEditCommit, setEditing, savingCell,
   onDeleteRequest, onAmountOverrideRequest,
-  onCarryForwardRequest, savingCarryForwardId
+  onCarryForwardRequest, savingCarryForwardId,
+  onConvertRequest, savingConvertId
 }) {
   const [period, setPeriod] = useState('full')
   const [amtEditMode, setAmtEditMode] = useState(false)
@@ -728,9 +971,10 @@ const RecurringYearTable = memo(function RecurringYearTable({
       </div>
 
       {amtEditMode && (
-        <div style={{ marginBottom: 10, background: '#eef2ff', border: '1px solid #e0e7ff', borderRadius: 10, padding: '8px 14px', fontSize: 11.5, color: '#4338ca', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div style={{ marginBottom: 10, background: '#eef2ff', border: '1px solid #e0e7ff', borderRadius: 10, padding: '8px 14px', fontSize: 11.5, color: '#4338ca', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <span style={{ fontSize: 14 }}>💡</span>
-          Click any <strong>Amt</strong> cell to change the monthly amount from that month onwards. Carry-forward will recalculate automatically.
+          <span>Click any <strong>Amt</strong> cell to change the monthly amount from that month onwards. Carry-forward will recalculate automatically.</span>
+          <span style={{ color: '#b45309' }}>&nbsp;·&nbsp; Use the <strong>⚡</strong> button on a row to convert it into a one-time expense.</span>
         </div>
       )}
 
@@ -805,6 +1049,12 @@ const RecurringYearTable = memo(function RecurringYearTable({
                         </div>
                       </div>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 2, flexShrink: 0 }}>
+                        {amtEditMode && onConvertRequest && (
+                          <ConvertIconBtn
+                            saving={savingConvertId === emp._id}
+                            onClick={() => onConvertRequest(emp)}
+                          />
+                        )}
                         {onCarryForwardRequest && (
                           <CarryForwardIconBtn
                             on={cfChecked}
@@ -936,6 +1186,8 @@ const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
   setEditVal, handleEditStart, handleEditCommit, setEditing, savingCell,
   onDeleteRequest, onAmountOverrideRequest,
   onCarryForwardRequest, savingCarryForwardId,
+  onConvertRequest, savingConvertId,
+  onEditRequest,
   defaultOpen = true
 }) {
   const [open, setOpen] = useState(defaultOpen)
@@ -983,6 +1235,8 @@ const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
                 onAmountOverrideRequest={onAmountOverrideRequest}
                 onCarryForwardRequest={onCarryForwardRequest}
                 savingCarryForwardId={savingCarryForwardId}
+                onConvertRequest={onConvertRequest}
+                savingConvertId={savingConvertId}
               />
             )
           })}
@@ -999,6 +1253,7 @@ const ExpenseTypeGroup = memo(function ExpenseTypeGroup({
               <OneTimeExpensesTable
                 expenses={oneTimeEmps}
                 onDeleteRequest={onDeleteRequest}
+                onEditRequest={onEditRequest}
                 activePeriodMonths={oneTimePeriod === 'full' ? null : oneTimePeriodMonths}
               />
             </div>
@@ -1378,6 +1633,12 @@ const EmployeeTable = () => {
   const [savingCarryForwardId, setSavingCarryForwardId] = useState(null)
   const [carryForwardTarget,   setCarryForwardTarget]   = useState(null)
 
+  const [convertTarget,      setConvertTarget]      = useState(null)
+  const [savingConvertId,    setSavingConvertId]    = useState(null)
+
+  const [editOneTimeTarget,  setEditOneTimeTarget]  = useState(null)
+  const [savingEditOneTime,  setSavingEditOneTime]  = useState(false)
+
 
   const mergedRecurring = useMemo(
     () => mergeRecurringByName(allExpenses.filter(e => e.type === 'recurring')),
@@ -1548,12 +1809,13 @@ const EmployeeTable = () => {
   // active "now" (today's month/FY) so the change applies going forward.
   const handleCarryForwardConfirm = useCallback(async () => {
     if (!carryForwardTarget) return
-    const emp      = carryForwardTarget
-    const newVal   = !(emp.carryForward !== false) // flip current state
-    const today    = new Date()
-    const todayFY  = toFYStartYear(today)
-    const todayMon = MONTHS[today.getMonth()]
-    const realId   = resolveRealId(emp._id, todayMon, todayFY)
+    const emp         = carryForwardTarget
+    const previousVal = emp.carryForward !== false
+    const newVal      = !previousVal // flip current state
+    const today        = new Date()
+    const todayFY       = toFYStartYear(today)
+    const todayMon      = MONTHS[today.getMonth()]
+    const realId         = resolveRealId(emp._id, todayMon, todayFY)
     if (!realId) { setCarryForwardTarget(null); return }
 
     setSavingCarryForwardId(emp._id)
@@ -1566,18 +1828,137 @@ const EmployeeTable = () => {
     })
 
     try {
-      await fetch(`${API_BASE}/employee/update-carry-forward/${realId}`, {
+      const res = await fetch(`${API_BASE}/employee/update-carry-forward/${realId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ carryForward: newVal }),
       })
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
+      const data = await res.json()
+      // Reconcile with whatever the server actually persisted, rather than
+      // blindly trusting the optimistic value — protects against the field
+      // getting silently coerced/dropped server-side.
+      const serverVal = data?.employee?.carryForward ?? data?.carryForward
+      const finalVal  = typeof serverVal === 'boolean' ? serverVal : newVal
+      setAllExpenses(prev => {
+        const updated = prev.map(e => e._id === realId ? { ...e, carryForward: finalVal } : e)
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(updated))
+        return updated
+      })
     } catch (err) {
       console.error('Failed to update carry-forward:', err)
+      // Roll back the optimistic update — the save didn't actually happen.
+      setAllExpenses(prev => {
+        const rolledBack = prev.map(e => e._id === realId ? { ...e, carryForward: previousVal } : e)
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(rolledBack))
+        return rolledBack
+      })
     } finally {
       setSavingCarryForwardId(null)
       setCarryForwardTarget(null)
     }
   }, [carryForwardTarget, resolveRealId])
+
+  // Clicking the ⚡ convert icon opens the confirm/details modal.
+  const handleConvertRequest = useCallback((emp) => {
+    setConvertTarget(emp)
+  }, [])
+
+  // Confirming converts the underlying recurring record into a one-time expense.
+  // For a merged row, only the record active on the chosen date is converted;
+  // the rest stay recurring.
+  const handleConvertConfirm = useCallback(async (amount, date) => {
+    if (!convertTarget) return
+    const emp = convertTarget
+
+    // Resolve which underlying record to convert. For a merged row, use the
+    // record active on the chosen date; fall back to the most recent record.
+    let realId = emp._id
+    if (emp._merged) {
+      const d = new Date(date)
+      const rec = resolveRecordForMonth(emp, d.getMonth(), d.getFullYear())
+        || emp._records[emp._records.length - 1]
+      realId = rec?._id
+    }
+    if (!realId) { setConvertTarget(null); return }
+
+    setSavingConvertId(emp._id)
+    try {
+      const res = await fetch(`${API_BASE}/employee/convert-to-onetime/${realId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount, date }),
+      })
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
+      const data = await res.json()
+      const updatedRec = data?.employee
+
+      setAllExpenses(prev => {
+        const updated = prev.map(e =>
+          e._id === realId
+            ? (updatedRec || { ...e, type: 'one-time', amount, date, startDate: undefined, endDate: null, amountOverrides: [], payments: [], carryForward: true })
+            : e
+        )
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(updated))
+        return updated
+      })
+      setConvertTarget(null)
+    } catch (err) {
+      console.error('Failed to convert to one-time:', err)
+    } finally {
+      setSavingConvertId(null)
+    }
+  }, [convertTarget, resolveRealId])
+
+  // Clicking the ✏️ edit icon on a one-time row opens the edit modal.
+  const handleEditOneTimeRequest = useCallback((expense) => {
+    setEditOneTimeTarget(expense)
+  }, [])
+
+  // Saving persists the edited one-time fields and reconciles with the server.
+  const handleEditOneTimeSave = useCallback(async (fields) => {
+    if (!editOneTimeTarget) return
+    const realId = editOneTimeTarget._id
+    setSavingEditOneTime(true)
+
+    // Optimistic update
+    setAllExpenses(prev => {
+      const updated = prev.map(e => e._id === realId ? { ...e, ...fields } : e)
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify(updated))
+      return updated
+    })
+
+    try {
+      const res = await fetch(`${API_BASE}/employee/update-onetime/${realId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(fields),
+      })
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
+      const data = await res.json()
+      const updatedRec = data?.employee
+
+      // Reconcile with whatever the server actually persisted.
+      if (updatedRec) {
+        setAllExpenses(prev => {
+          const updated = prev.map(e => e._id === realId ? updatedRec : e)
+          sessionStorage.setItem(CACHE_KEY, JSON.stringify(updated))
+          return updated
+        })
+      }
+      setEditOneTimeTarget(null)
+    } catch (err) {
+      console.error('Failed to edit one-time expense:', err)
+      // Roll back the optimistic update on failure.
+      setAllExpenses(prev => {
+        const rolledBack = prev.map(e => e._id === realId ? editOneTimeTarget : e)
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(rolledBack))
+        return rolledBack
+      })
+    } finally {
+      setSavingEditOneTime(false)
+    }
+  }, [editOneTimeTarget])
 
 
   const handleDeleteRequest = useCallback((expense) => { setDeleteTarget(expense) }, [])
@@ -1671,6 +2052,27 @@ const EmployeeTable = () => {
           saving={savingCarryForwardId === carryForwardTarget._id}
         />
       )}
+      {convertTarget && (
+        <ConvertToOneTimeModal
+          emp={convertTarget}
+          defaultAmount={convertTarget.amount}
+          defaultDate={(() => {
+            const d = convertTarget.startDate ? parseUTCDate(convertTarget.startDate) : new Date()
+            return d.toISOString().slice(0, 10)
+          })()}
+          onConfirm={handleConvertConfirm}
+          onCancel={() => { if (!savingConvertId) setConvertTarget(null) }}
+          saving={savingConvertId === convertTarget._id}
+        />
+      )}
+      {editOneTimeTarget && (
+        <EditOneTimeModal
+          expense={editOneTimeTarget}
+          onSave={handleEditOneTimeSave}
+          onCancel={() => { if (!savingEditOneTime) setEditOneTimeTarget(null) }}
+          saving={savingEditOneTime}
+        />
+      )}
 
       <div style={{ marginBottom: 28, display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap' }}>
         <div>
@@ -1719,6 +2121,9 @@ const EmployeeTable = () => {
             onAmountOverrideRequest={handleAmountOverrideRequest}
             onCarryForwardRequest={handleCarryForwardRequest}
             savingCarryForwardId={savingCarryForwardId}
+            onConvertRequest={handleConvertRequest}
+            savingConvertId={savingConvertId}
+            onEditRequest={handleEditOneTimeRequest}
             defaultOpen={idx === 0}
           />
         )

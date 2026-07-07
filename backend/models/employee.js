@@ -40,6 +40,13 @@ const employeeSchema = new mongoose.Schema(
       type: [amountOverrideSchema],
       default: [],
     },
+    // Whether an unpaid monthly balance for this expense should roll into
+    // the following month's due amount. Only meaningful for recurring
+    // expenses. Defaults to true (existing/legacy behaviour).
+    carryForward: {
+      type: Boolean,
+      default: true,
+    },
     startDate: {
       type: Date,
       required: [function () { return this.type === "recurring"; }, "Start date is required"],

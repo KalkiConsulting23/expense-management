@@ -15,6 +15,7 @@ router.post('/add', async (req, res) => {
       defaultHourlyRate,
       defaultDailyRate,
       projectScope,
+      daysCycle,
     } = req.body;
 
     const newProject = new Project({
@@ -28,6 +29,9 @@ router.post('/add', async (req, res) => {
       defaultDailyRate: defaultDailyRate || 0,
       currency: currency || 'INR',
       projectScope: projectScope || 'domestic',
+      daysCycle: (daysCycle !== undefined && daysCycle !== null && daysCycle !== '')
+        ? Number(daysCycle)
+        : 30,
       monthlyBreakdowns: []
     });
    

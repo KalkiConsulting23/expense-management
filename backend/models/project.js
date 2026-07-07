@@ -12,7 +12,10 @@ const projectSchema = new mongoose.Schema({
   defaultDailyRate:  { type: Number, default: 0 }, // used by daily (stored in INR)
   currency:          { type: String, default: 'INR' },
   projectScope:      { type: String, enum: ['domestic', 'international'], default: 'domestic' },
-   
+
+  // Billing period length in days (e.g. 30 = bill every 30 days).
+  daysCycle: { type: Number, default: 30 },
+
   monthlyBreakdowns: [{
     month: { type: String, required: true },
     year:  { type: Number, required: true },

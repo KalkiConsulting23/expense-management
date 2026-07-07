@@ -23,6 +23,7 @@ const Navbar = () => {
     '/projectmaster': 'Project Master',
     '/projectanl': 'Project Analytics',
     '/expenseanl': 'Expense Analytics',
+    '/incometracker': 'Income Tracker',
   }
   const pageTitle = TITLE_MAP[location.pathname] || 'Dashboard'
 
@@ -56,6 +57,16 @@ const Navbar = () => {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="3" width="20" height="14" rx="2"/>
           <path d="M8 21h8M12 17v4"/>
+        </svg>
+      ),
+    },
+    {
+      label: 'Income Tracker',
+      path: '/incometracker',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="12" y1="1" x2="12" y2="23"/>
+          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
         </svg>
       ),
     },
@@ -350,8 +361,8 @@ const Navbar = () => {
         <div className="navbar-inner">
           <span className="nav-section-label">Navigation</span>
 
-          {/* Regular nav items */}
-          {navItems.slice(0, 3).map((item) => (
+          {/* Regular nav items: Expense, Sales, Projects, Income Tracker */}
+          {navItems.slice(0, 4).map((item) => (
             <button
               key={item.path}
               className={`nav-btn${location.pathname === item.path ? ' active' : ''}`}
@@ -364,7 +375,7 @@ const Navbar = () => {
 
           {/* Expense Master */}
           {(() => {
-            const item = navItems[3]
+            const item = navItems[4]
             return (
               <button
                 key={item.path}
@@ -379,7 +390,7 @@ const Navbar = () => {
 
           {/* Project Master */}
           {(() => {
-            const item = navItems[4]
+            const item = navItems[5]
             return (
               <button
                 key={item.path}
