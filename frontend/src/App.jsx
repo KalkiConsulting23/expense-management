@@ -17,7 +17,7 @@ const Incometracker = lazy(() => import('./assets/incometracker'))
 const Borrow        = lazy(() => import('./assets/borrow'))
 const Borrowform    = lazy(() => import('./assets/borrowform'))
 const Lending       = lazy(() => import('./assets/Lending'))
-const Lendingform   = lazy(() => import('./assets/lendingform'))
+const Lendingform   = lazy(() => import('./assets/Lendingform'))
 
 const PageLoader = () => (
   <div style={{
