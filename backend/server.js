@@ -17,11 +17,15 @@ app.use(express.urlencoded({ extended: true }));
 const employeeRoutes = require("./routes/employeeRoutes");
 const projectRoutes = require("./routes/projectRoute");
 const salesRoutes = require("./routes/salesRoute");
+const borrowRoutes = require("./routes/borrowRoutes");
+const lendingRoutes = require("./routes/lendingRoutes");
 
 // Routes are now completely direct and accessible without auth checks
 app.use("/api/employee", employeeRoutes);
 app.use("/api/project", projectRoutes);
 app.use("/api/sales", salesRoutes);
+app.use("/api/borrow", borrowRoutes);
+app.use("/api/lending", lendingRoutes);
 
 const PORT = process.env.PORT || 5000;
 const MONGO_URI = process.env.MONGO_URI;

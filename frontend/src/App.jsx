@@ -14,6 +14,10 @@ const Expenseanl    = lazy(() => import('./assets/expenseanl'))
 const Expensemaster = lazy(() => import('./assets/expensemaster'))
 const Projectmaster = lazy(() => import('./assets/projectmaster'))
 const Incometracker = lazy(() => import('./assets/incometracker'))
+const Borrow        = lazy(() => import('./assets/borrow'))
+const Borrowform    = lazy(() => import('./assets/borrowform'))
+const Lending       = lazy(() => import('./assets/Lending'))
+const Lendingform   = lazy(() => import('./assets/lendingform'))
 
 const PageLoader = () => (
   <div style={{
@@ -56,6 +60,10 @@ function App() {
             <Route path="/projectmaster"  element={<Projectmaster />} />
 
             <Route path="/incometracker"  element={<Incometracker />} />
+            <Route path="/borrow"         element={<Borrow />} />
+            <Route path="/borrowform"     element={<Borrowform />} />
+            <Route path="/lending"        element={<Lending />} />
+            <Route path="/lendingform"    element={<Lendingform />} />
 
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
