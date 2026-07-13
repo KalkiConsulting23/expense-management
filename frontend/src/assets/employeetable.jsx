@@ -736,8 +736,8 @@ const AmountOverrideModal = memo(function AmountOverrideModal({
   }
 
   const monthIdx   = FY_MONTHS.indexOf(month)
-  const isBaseAmt  = !existingOverride && parseInt(val) === emp.amount
-  const noChange   = existingOverride && parseInt(val) === existingOverride.amount
+  const initialVal = existingOverride ? existingOverride.amount : currentAmt
+  const noChange = parseInt(val) === initialVal
 
   return (
     <div
@@ -818,12 +818,12 @@ const AmountOverrideModal = memo(function AmountOverrideModal({
           )}
           <button
             onClick={handleSave}
-            disabled={saving || isBaseAmt || noChange || !val || parseInt(val) <= 0}
+            disabled={saving || !val || parseInt(val) <= 0}
             style={{
               flex: 2, minWidth: 120, padding: '9px 0', borderRadius: 10, border: 'none',
-              background: (saving || isBaseAmt || noChange || !val || parseInt(val) <= 0) ? '#e5e7eb' : '#18181b',
-              color: (saving || isBaseAmt || noChange || !val || parseInt(val) <= 0) ? '#9ca3af' : '#fff',
-              fontSize: 13, fontWeight: 600, cursor: (saving || isBaseAmt || noChange) ? 'not-allowed' : 'pointer',
+              background: (saving || !val || parseInt(val) <= 0) ? '#e5e7eb' : '#18181b',
+              color: (saving || !val || parseInt(val) <= 0) ? '#9ca3af' : '#fff',
+              fontSize: 13, fontWeight: 600, cursor: (saving || !val || parseInt(val) <= 0) ? 'not-allowed' : 'pointer',
               fontFamily: "'Inter', sans-serif", display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
               transition: 'all 0.15s',
             }}
@@ -835,9 +835,9 @@ const AmountOverrideModal = memo(function AmountOverrideModal({
           </button>
         </div>
 
-        {(isBaseAmt || noChange) && !saving && (
+        {noChange && !saving && (
           <div style={{ marginTop: 10, fontSize: 11, color: '#9ca3af', textAlign: 'center' }}>
-            {isBaseAmt ? 'This matches the base amount — no override needed.' : 'No change from existing override.'}
+            No change from the current amount for this month.
           </div>
         )}
       </div>
