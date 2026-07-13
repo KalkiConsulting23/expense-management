@@ -848,12 +848,16 @@ const AmountOverrideModal = memo(function AmountOverrideModal({
 // ─── One-Time table (period-aware) ────────────────────────────────────────────
 const OneTimeExpensesTable = memo(function OneTimeExpensesTable({ expenses, onDeleteRequest, onEditRequest, activePeriodMonths }) {
   const filtered = useMemo(() => {
-    if (!activePeriodMonths) return expenses
-    return expenses.filter(exp => {
-      const d = parseUTCDate(exp.date)
-      const mName = MONTHS[d.getMonth()]
-      return activePeriodMonths.includes(mName)
-    })
+    const base = !activePeriodMonths
+      ? expenses
+      : expenses.filter(exp => {
+          const d = parseUTCDate(exp.date)
+          const mName = MONTHS[d.getMonth()]
+          return activePeriodMonths.includes(mName)
+        })
+    return [...base].sort(
+      (a, b) => parseUTCDate(a.date).getTime() - parseUTCDate(b.date).getTime()
+    )
   }, [expenses, activePeriodMonths])
 
   if (!filtered || filtered.length === 0) return null
@@ -1700,40 +1704,38 @@ const EmployeeTable = () => {
   }, [])
 
   const handleEditCommit = useCallback(async () => {
-    setEditing(prev => {
-      if (!prev) return prev
-      const { empId, month, year } = prev
-      const newVal = Math.max(0, parseInt(editVal) || 0)
-      const calYr  = calYearForFYMonth(year, month)
+    if (!editing) return
+    const { empId, month, year } = editing
+    const newVal = Math.max(0, parseInt(editVal) || 0)
+    const calYr  = calYearForFYMonth(year, month)
 
-      const realId = resolveRealId(empId, month, year)
-      if (!realId) return null
+    const realId = resolveRealId(empId, month, year)
+    setEditing(null)
+    if (!realId) return
 
-      setAllExpenses(exps => {
-        const updatedExps = exps.map(e => {
-          if (e._id !== realId) return e
-          const existingPaymentIdx = (e.payments || []).findIndex(p => p.year === calYr && p.month === month)
-          const updatedPayments = [...(e.payments || [])]
-          if (existingPaymentIdx > -1) {
-            updatedPayments[existingPaymentIdx] = { ...updatedPayments[existingPaymentIdx], paid: newVal }
-          } else {
-            updatedPayments.push({ year: calYr, month, paid: newVal })
-          }
-          return { ...e, payments: updatedPayments }
-        })
-        sessionStorage.setItem(CACHE_KEY, JSON.stringify(updatedExps))
-        return updatedExps
+    setAllExpenses(exps => {
+      const updatedExps = exps.map(e => {
+        if (e._id !== realId) return e
+        const existingPaymentIdx = (e.payments || []).findIndex(p => p.year === calYr && p.month === month)
+        const updatedPayments = [...(e.payments || [])]
+        if (existingPaymentIdx > -1) {
+          updatedPayments[existingPaymentIdx] = { ...updatedPayments[existingPaymentIdx], paid: newVal }
+        } else {
+          updatedPayments.push({ year: calYr, month, paid: newVal })
+        }
+        return { ...e, payments: updatedPayments }
       })
-
-      setSavingCell({ empId, month, year })
-      fetch(`${API_BASE}/employee/update-payment/${realId}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ year: calYr, month, paid: newVal }),
-      }).catch(err => console.error('Failed to save payment:', err)).finally(() => setSavingCell(null))
-      return null
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify(updatedExps))
+      return updatedExps
     })
-  }, [editVal, resolveRealId])
+
+    setSavingCell({ empId, month, year })
+    fetch(`${API_BASE}/employee/update-payment/${realId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ year: calYr, month, paid: newVal }),
+    }).catch(err => console.error('Failed to save payment:', err)).finally(() => setSavingCell(null))
+  }, [editing, editVal, resolveRealId])
 
   const handleAmountOverrideRequest = useCallback((emp, month, year, currentAmt) => {
     setOverrideTarget({ emp, month, year, currentAmt })
