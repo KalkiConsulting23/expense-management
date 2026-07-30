@@ -1,9 +1,10 @@
 const mongoose = require("mongoose");
 
 const paymentSchema = new mongoose.Schema({
-  year:  { type: Number, required: true },
-  month: { type: String, required: true },
-  paid:  { type: Number, required: true },
+  year:   { type: Number, required: true },
+  month:  { type: String, required: true },
+  paid:   { type: Number, required: true },
+  source: { type: String, enum: ["Home", "Office"], default: "Office" },
 }, { _id: false });
 
 // Stores a mid-year amount change starting from a specific month+year
@@ -15,6 +16,11 @@ const amountOverrideSchema = new mongoose.Schema({
 
 const employeeSchema = new mongoose.Schema(
   {
+    userId: {
+      type: String,
+      required: true,
+      index: true,
+    },
     expenseType: {
       type: String,
       required: [true, "Expense type is required"],
@@ -22,6 +28,13 @@ const employeeSchema = new mongoose.Schema(
     expenseName: {
       type: String,
       required: [true, "Expense name is required"],
+    },
+    // Broad segregation bucket: "Home" or "Office".
+    // Defaults to "Office" for existing/legacy records.
+    category: {
+      type: String,
+      enum: ["Home", "Office"],
+      default: "Office",
     },
     type: {
       type: String,

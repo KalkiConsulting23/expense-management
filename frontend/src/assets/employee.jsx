@@ -113,6 +113,9 @@ const Employee = () => {
   // scoped to the chosen type.
   const [existingExpenses, setExistingExpenses] = useState([]);
 
+  // Broad segregation bucket: "Home" or "Office". Defaults to Office.
+  const [category, setCategory] = useState("Office");
+
   const [type, setType] = useState("recurring");
 
   const [recurringData, setRecurringData] = useState({ amount: "", startDate: "", endDate: "" });
@@ -224,10 +227,10 @@ const Employee = () => {
 
     let payload;
     if (type === "recurring") {
-      payload = { type: "recurring", expenseType: expenseType.trim(), expenseName: expenseName.trim(), amount: Number(recurringData.amount), startDate: recurringData.startDate, endDate: recurringData.endDate || null };
+      payload = { type: "recurring", category, expenseType: expenseType.trim(), expenseName: expenseName.trim(), amount: Number(recurringData.amount), startDate: recurringData.startDate, endDate: recurringData.endDate || null };
     } else {
       const parsed = parseDate(oneTimeData.date);
-      payload = { type: "one-time", expenseType: expenseType.trim(), expenseName: expenseName.trim(), amount: Number(oneTimeData.amount), date: parsed.toISOString().split("T")[0] };
+      payload = { type: "one-time", category, expenseType: expenseType.trim(), expenseName: expenseName.trim(), amount: Number(oneTimeData.amount), date: parsed.toISOString().split("T")[0] };
     }
 
     try {
@@ -358,6 +361,7 @@ const Employee = () => {
         .ep-rc-name { font-size: 13.5px; font-weight: 600; color: #374151; min-height: 18px; }
         .ep-rc-name.empty { color: #cbd5e1; font-weight: 500; }
         .ep-rc-type { font-size: 11.5px; color: #9ca3af; margin-top: 2px; min-height: 16px; }
+        .ep-rc-cat { font-size: 11.5px; color: #6b7280; margin-top: 4px; min-height: 16px; display: inline-flex; align-items: center; gap: 5px; font-weight: 500; }
 
         .ep-rc-rule { height: 1px; background: repeating-linear-gradient(90deg, #e5e7eb 0 6px, transparent 6px 12px); margin: 18px 0 14px; }
 
@@ -392,6 +396,13 @@ const Employee = () => {
         .ep-tab { flex: 1; padding: 9px 0; border: none; background: transparent; cursor: pointer; font-size: 12.5px; font-weight: 500; color: #6b7280; font-family: 'Inter', sans-serif; transition: all 0.15s; border-radius: 7px; }
         .ep-tab:hover { color: #18181b; }
         .ep-tab.active { color: #18181b; background: #ffffff; font-weight: 600; box-shadow: 0 1px 2px rgba(16,24,40,0.06); }
+
+        /* Category toggle (Home / Office) */
+        .ep-cat-row { display: flex; gap: 10px; }
+        .ep-cat-btn { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; padding: 12px 0; border-radius: 10px; border: 1px solid #ececec; background: #fafafa; color: #6b7280; font-family: 'Inter', sans-serif; font-size: 13.5px; font-weight: 500; cursor: pointer; transition: all 0.15s; }
+        .ep-cat-btn:hover { border-color: #d1d5db; color: #18181b; }
+        .ep-cat-btn.active { border-color: #18181b; background: #18181b; color: #fff; font-weight: 600; box-shadow: 0 2px 8px rgba(24,24,27,0.18); }
+        .ep-cat-ic { font-size: 15px; }
 
         .ep-footer { display: flex; justify-content: space-between; align-items: center; padding: 18px 26px; border-top: 1px solid #f1f1f1; background: #fcfcfd; }
         .ep-footer-note { font-size: 12px; color: #9ca3af; }
@@ -564,6 +575,25 @@ const Employee = () => {
               <div>
                 <div className="ep-section-divider">Expense details</div>
 
+                {/* Category toggle: Home / Office */}
+                <div className="ep-field">
+                  <label className="ep-label">Category <span className="ep-required">*</span></label>
+                  <div className="ep-cat-row">
+                    {["Home", "Office"].map((c) => (
+                      <button
+                        key={c}
+                        type="button"
+                        className={`ep-cat-btn${category === c ? " active" : ""}`}
+                        onClick={() => setCategory(c)}
+                      >
+                        <span className="ep-cat-ic">{c === "Home" ? "🏠" : "🏢"}</span>
+                        {c}
+                      </button>
+                    ))}
+                  </div>
+                  <span className="ep-hint">Which bucket this expense belongs to</span>
+                </div>
+
                 {/* Expense Type — with autocomplete */}
                 <div className="ep-field">
                   <label className="ep-label">Expense Type <span className="ep-required">*</span></label>
@@ -643,6 +673,9 @@ const Employee = () => {
               </div>
               <div className="ep-rc-type">
                 {expenseType.trim() || "Category"}
+              </div>
+              <div className="ep-rc-cat">
+                {category === "Home" ? "🏠 Home" : "🏢 Office"}
               </div>
 
               <div className="ep-rc-rule" />

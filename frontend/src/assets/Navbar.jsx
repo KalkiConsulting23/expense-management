@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { UserButton, useUser } from '@clerk/clerk-react'
 
 const Navbar = () => {
   const navigate = useNavigate()
@@ -9,7 +10,7 @@ const Navbar = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const dropdownRef = useRef(null)
   const analyticsRef = useRef(null)
-
+  const { user } = useUser()
   // Map current route → top bar label. Default to "Dashboard".
   const TITLE_MAP = {
     '/': 'Dashboard',
@@ -519,10 +520,10 @@ const Navbar = () => {
         </div>
 
         <div className="sidebar-user">
-          <div className="user-avatar">PS</div>
+          <UserButton afterSignOutUrl="/" />
           <div className="user-meta">
-            <span className="user-name">Prasang Sachdev</span>
-            <span className="user-role">Owner</span>
+            <span className="user-name">{user?.fullName || user?.username || 'Account'}</span>
+            <span className="user-role">{user?.primaryEmailAddress?.emailAddress || ''}</span>
           </div>
         </div>
       </nav>

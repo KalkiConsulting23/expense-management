@@ -2,6 +2,11 @@ const mongoose = require('mongoose')
 
 const lendingSchema = new mongoose.Schema(
   {
+    userId: {
+      type: String,
+      required: true,
+      index: true,
+    },
     name: {
       type: String,
       required: true,

@@ -1,8 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const Employee = require('../models/employee');
+const { getAuth } = require('@clerk/express');
 
-// Coerce assorted truthy/falsy inputs into a real boolean.
 const coerceBool = (v) => {
   if (typeof v === 'boolean') return v;
   if (typeof v === 'string') return v === 'true' || v === 'yes' || v === '1';
@@ -11,23 +11,22 @@ const coerceBool = (v) => {
 
 const isValidId = (id) => /^[0-9a-fA-F]{24}$/.test(id);
 
+const normaliseCategory = (c) => (['Home', 'Office'].includes(c) ? c : 'Office');
+
 // ─── ADD EXPENSE ───
 router.post('/add', async (req, res) => {
   try {
+    const { userId } = getAuth(req);
     const {
-      expenseName,
-      expenseType,
-      type,
-      amount,
-      startDate,
-      endDate,
-      date,
-      carryForward,
+      expenseName, expenseType, category, type, amount,
+      startDate, endDate, date, carryForward,
     } = req.body;
 
     const newEmployee = new Employee({
+      userId,
       expenseName,
       expenseType,
+      category: normaliseCategory(category),
       type: type || 'recurring',
       amount: amount || 0,
       startDate,
@@ -45,10 +44,11 @@ router.post('/add', async (req, res) => {
   }
 });
 
-// ─── GET ALL EXPENSES ───
+// ─── GET ALL EXPENSES (scoped) ───
 router.get('/all', async (req, res) => {
   try {
-    const employees = await Employee.find({});
+    const { userId } = getAuth(req);
+    const employees = await Employee.find({ userId });
     res.status(200).json(employees);
   } catch (err) {
     res.status(500).json({ message: 'Server error', error: err.message });
@@ -58,11 +58,12 @@ router.get('/all', async (req, res) => {
 // ─── UPDATE PAYMENT (per month/year) ───
 router.patch('/update-payment/:id', async (req, res) => {
   try {
+    const { userId } = getAuth(req);
     const { id } = req.params;
     if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
 
-    const { year, month, paid } = req.body;
-    const employee = await Employee.findById(id);
+    const { year, month, paid, source } = req.body;
+    const employee = await Employee.findOne({ _id: id, userId });
     if (!employee) return res.status(404).json({ message: 'Expense not found.' });
 
     const idx = (employee.payments || []).findIndex(
@@ -72,11 +73,14 @@ router.patch('/update-payment/:id', async (req, res) => {
     let updateQuery;
     if (idx > -1) {
       updateQuery = { $set: { [`payments.${idx}.paid`]: Number(paid) } };
+      if (source) updateQuery.$set[`payments.${idx}.source`] = source;
     } else {
-      updateQuery = { $push: { payments: { year: Number(year), month, paid: Number(paid) } } };
+      const entry = { year: Number(year), month, paid: Number(paid) };
+      if (source) entry.source = source;
+      updateQuery = { $push: { payments: entry } };
     }
 
-    const updated = await Employee.findByIdAndUpdate(id, updateQuery, { new: true });
+    const updated = await Employee.findOneAndUpdate({ _id: id, userId }, updateQuery, { new: true });
     res.status(200).json({ message: 'Payment updated.', employee: updated });
   } catch (err) {
     res.status(500).json({ message: 'Failed updating payment.', error: err.message });
@@ -86,11 +90,12 @@ router.patch('/update-payment/:id', async (req, res) => {
 // ─── UPDATE AMOUNT OVERRIDE ───
 router.patch('/update-amount-override/:id', async (req, res) => {
   try {
+    const { userId } = getAuth(req);
     const { id } = req.params;
     if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
 
     const { year, month, amount } = req.body;
-    const employee = await Employee.findById(id);
+    const employee = await Employee.findOne({ _id: id, userId });
     if (!employee) return res.status(404).json({ message: 'Expense not found.' });
 
     const idx = (employee.amountOverrides || []).findIndex(
@@ -104,7 +109,7 @@ router.patch('/update-amount-override/:id', async (req, res) => {
       updateQuery = { $push: { amountOverrides: { year: Number(year), month, amount: Number(amount) } } };
     }
 
-    const updated = await Employee.findByIdAndUpdate(id, updateQuery, { new: true });
+    const updated = await Employee.findOneAndUpdate({ _id: id, userId }, updateQuery, { new: true });
     res.status(200).json({ message: 'Amount override updated.', employee: updated });
   } catch (err) {
     res.status(500).json({ message: 'Failed updating amount override.', error: err.message });
@@ -114,13 +119,14 @@ router.patch('/update-amount-override/:id', async (req, res) => {
 // ─── REMOVE AMOUNT OVERRIDE ───
 router.delete('/remove-amount-override/:id', async (req, res) => {
   try {
+    const { userId } = getAuth(req);
     const { id } = req.params;
     if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
 
     const { year, month } = req.body;
 
-    const updated = await Employee.findByIdAndUpdate(
-      id,
+    const updated = await Employee.findOneAndUpdate(
+      { _id: id, userId },
       { $pull: { amountOverrides: { year: Number(year), month } } },
       { new: true }
     );
@@ -135,13 +141,14 @@ router.delete('/remove-amount-override/:id', async (req, res) => {
 // ─── UPDATE CARRY-FORWARD ───
 router.patch('/update-carry-forward/:id', async (req, res) => {
   try {
+    const { userId } = getAuth(req);
     const { id } = req.params;
     if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
 
     const { carryForward } = req.body;
 
-    const updated = await Employee.findByIdAndUpdate(
-      id,
+    const updated = await Employee.findOneAndUpdate(
+      { _id: id, userId },
       { $set: { carryForward: coerceBool(carryForward) } },
       { new: true }
     );
@@ -153,16 +160,69 @@ router.patch('/update-carry-forward/:id', async (req, res) => {
   }
 });
 
+// ─── UPDATE CATEGORY (single record) ───
+router.patch('/update-category/:id', async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const { id } = req.params;
+    if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
+
+    const { category } = req.body;
+    if (!['Home', 'Office'].includes(category)) {
+      return res.status(400).json({ message: 'Category must be Home or Office.' });
+    }
+
+    const updated = await Employee.findOneAndUpdate(
+      { _id: id, userId },
+      { $set: { category } },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ message: 'Expense not found.' });
+
+    res.status(200).json({ message: 'Category updated.', employee: updated });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed updating category.', error: err.message });
+  }
+});
+
+// ─── UPDATE CATEGORY (bulk — for merged recurring records sharing a name) ───
+router.patch('/update-category-bulk', async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const { ids, category } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ message: 'ids array is required.' });
+    }
+    if (ids.some(id => !isValidId(id))) {
+      return res.status(400).json({ message: 'One or more invalid IDs.' });
+    }
+    if (!['Home', 'Office'].includes(category)) {
+      return res.status(400).json({ message: 'Category must be Home or Office.' });
+    }
+
+    await Employee.updateMany(
+      { _id: { $in: ids }, userId },
+      { $set: { category } }
+    );
+    const updated = await Employee.find({ _id: { $in: ids }, userId });
+
+    res.status(200).json({ message: 'Categories updated.', employees: updated });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed updating categories.', error: err.message });
+  }
+});
+
 // ─── CONVERT RECURRING → ONE-TIME ───
 router.patch('/convert-to-onetime/:id', async (req, res) => {
   try {
+    const { userId } = getAuth(req);
     const { id } = req.params;
     if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
 
     const { amount, date } = req.body;
 
-    const updated = await Employee.findByIdAndUpdate(
-      id,
+    const updated = await Employee.findOneAndUpdate(
+      { _id: id, userId },
       {
         $set: {
           type: 'one-time',
@@ -185,10 +245,9 @@ router.patch('/convert-to-onetime/:id', async (req, res) => {
 });
 
 // ─── EDIT ONE-TIME EXPENSE ───
-// Updates name, amount, type, and/or date of an existing one-time expense.
-// Only fields that are actually sent are updated (partial update).
 router.patch('/update-onetime/:id', async (req, res) => {
   try {
+    const { userId } = getAuth(req);
     const { id } = req.params;
     if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
 
@@ -204,8 +263,8 @@ router.patch('/update-onetime/:id', async (req, res) => {
       return res.status(400).json({ message: 'No fields to update.' });
     }
 
-    const updated = await Employee.findByIdAndUpdate(
-      id,
+    const updated = await Employee.findOneAndUpdate(
+      { _id: id, userId },
       { $set: setFields },
       { new: true }
     );
@@ -220,10 +279,11 @@ router.patch('/update-onetime/:id', async (req, res) => {
 // ─── DELETE EXPENSE ───
 router.delete('/delete/:id', async (req, res) => {
   try {
+    const { userId } = getAuth(req);
     const { id } = req.params;
     if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
 
-    const deleted = await Employee.findOneAndDelete({ _id: id });
+    const deleted = await Employee.findOneAndDelete({ _id: id, userId });
     if (!deleted) return res.status(404).json({ message: 'Expense not found.' });
 
     res.status(200).json({ message: 'Expense deleted successfully.', id });

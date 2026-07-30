@@ -2,7 +2,11 @@ const mongoose = require('mongoose')
 
 const salesSchema = new mongoose.Schema(
   {
-    // userId removed completely to bypass auth restrictions
+    userId: {
+      type: String,
+      required: true,
+      index: true,
+    },
     name: {
       type: String,
       required: true,

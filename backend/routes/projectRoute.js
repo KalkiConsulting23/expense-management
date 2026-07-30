@@ -1,10 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const Project = require('../models/project');
+const { getAuth } = require('@clerk/express');
 
 // ─── ADD PROJECT ───
 router.post('/add', async (req, res) => {
   try {
+    const { userId } = getAuth(req);
     const {
       projectName,
       projectType,
@@ -19,7 +21,7 @@ router.post('/add', async (req, res) => {
     } = req.body;
 
     const newProject = new Project({
-      // userId removed entirely
+      userId,
       projectName,
       projectType,
       startDate,
@@ -34,7 +36,7 @@ router.post('/add', async (req, res) => {
         : 30,
       monthlyBreakdowns: []
     });
-   
+
     await newProject.save();
     res.status(201).json(newProject);
   } catch (err) {
@@ -42,11 +44,11 @@ router.post('/add', async (req, res) => {
   }
 });
 
-// ─── GET ALL PROJECTS ───
+// ─── GET ALL PROJECTS (scoped) ───
 router.get('/all', async (req, res) => {
   try {
-    // Removed userId filtering to fetch all records locally
-    const projects = await Project.find({});
+    const { userId } = getAuth(req);
+    const projects = await Project.find({ userId });
     res.status(200).json(projects);
   } catch (err) {
     res.status(500).json({ message: "Server error", error: err.message });
@@ -56,11 +58,11 @@ router.get('/all', async (req, res) => {
 // ─── SYNC MONTH ───
 router.patch('/sync-month/:id', async (req, res) => {
   try {
+    const { userId } = getAuth(req);
     const { id } = req.params;
     const { month, year, amt, paid, metrics } = req.body;
 
-    // Removed userId constraint check
-    const project = await Project.findOne({ _id: id });
+    const project = await Project.findOne({ _id: id, userId });
     if (!project) return res.status(404).json({ message: "Project not found" });
 
     const existingIndex = project.monthlyBreakdowns.findIndex(
@@ -89,7 +91,11 @@ router.patch('/sync-month/:id', async (req, res) => {
       updateQuery = { $push: { monthlyBreakdowns: newBreakdown } };
     }
 
-    const updatedProject = await Project.findByIdAndUpdate(id, updateQuery, { new: true });
+    const updatedProject = await Project.findOneAndUpdate(
+      { _id: id, userId },
+      updateQuery,
+      { new: true }
+    );
     res.status(200).json(updatedProject);
   } catch (err) {
     res.status(500).json({ message: "Failed updating breakdown.", error: err.message });
@@ -99,15 +105,14 @@ router.patch('/sync-month/:id', async (req, res) => {
 // ─── DELETE PROJECT ───
 router.delete('/delete/:id', async (req, res) => {
   try {
+    const { userId } = getAuth(req);
     const { id } = req.params;
 
-    // Guard against malformed IDs that would crash Mongoose
     if (!id.match(/^[0-9a-fA-F]{24}$/)) {
       return res.status(400).json({ message: "Invalid project ID." });
     }
 
-    // Removed userId requirement to look purely for the item ID
-    const deleted = await Project.findOneAndDelete({ _id: id });
+    const deleted = await Project.findOneAndDelete({ _id: id, userId });
 
     if (!deleted) {
       return res.status(404).json({ message: "Project not found." });

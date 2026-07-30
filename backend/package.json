@@ -14,6 +14,7 @@
   "type": "commonjs",
   "dependencies": {
     "@clerk/backend": "^3.5.0",
+    "@clerk/express": "^2.1.44",
     "bcryptjs": "^3.0.3",
     "cloudflare": "^6.3.0",
     "cors": "^2.8.6",

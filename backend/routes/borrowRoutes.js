@@ -1,11 +1,13 @@
 const express = require('express')
 const router = express.Router()
 const Borrow = require('../models/borrow')
+const { getAuth } = require('@clerk/express')
 
-// GET all borrow records (newest first)
+// GET all borrow records (newest first) — scoped to the signed-in user
 router.get('/', async (req, res) => {
   try {
-    const records = await Borrow.find().sort({ date: -1, createdAt: -1 })
+    const { userId } = getAuth(req)
+    const records = await Borrow.find({ userId }).sort({ date: -1, createdAt: -1 })
     res.json(records)
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -15,7 +17,8 @@ router.get('/', async (req, res) => {
 // GET single borrow record
 router.get('/:id', async (req, res) => {
   try {
-    const record = await Borrow.findById(req.params.id)
+    const { userId } = getAuth(req)
+    const record = await Borrow.findOne({ _id: req.params.id, userId })
     if (!record) return res.status(404).json({ error: 'Borrow record not found' })
     res.json(record)
   } catch (err) {
@@ -26,9 +29,11 @@ router.get('/:id', async (req, res) => {
 // POST create a new borrow record
 router.post('/', async (req, res) => {
   try {
+    const { userId } = getAuth(req)
     const { name, amount, rateOfInterest, tenure, date } = req.body
 
     const record = new Borrow({
+      userId,
       name,
       amount: Number(amount),
       rateOfInterest: Number(rateOfInterest),
@@ -47,6 +52,7 @@ router.post('/', async (req, res) => {
 // PATCH update basic fields on a borrow record
 router.patch('/:id', async (req, res) => {
   try {
+    const { userId } = getAuth(req)
     const { name, amount, rateOfInterest, tenure, date } = req.body
     const update = {}
     if (name !== undefined) update.name = name
@@ -55,10 +61,11 @@ router.patch('/:id', async (req, res) => {
     if (tenure !== undefined) update.tenure = Number(tenure)
     if (date !== undefined) update.date = new Date(date)
 
-    const updated = await Borrow.findByIdAndUpdate(req.params.id, update, {
-      new: true,
-      runValidators: true,
-    })
+    const updated = await Borrow.findOneAndUpdate(
+      { _id: req.params.id, userId },
+      update,
+      { new: true, runValidators: true }
+    )
     if (!updated) return res.status(404).json({ error: 'Borrow record not found' })
     res.json(updated)
   } catch (err) {
@@ -70,6 +77,7 @@ router.patch('/:id', async (req, res) => {
 // Accepts principalPaid and/or interestPaid; only provided fields are updated.
 router.patch('/:id/update-payment', async (req, res) => {
   try {
+    const { userId } = getAuth(req)
     const { year, month, principalPaid, interestPaid } = req.body
     const y = Number(year)
     if (isNaN(y) || !month) {
@@ -88,7 +96,7 @@ router.patch('/:id/update-payment', async (req, res) => {
       return res.status(400).json({ error: 'paid amounts must be non-negative numbers' })
     }
 
-    const record = await Borrow.findById(req.params.id)
+    const record = await Borrow.findOne({ _id: req.params.id, userId })
     if (!record) return res.status(404).json({ error: 'Borrow record not found' })
 
     const idx = record.payments.findIndex(pay => pay.year === y && pay.month === month)
@@ -114,7 +122,8 @@ router.patch('/:id/update-payment', async (req, res) => {
 // DELETE a borrow record
 router.delete('/:id', async (req, res) => {
   try {
-    const deleted = await Borrow.findByIdAndDelete(req.params.id)
+    const { userId } = getAuth(req)
+    const deleted = await Borrow.findOneAndDelete({ _id: req.params.id, userId })
     if (!deleted) return res.status(404).json({ error: 'Borrow record not found' })
     res.json({ message: 'Borrow record deleted', id: req.params.id })
   } catch (err) {
