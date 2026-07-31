@@ -76,6 +76,16 @@ const employeeSchema = new mongoose.Schema(
       type: Date,
       required: [function () { return this.type === "one-time"; }, "Date is required"],
     },
+    // One-time payment tracking (mirrors recurring payments[] but single-shot)
+    otPaid: {
+      type: Boolean,
+      default: false,
+    },
+    otSource: {
+      type: String,
+      enum: ["Home", "Office"],
+      default: "Office",
+    },
   },
   { timestamps: true }
 );

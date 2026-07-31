@@ -35,6 +35,8 @@ router.post('/add', async (req, res) => {
       carryForward: carryForward !== undefined ? coerceBool(carryForward) : true,
       amountOverrides: [],
       payments: [],
+      otPaid: false,
+      otSource: normaliseCategory(category),
     });
 
     await newEmployee.save();
@@ -232,6 +234,8 @@ router.patch('/convert-to-onetime/:id', async (req, res) => {
           amountOverrides: [],
           payments: [],
           endDate: null,
+          otPaid: false,
+          otSource: 'Office',
         },
       },
       { new: true }
@@ -273,6 +277,30 @@ router.patch('/update-onetime/:id', async (req, res) => {
     res.status(200).json({ message: 'One-time expense updated.', employee: updated });
   } catch (err) {
     res.status(500).json({ message: 'Failed updating one-time expense.', error: err.message });
+  }
+});
+
+// ─── MARK ONE-TIME PAID / UNPAID ───
+router.patch('/pay-onetime/:id', async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const { id } = req.params;
+    if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
+
+    const { paid, source } = req.body;
+    const setFields = { otPaid: coerceBool(paid) };
+    if (source && ['Home', 'Office'].includes(source)) setFields.otSource = source;
+
+    const updated = await Employee.findOneAndUpdate(
+      { _id: id, userId, type: 'one-time' },
+      { $set: setFields },
+      { new: true }
+    );
+    if (!updated) return res.status(404).json({ message: 'One-time expense not found.' });
+
+    res.status(200).json({ message: 'One-time payment updated.', employee: updated });
+  } catch (err) {
+    res.status(500).json({ message: 'Failed updating one-time payment.', error: err.message });
   }
 });
 

@@ -1617,26 +1617,35 @@ const MonthViewModal = memo(function MonthViewModal({
         _paySource: existingPay?.source || (emp.category === 'Home' ? 'Home' : 'Office'),
       }
     })
-    const oneTime = oneTimeRows.map(exp => ({
-      _id: exp._id,
-      name: exp.expenseName,
-      expenseType: exp.expenseType,
-      category: exp.category || 'Office',
-      kind: 'one-time',
-      amt: exp.amount,
-      paid: exp.amount,
-      due: 0,
-      overridden: false,
-      sub: parseUTCDate(exp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
-    }))
+    const oneTime = oneTimeRows.map(exp => {
+      const isPaid = !!exp.otPaid
+      return {
+        _id: exp._id,
+        name: exp.expenseName,
+        expenseType: exp.expenseType,
+        category: exp.category || 'Office',
+        kind: 'one-time',
+        amt: exp.amount,
+        paid: isPaid ? exp.amount : 0,
+        due: isPaid ? 0 : exp.amount,
+        overridden: false,
+        sub: parseUTCDate(exp.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+        _realId: exp._id,
+        _calYr: calYr,
+        _monthName: monthName,
+        _isPaid: isPaid,
+        _paySource: exp.otSource || (exp.category === 'Home' ? 'Home' : 'Office'),
+      }
+    })
     return [...recurring, ...oneTime]
   }, [recurringRows, oneTimeRows, calYr, monthName, monthIndex])
 
-  const recurringTotal = recurringRows.reduce((s, r) => s + (r.cell.amt  || 0), 0)
+    const recurringTotal = recurringRows.reduce((s, r) => s + (r.cell.amt  || 0), 0)
   const recurringPaid  = recurringRows.reduce((s, r) => s + (r.cell.paid || 0), 0)
   const oneTimeTotal   = oneTimeRows.reduce((s, r) => s + r.amount, 0)
+  const oneTimePaid    = oneTimeRows.reduce((s, r) => s + (r.otPaid ? r.amount : 0), 0)
   const totalDue     = recurringTotal + oneTimeTotal
-  const totalPaid    = recurringPaid + oneTimeTotal
+  const totalPaid    = recurringPaid + oneTimePaid
   const totalBalance = Math.max(0, totalDue - totalPaid)
 
   // ─── Budget chain: Home & Office pools, chained across the FY ──────────────
@@ -1659,6 +1668,16 @@ const MonthViewModal = memo(function MonthViewModal({
           const src = p.source || 'Office'
           if (p.year === cy && p.month === mName && src === pool) spent += (p.paid || 0)
         })
+      })
+      // One-time expenses paid from this pool in this month
+      allExpenses.forEach(e => {
+        if (e.type !== 'one-time' || !e.otPaid) return
+        const src = e.otSource || 'Office'
+        if (src !== pool) return
+        const d = parseUTCDate(e.date)
+        if (d.getMonth() === MONTHS.indexOf(mName) && d.getFullYear() === cy) {
+          spent += (e.amount || 0)
+        }
       })
       return spent
     }
@@ -1860,7 +1879,7 @@ const MonthViewModal = memo(function MonthViewModal({
                   </div>
                   <div style={{ display: 'flex', gap: 6, marginBottom: 8, fontSize: 10.5, color: '#6b7280', flexWrap: 'wrap' }}>
                     <span>Open: <b style={{ color: '#374151' }}>{fmt(c.opening)}</b></span>
-                    <span>· Avail: <b style={{ color: '#374151' }}>{fmt(c.available)}</b></span>
+                    <span>· Avail: <b style={{ color: '#374151' }}>{fmt(Math.max(0, c.surplus))}</b></span>
                     <span>· Spent: <b style={{ color: '#374151' }}>{fmt(c.spent)}</b></span>
                     {c.xfer !== 0 && <span>· Xfer: <b style={{ color: c.xfer > 0 ? '#16a34a' : '#dc2626' }}>{c.xfer > 0 ? '+' : ''}{fmt(c.xfer)}</b></span>}
                   </div>
@@ -1999,7 +2018,7 @@ const MonthViewModal = memo(function MonthViewModal({
                           {row.due > 0 ? fmt(row.due) : <span style={{ color: '#16a34a', fontSize: 11 }}>✓ Paid</span>}
                         </td>
                         <td style={{ ...tdBase, textAlign: 'center', width: 110 }}>
-                          {row.kind === 'recurring' && onMarkPaid ? (
+                          {onMarkPaid ? (
                             savingPaidId === row._id ? (
                               <span style={{ display: 'inline-block', width: 15, height: 15, border: '2px solid #e0e7ff', borderTopColor: '#4f46e5', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
                             ) : (
@@ -2310,7 +2329,41 @@ const writePayment = useCallback(async (realId, calYr, monthName, payValue, sour
     }
   }, [])
 
- const handleMarkPaid = useCallback((row, source) => {
+const payOneTime = useCallback(async (realId, paid, source) => {
+    setAllExpenses(exps => {
+      const updated = exps.map(e => {
+        if (e._id !== realId) return e
+        return { ...e, otPaid: paid, otSource: source || e.otSource || 'Office' }
+      })
+      sessionStorage.setItem(CACHE_KEY, JSON.stringify(updated))
+      return updated
+    })
+    try {
+      const res = await fetch(`${API_BASE}/employee/pay-onetime/${realId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ paid, source }),
+      })
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
+    } catch (err) {
+      console.error('Failed to save one-time payment:', err)
+    }
+  }, [])
+
+
+const handleMarkPaid = useCallback((row, source) => {
+    // ── One-time expenses ──
+    if (row.kind === 'one-time') {
+      if (!row._realId) return
+      const nextPaid = !row._isPaid
+      const src = source || row._paySource || 'Office'
+      setSavingPaidId(row._id)
+      payOneTime(row._realId, nextPaid, src)
+        .finally(() => setSavingPaidId(null))
+      return
+    }
+
+    // ── Recurring expenses ──
     if (row.kind !== 'recurring' || !row._realId) return
     const key = `${row._realId}::${row._calYr}::${row._monthName}`
     if (row._isPaid) {
@@ -2329,7 +2382,7 @@ const writePayment = useCallback(async (realId, calYr, monthName, payValue, sour
     setSavingPaidId(row._id)
     writePayment(row._realId, row._calYr, row._monthName, payValue, source)
       .finally(() => setSavingPaidId(null))
-  }, [writePayment])
+  }, [writePayment, payOneTime])
 
 
 
