@@ -1537,11 +1537,15 @@ const MonthViewModal = memo(function MonthViewModal({
   onSetBudget,
   onTransfer,
   onDeleteTransfer, 
+  onAddAmount,
 }) {
   const [editMode, setEditMode] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const [deletingTransferId, setDeletingTransferId] = useState(null)
+  const [showAddAmount, setShowAddAmount] = useState(false)
+  const [addForm, setAddForm] = useState({ name: '', amount: '', expenseType: '', category: 'Office' })
+  const [savingAdd, setSavingAdd] = useState(false)
 
   const [editCell, setEditCell] = useState(null)  // { rowId, field } field: 'paid'|'amt'
   const [editVal, setEditVal]   = useState('')
@@ -1715,6 +1719,117 @@ const MonthViewModal = memo(function MonthViewModal({
     <div
       style={{ position: 'fixed', inset: 0, zIndex: 500, background: '#f7f7f8', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
     >
+     
+     {showAddAmount && (
+        <div
+          style={{ position: 'fixed', inset: 0, zIndex: 1350, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(17,24,39,0.45)', backdropFilter: 'blur(4px)' }}
+          onClick={() => !savingAdd && setShowAddAmount(false)}
+        >
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', border: '1px solid #ececec', borderRadius: 22, boxShadow: '0 24px 60px rgba(16,24,40,0.25)', padding: '30px 30px 24px', maxWidth: 420, width: '92vw', fontFamily: "'Inter', sans-serif" }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 14, marginBottom: 20 }}>
+              <div style={{ width: 46, height: 46, borderRadius: 12, background: '#fffbeb', border: '1px solid #fde68a', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, flexShrink: 0 }}>⚡</div>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 600, color: '#18181b', letterSpacing: '-0.2px' }}>Add Amount</div>
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 3 }}>One-time expense for {monthFull} {calYr}</div>
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11.5, fontWeight: 500, color: '#6b7280', letterSpacing: 0.2, display: 'block', marginBottom: 6 }}>Expense name</label>
+              <input
+                type="text"
+                autoFocus
+                value={addForm.name}
+                onChange={e => setAddForm(f => ({ ...f, name: e.target.value }))}
+                placeholder="e.g. Courier, Repair"
+                style={{ width: '100%', padding: '11px 12px', border: '1px solid #18181b', borderRadius: 10, background: '#fff', fontSize: 14, fontWeight: 500, color: '#18181b', outline: 'none', boxShadow: '0 0 0 3px rgba(24,24,27,0.06)', fontFamily: "'Inter', sans-serif" }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11.5, fontWeight: 500, color: '#6b7280', letterSpacing: 0.2, display: 'block', marginBottom: 6 }}>Expense type</label>
+              <input
+                type="text"
+                value={addForm.expenseType}
+                onChange={e => setAddForm(f => ({ ...f, expenseType: e.target.value }))}
+                placeholder="e.g. Travel, Office Supplies"
+                style={{ width: '100%', padding: '11px 12px', border: '1px solid #ececec', borderRadius: 10, background: '#fff', fontSize: 14, color: '#18181b', outline: 'none', fontFamily: "'Inter', sans-serif" }}
+              />
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 11.5, fontWeight: 500, color: '#6b7280', letterSpacing: 0.2, display: 'block', marginBottom: 6 }}>Amount</label>
+              <div style={{ position: 'relative' }}>
+                <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontVariantNumeric: 'tabular-nums', fontSize: 15, fontWeight: 600 }}>₹</span>
+                <input
+                  type="number"
+                  value={addForm.amount}
+                  onChange={e => setAddForm(f => ({ ...f, amount: e.target.value }))}
+                  placeholder="0"
+                  style={{ width: '100%', padding: '11px 12px 11px 28px', border: '1px solid #18181b', borderRadius: 10, background: '#fff', fontVariantNumeric: 'tabular-nums', fontSize: 16, fontWeight: 600, color: '#18181b', outline: 'none', boxShadow: '0 0 0 3px rgba(24,24,27,0.06)' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <label style={{ fontSize: 11.5, fontWeight: 500, color: '#6b7280', letterSpacing: 0.2, display: 'block', marginBottom: 6 }}>Pool</label>
+              <div style={{ display: 'flex', gap: 10 }}>
+                {['Home', 'Office'].map(pool => {
+                  const active = addForm.category === pool
+                  const accent = pool === 'Home' ? '#16a34a' : '#4f46e5'
+                  return (
+                    <button
+                      key={pool}
+                      onClick={() => setAddForm(f => ({ ...f, category: pool }))}
+                      style={{ flex: 1, padding: '10px 0', borderRadius: 10, cursor: 'pointer', fontSize: 12.5, fontWeight: 600, fontFamily: "'Inter', sans-serif", border: '1px solid', borderColor: active ? accent : '#ececec', background: active ? (pool === 'Home' ? '#f0fdf4' : '#eef2ff') : '#fff', color: active ? (pool === 'Home' ? '#16a34a' : '#4338ca') : '#6b7280' }}
+                    >
+                      {pool === 'Home' ? '🏠 Home' : '🏢 Office'}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setShowAddAmount(false)} disabled={savingAdd} style={{ flex: 1, padding: '9px 0', borderRadius: 10, border: '1px solid #ececec', background: '#fff', color: '#4b5563', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'Inter', sans-serif" }}>Cancel</button>
+              <button
+                onClick={async () => {
+                  const amt = parseInt(addForm.amount)
+                  if (!addForm.name.trim() || isNaN(amt) || amt <= 0) return
+                  setSavingAdd(true)
+                  try {
+                    await onAddAmount({
+                      expenseName: addForm.name.trim(),
+                      amount: amt,
+                      expenseType: addForm.expenseType.trim() || 'Uncategorised',
+                      category: addForm.category,
+                      monthName,
+                      calYr,
+                    })
+                    setShowAddAmount(false)
+                  } finally {
+                    setSavingAdd(false)
+                  }
+                }}
+                disabled={savingAdd || !addForm.name.trim() || !(parseInt(addForm.amount) > 0)}
+                style={{
+                  flex: 2, padding: '9px 0', borderRadius: 10, border: 'none',
+                  background: (savingAdd || !addForm.name.trim() || !(parseInt(addForm.amount) > 0)) ? '#e5e7eb' : '#18181b',
+                  color: (savingAdd || !addForm.name.trim() || !(parseInt(addForm.amount) > 0)) ? '#9ca3af' : '#fff',
+                  fontSize: 13, fontWeight: 600, cursor: (savingAdd || !addForm.name.trim() || !(parseInt(addForm.amount) > 0)) ? 'not-allowed' : 'pointer',
+                  fontFamily: "'Inter', sans-serif", display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                }}
+              >
+                {savingAdd
+                  ? <><div style={{ width: 13, height: 13, border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />Adding…</>
+                  : 'Add Expense'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+
       {showTransfer && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 1300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(17,24,39,0.45)', backdropFilter: 'blur(4px)' }} onClick={() => setShowTransfer(false)}>
           <div onClick={e => e.stopPropagation()} style={{ background: '#fff', border: '1px solid #ececec', borderRadius: 20, boxShadow: '0 24px 60px rgba(16,24,40,0.25)', padding: '28px', maxWidth: 400, width: '92vw', fontFamily: "'Inter', sans-serif" }}>
@@ -1839,6 +1954,37 @@ const MonthViewModal = memo(function MonthViewModal({
               >
                 <span style={{ fontSize: 13 }}>✏️</span>
                 {editMode ? 'Done editing' : 'Edit'}
+              </button>
+               <button
+                onClick={() => {
+                  setAddForm({ name: '', amount: '', expenseType: '', category: 'Office' })
+                  setShowAddAmount(true)
+                }}
+                title={`Add a one-time expense for ${monthFull} ${calYr}`}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                  border: 'none', background: '#18181b', color: '#fff',
+                  fontSize: 12.5, fontWeight: 600, fontFamily: "'Inter', sans-serif",
+                }}
+              >
+                <span style={{ fontSize: 15, lineHeight: 1 }}>+</span>
+                Add Amount
+              </button>
+
+
+                <button
+                onClick={onClose}
+                title="Go back to the master expense table"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                  border: '1px solid #ececec', background: '#fff', color: '#4b5563',
+                  fontSize: 12.5, fontWeight: 500, fontFamily: "'Inter', sans-serif",
+                }}
+              >
+                <span style={{ fontSize: 13 }}>📋</span>
+                Master
               </button>
               <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid #ececec', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, color: '#6b7280' }}>✕</button>
             </div>
@@ -2156,7 +2302,7 @@ const EmployeeTable = () => {
 
   const [deleteTarget,       setDeleteTarget]       = useState(null)
   const [deleting,           setDeleting]           = useState(false)
-  const [monthViewIndex,     setMonthViewIndex]     = useState(null)
+  const [monthViewIndex,     setMonthViewIndex]     = useState(() => new Date().getMonth())
 
   const [overrideTarget,     setOverrideTarget]     = useState(null)
   const [savingOverride,     setSavingOverride]     = useState(false)
@@ -2392,6 +2538,31 @@ const handleMarkPaid = useCallback((row, source) => {
     const val = Math.max(0, parseInt(newPaid) || 0)
     await writePayment(row._realId, row._calYr, row._monthName, val)
   }, [writePayment])
+
+  const handleAddAmount = useCallback(async ({ expenseName, amount, expenseType, category, monthName, calYr }) => {
+    const monthIdx = MONTHS.indexOf(monthName)
+    // Date it to the 1st of the viewed month (noon avoids IST→UTC day drift)
+    const date = new Date(Date.UTC(calYr, monthIdx, 1, 12, 0, 0)).toISOString()
+    const payload = { expenseName, amount, expenseType, category, type: 'one-time', date }
+
+    try {
+      const res = await fetch(`${API_BASE}/employee/add`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
+      const data = await res.json()
+      const newRec = data?.employee || data
+      setAllExpenses(prev => {
+        const updated = [...prev, newRec]
+        sessionStorage.setItem(CACHE_KEY, JSON.stringify(updated))
+        return updated
+      })
+    } catch (err) {
+      console.error('Failed to add amount:', err)
+    }
+  }, [])
 
   const handleMonthAmountEdit = useCallback(async (row, newAmount) => {
     if (row.kind !== 'recurring' || !row._realId) return
@@ -2800,6 +2971,7 @@ const handleSetBudget = useCallback(async (fyStartYear, month, year, pool, value
           onSetBudget={handleSetBudget}
           onTransfer={handleTransfer}
           onDeleteTransfer={handleDeleteTransfer}
+          onAddAmount={handleAddAmount}
         />
       )}
       {overrideTarget && (
