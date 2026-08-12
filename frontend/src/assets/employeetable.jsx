@@ -1539,6 +1539,8 @@ const MonthViewModal = memo(function MonthViewModal({
   lendings,
   onTransfer,
   onDeleteTransfer, 
+  onAddExpense,
+  onCategory,
 }) {
   const [editMode, setEditMode] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
@@ -2007,6 +2009,32 @@ const oneTime = oneTimeRows.map(exp => {
               >
                <span style={{ fontSize: 13 }}>✏️</span>
                 {editMode ? 'Done editing' : 'Edit'}
+              </button>
+              <button
+                onClick={() => onAddExpense()}
+                title="Go to the Add Expense page"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                  border: 'none', background: '#18181b', color: '#fff',
+                  fontSize: 12.5, fontWeight: 600, fontFamily: "'Inter', sans-serif",
+                }}
+              >
+                <span style={{ fontSize: 15, lineHeight: 1 }}>+</span>
+                Add Expense
+              </button>
+              <button
+                onClick={() => onCategory()}
+                title="Go to the category view"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                  border: '1px solid #ececec', background: '#fff', color: '#4b5563',
+                  fontSize: 12.5, fontWeight: 500, fontFamily: "'Inter', sans-serif",
+                }}
+              >
+                <span style={{ fontSize: 13 }}>🗂️</span>
+                Category
               </button>
               <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid #ececec', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, color: '#6b7280' }}>✕</button>
             </div>
@@ -3015,6 +3043,8 @@ const handleSetBudget = useCallback(async (fyStartYear, month, year, pool, value
           onTransfer={handleTransfer}
           onAddExpense={() => { setMonthViewIndex(null); navigate('/employee') }}
           onDeleteTransfer={handleDeleteTransfer}
+          onAddExpense={() => { setMonthViewIndex(null); navigate('/employee') }}
+          onCategory={() => { setMonthViewIndex(null); navigate('/employeetable') }}
         />
       )}
       {overrideTarget && (
