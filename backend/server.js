@@ -9,9 +9,17 @@ dotenv.config();
 const app = express();
 
 // 1. Explicit CORS configuration to allow Authorization headers and preflight checks
+const allowedOrigins = [
+  "http://localhost:5173",
+  "https://expenses-emc1.onrender.com",
+];
+
 app.use(
   cors({
-    origin: process.env.FRONTEND_URL || "http://localhost:5173", // Adjust if using a different port
+    origin: function (origin, callback) {
+      if (!origin || allowedOrigins.includes(origin)) callback(null, true);
+      else callback(new Error("Not allowed by CORS"));
+    },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
