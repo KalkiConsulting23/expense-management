@@ -11,9 +11,10 @@ const Navbar = () => {
   const dropdownRef = useRef(null)
   const analyticsRef = useRef(null)
   const { user } = useUser()
-  // Map current route → top bar label. Default to "Dashboard".
+
   const TITLE_MAP = {
     '/': 'Dashboard',
+    '/employeetable': 'Expense',
     '/employee': 'Add Expense',
     '/expensemaster': 'Expense Master',
     '/salestable': 'Sales',
@@ -27,10 +28,14 @@ const Navbar = () => {
     '/incometracker': 'Income Tracker',
     '/borrow': 'Borrow',
     '/lending': 'Lending',
+    '/staff': 'Staff',
+    '/staffform': 'Add Staff',
+    '/attendance': 'Attendance',
   }
+
   const pageTitle = TITLE_MAP[location.pathname] || 'Dashboard'
 
-  const navItems = [
+  const mainNavItems = [
     {
       label: 'Expense',
       path: '/employeetable',
@@ -60,6 +65,18 @@ const Navbar = () => {
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="3" width="20" height="14" rx="2"/>
           <path d="M8 21h8M12 17v4"/>
+        </svg>
+      ),
+    },
+    {
+      label: 'Staff',
+      path: '/staff',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+          <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
         </svg>
       ),
     },
@@ -95,6 +112,22 @@ const Navbar = () => {
         </svg>
       ),
     },
+    {
+      label: 'Attendance',
+      path: '/attendance',
+      icon: (
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="4" width="18" height="18" rx="2"/>
+          <line x1="16" y1="2" x2="16" y2="6"/>
+          <line x1="8" y1="2" x2="8" y2="6"/>
+          <line x1="3" y1="10" x2="21" y2="10"/>
+          <path d="M9 16l2 2 4-4"/>
+        </svg>
+      ),
+    },
+  ]
+
+  const masterNavItems = [
     {
       label: 'Expense Master',
       path: '/expensemaster',
@@ -154,7 +187,6 @@ const Navbar = () => {
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         *, *::before, *::after { box-sizing: border-box; }
 
-        /* Full-width fixed top bar holding the hamburger + page label */
         .topbar {
           position: fixed;
           top: 0; left: 0; right: 0;
@@ -170,7 +202,7 @@ const Navbar = () => {
           border-bottom: 1px solid #ececec;
           font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         }
-        /* Spacer that occupies the same height so page content starts below the bar */
+
         .topbar-spacer { height: 56px; width: 100%; flex-shrink: 0; }
 
         .topbar-title {
@@ -265,49 +297,40 @@ const Navbar = () => {
         .nav-btn.active { background: #f3f4f6; color: #18181b; font-weight: 600; }
         .nav-btn.active svg { color: #18181b; }
 
-        .nav-btn.master-btn { color: #4b5563; }
-        .nav-btn.master-btn.active { background: #f3f4f6; color: #18181b; }
-
         .nav-divider {
           height: 1px;
           background: #f1f1f1;
           margin: 10px 4px;
         }
 
-        .nav-add-wrapper { position: relative; margin-top: 1px; }
-        .nav-add-btn {
-          display: flex; align-items: center; justify-content: space-between;
-          width: 100%; padding: 8px 10px; border-radius: 8px; border: none;
-          background: none; font-family: inherit;
-          font-size: 13.5px; font-weight: 500; color: #4b5563; cursor: pointer;
-          transition: all 0.13s;
-        }
-        .nav-add-btn:hover { background: #f7f7f7; color: #18181b; }
-        .nav-add-btn:hover svg { color: #18181b; }
-        .nav-add-btn-left { display: flex; align-items: center; gap: 11px; }
-        .nav-add-btn-left svg { color: #6b7280; }
-        .nav-add-chevron { color: #9ca3af; transition: transform 0.15s ease; }
-        .nav-add-chevron.open { transform: rotate(180deg); }
+        .nav-add-wrapper, .nav-analytics-wrapper { position: relative; margin-top: 1px; }
 
-        .nav-analytics-wrapper { position: relative; margin-top: 1px; }
-        .nav-analytics-btn {
+        .nav-add-btn, .nav-analytics-btn {
           display: flex; align-items: center; justify-content: space-between;
           width: 100%; padding: 8px 10px; border-radius: 8px; border: none;
           background: none; font-family: inherit;
           font-size: 13.5px; font-weight: 500; color: #4b5563; cursor: pointer;
           transition: all 0.13s;
         }
-        .nav-analytics-btn:hover { background: #f7f7f7; color: #18181b; }
-        .nav-analytics-btn:hover svg { color: #18181b; }
-        .nav-analytics-btn-left { display: flex; align-items: center; gap: 11px; }
-        .nav-analytics-btn-left svg { color: #6b7280; }
-        .nav-analytics-chevron { color: #9ca3af; transition: transform 0.15s ease; }
-        .nav-analytics-chevron.open { transform: rotate(180deg); }
+        .nav-add-btn:hover, .nav-analytics-btn:hover { background: #f7f7f7; color: #18181b; }
+        .nav-add-btn:hover svg, .nav-analytics-btn:hover svg { color: #18181b; }
+        .nav-add-btn-left, .nav-analytics-btn-left { display: flex; align-items: center; gap: 11px; }
+        .nav-add-btn-left svg, .nav-analytics-btn-left svg { color: #6b7280; }
+        .nav-add-chevron, .nav-analytics-chevron { color: #9ca3af; transition: transform 0.15s ease; }
+        .nav-add-chevron.open, .nav-analytics-chevron.open { transform: rotate(180deg); }
 
         .nav-add-dropdown {
-          background: #ffffff; border: 1px solid #ececec; border-radius: 10px;
-          overflow: hidden; margin: 4px 0 2px 8px;
-          box-shadow: 0 4px 16px rgba(16,24,40,0.08);
+          position: absolute;
+          top: 100%;
+          left: 0;
+          right: 0;
+          z-index: 10;
+          background: #ffffff;
+          border: 1px solid #ececec;
+          border-radius: 10px;
+          overflow: hidden;
+          margin-top: 4px;
+          box-shadow: 0 8px 24px rgba(16,24,40,0.12);
           animation: fadeDown 0.12s ease;
         }
         @keyframes fadeDown {
@@ -328,12 +351,6 @@ const Navbar = () => {
         .sidebar-user {
           display: flex; align-items: center; gap: 10px;
           padding: 12px 16px; border-top: 1px solid #f1f1f1; flex-shrink: 0;
-        }
-        .user-avatar {
-          width: 32px; height: 32px; border-radius: 50%;
-          background: #18181b; color: #fff; flex-shrink: 0;
-          display: flex; align-items: center; justify-content: center;
-          font-size: 12px; font-weight: 600;
         }
         .user-meta { display: flex; flex-direction: column; line-height: 1.3; overflow: hidden; }
         .user-name {
@@ -358,7 +375,6 @@ const Navbar = () => {
         </button>
         <span className="topbar-title">{pageTitle}</span>
       </div>
-      {/* Spacer pushes page content below the fixed top bar */}
       <div className="topbar-spacer" />
 
       {sidebarOpen && (
@@ -386,8 +402,7 @@ const Navbar = () => {
         <div className="navbar-inner">
           <span className="nav-section-label">Navigation</span>
 
-          {/* Regular nav items: Expense, Sales, Projects, Income Tracker, Borrow, Lending */}
-          {navItems.slice(0, 6).map((item) => (
+          {mainNavItems.map((item) => (
             <button
               key={item.path}
               className={`nav-btn${location.pathname === item.path ? ' active' : ''}`}
@@ -398,35 +413,16 @@ const Navbar = () => {
             </button>
           ))}
 
-          {/* Expense Master */}
-          {(() => {
-            const item = navItems[6]
-            return (
-              <button
-                key={item.path}
-                className={`nav-btn master-btn${location.pathname === item.path ? ' active' : ''}`}
-                onClick={() => { navigate(item.path); setSidebarOpen(false) }}
-              >
-                {item.icon}
-                {item.label}
-              </button>
-            )
-          })()}
-
-          {/* Project Master */}
-          {(() => {
-            const item = navItems[7]
-            return (
-              <button
-                key={item.path}
-                className={`nav-btn master-btn${location.pathname === item.path ? ' active' : ''}`}
-                onClick={() => { navigate(item.path); setSidebarOpen(false) }}
-              >
-                {item.icon}
-                {item.label}
-              </button>
-            )
-          })()}
+          {masterNavItems.map((item) => (
+            <button
+              key={item.path}
+              className={`nav-btn master-btn${location.pathname === item.path ? ' active' : ''}`}
+              onClick={() => { navigate(item.path); setSidebarOpen(false) }}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
 
           <div className="nav-divider" />
           <span className="nav-section-label" style={{ paddingTop: 0 }}>Actions</span>
@@ -448,12 +444,20 @@ const Navbar = () => {
               <div className="nav-add-dropdown">
                 <button className="nav-add-dropdown-item" onClick={() => handleAddNavigate('/employee')}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                    <circle cx="9" cy="7" r="4"/>
-                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
-                    <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                    <polyline points="14 2 14 8 20 8"/>
                   </svg>
                   Expense
+                </button>
+                <div className="nav-add-dropdown-divider" />
+                <button className="nav-add-dropdown-item" onClick={() => handleAddNavigate('/staffform')}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                    <circle cx="8.5" cy="7" r="4"/>
+                    <line x1="20" y1="8" x2="20" y2="14"/>
+                    <line x1="17" y1="11" x2="23" y2="11"/>
+                  </svg>
+                  Add Employee
                 </button>
                 <div className="nav-add-dropdown-divider" />
                 <button className="nav-add-dropdown-item" onClick={() => handleAddNavigate('/project')}>
@@ -520,7 +524,7 @@ const Navbar = () => {
         </div>
 
         <div className="sidebar-user">
-          <UserButton afterSignOutUrl="/" />
+          <UserButton fallbackRedirectUrl="/" />
           <div className="user-meta">
             <span className="user-name">{user?.fullName || user?.username || 'Account'}</span>
             <span className="user-role">{user?.primaryEmailAddress?.emailAddress || ''}</span>

@@ -18,6 +18,7 @@ const Borrowform = () => {
     rateOfInterest: '',
     tenure: '',
     date: todayISO(),
+    borrowedPool: 'Home',
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -31,6 +32,10 @@ const Borrowform = () => {
   const handleChange = (e) => {
     const { name, value } = e.target
     setForm(prev => ({ ...prev, [name]: value }))
+  }
+
+  const setPool = (pool) => {
+    setForm(prev => ({ ...prev, borrowedPool: pool === 'Office' ? 'Office' : 'Home' }))
   }
 
   // live preview: every month = principal (amount/tenure) + interest (amount*rate%)
@@ -60,6 +65,7 @@ const Borrowform = () => {
           rateOfInterest: Number(form.rateOfInterest),
           tenure: Number(form.tenure),
           date: form.date,
+          borrowedPool: form.borrowedPool === 'Office' ? 'Office' : 'Home',
         }),
       })
       if (!res.ok) {
@@ -104,6 +110,20 @@ const Borrowform = () => {
         .bf-err {
           background: #fff5f5; border: 1px solid #fca5a5; color: #dc2626;
           padding: 9px 12px; border-radius: 9px; font-size: 13px; margin-bottom: 16px;
+        }
+
+        /* Pool selector (Home / Office) */
+        .bf-pool { display: flex; gap: 10px; }
+        .bf-pool-opt {
+          flex: 1; text-align: center; padding: 11px 12px; border-radius: 9px;
+          border: 1px solid #e5e7eb; background: #fff; color: #6b7280;
+          font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+          transition: all 0.13s;
+        }
+        .bf-pool-opt:hover { border-color: #c4c4c4; }
+        .bf-pool-opt.active {
+          border-color: #18181b; background: #18181b; color: #fff;
+          box-shadow: 0 0 0 3px rgba(24,24,27,0.06);
         }
 
         /* Monthly split preview */
@@ -204,6 +224,27 @@ const Borrowform = () => {
             className="bf-input" type="date" name="date"
             value={form.date} onChange={handleChange}
           />
+        </div>
+
+        <div className="bf-field">
+          <label className="bf-label">Credit borrowed amount to pool</label>
+          <div className="bf-pool">
+            <button
+              type="button"
+              className={`bf-pool-opt${form.borrowedPool === 'Home' ? ' active' : ''}`}
+              onClick={() => setPool('Home')}
+            >
+              Home
+            </button>
+            <button
+              type="button"
+              className={`bf-pool-opt${form.borrowedPool === 'Office' ? ' active' : ''}`}
+              onClick={() => setPool('Office')}
+            >
+              Office
+            </button>
+          </div>
+          <div className="bf-hint">The borrowed money is added to this pool for its month.</div>
         </div>
 
         {showPreview && (

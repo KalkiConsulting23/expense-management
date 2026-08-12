@@ -30,7 +30,7 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const { userId } = getAuth(req)
-    const { name, amount, rateOfInterest, tenure, date } = req.body
+    const { name, amount, rateOfInterest, tenure, date, borrowedPool } = req.body
 
     const record = new Borrow({
       userId,
@@ -39,6 +39,7 @@ router.post('/', async (req, res) => {
       rateOfInterest: Number(rateOfInterest),
       tenure: Number(tenure),
       date: date ? new Date(date) : new Date(),
+      borrowedPool: ['Home', 'Office'].includes(borrowedPool) ? borrowedPool : 'Home',
       payments: [],
     })
 
@@ -53,13 +54,14 @@ router.post('/', async (req, res) => {
 router.patch('/:id', async (req, res) => {
   try {
     const { userId } = getAuth(req)
-    const { name, amount, rateOfInterest, tenure, date } = req.body
+    const { name, amount, rateOfInterest, tenure, date, borrowedPool } = req.body
     const update = {}
     if (name !== undefined) update.name = name
     if (amount !== undefined) update.amount = Number(amount)
     if (rateOfInterest !== undefined) update.rateOfInterest = Number(rateOfInterest)
     if (tenure !== undefined) update.tenure = Number(tenure)
     if (date !== undefined) update.date = new Date(date)
+    if (borrowedPool !== undefined && ['Home', 'Office'].includes(borrowedPool)) update.borrowedPool = borrowedPool
 
     const updated = await Borrow.findOneAndUpdate(
       { _id: req.params.id, userId },
@@ -75,10 +77,11 @@ router.patch('/:id', async (req, res) => {
 
 // PATCH set the paid amounts for a given month/year (upsert into payments)
 // Accepts principalPaid and/or interestPaid; only provided fields are updated.
+// Optionally accepts pool — the pool this repayment is deducted from.
 router.patch('/:id/update-payment', async (req, res) => {
   try {
     const { userId } = getAuth(req)
-    const { year, month, principalPaid, interestPaid } = req.body
+    const { year, month, principalPaid, interestPaid, pool } = req.body
     const y = Number(year)
     if (isNaN(y) || !month) {
       return res.status(400).json({ error: 'year and month are required' })
@@ -96,6 +99,8 @@ router.patch('/:id/update-payment', async (req, res) => {
       return res.status(400).json({ error: 'paid amounts must be non-negative numbers' })
     }
 
+    const validPool = ['Home', 'Office'].includes(pool) ? pool : undefined
+
     const record = await Borrow.findOne({ _id: req.params.id, userId })
     if (!record) return res.status(404).json({ error: 'Borrow record not found' })
 
@@ -103,12 +108,14 @@ router.patch('/:id/update-payment', async (req, res) => {
     if (idx > -1) {
       if (hasPrincipal) record.payments[idx].principalPaid = pVal
       if (hasInterest) record.payments[idx].interestPaid = iVal
+      if (validPool) record.payments[idx].pool = validPool
     } else {
       record.payments.push({
         year: y,
         month,
         principalPaid: hasPrincipal ? pVal : 0,
         interestPaid: hasInterest ? iVal : 0,
+        pool: validPool || 'Home',
       })
     }
 

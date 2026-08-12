@@ -1,25 +1,21 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api'
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const fmt = (n) => '₹' + Number(n || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 })
 
-// ── Money math ────────────────────────────────────────────────────────────
-// Every borrowing: principal split evenly across tenure, interest = amount*rate% per month.
 const monthlyPrincipalOf = (r) => {
   const tenure = Number(r.tenure) || 1
   return Number(r.amount) / tenure
 }
 const monthlyInterestOf = (r) => Number(r.amount) * (Number(r.rateOfInterest) / 100)
 
-// Parse a stored date into a local (Y,M,D) date, avoiding UTC drift
 const parseDate = (dateStr) => {
   const d = new Date(dateStr)
   return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
 }
 
-// Format a date for an <input type="date"> value (YYYY-MM-DD, from UTC parts)
 const toInputDate = (dateStr) => {
   if (!dateStr) return ''
   const d = new Date(dateStr)
@@ -29,7 +25,6 @@ const toInputDate = (dateStr) => {
   return `${y}-${m}-${day}`
 }
 
-// Which (monthIndex, year) does instalment i (0-based) fall on, starting from borrow date?
 const monthYearForInstalment = (startDate, i) => {
   const s = parseDate(startDate)
   const total = s.getMonth() + i
@@ -40,12 +35,6 @@ const monthYearForInstalment = (startDate, i) => {
 
 const paidKey = (year, monthName) => `${year}-${monthName}`
 
-// Compute per-instalment schedule with SEPARATE carry-forward for principal and interest.
-// Returns array of {
-//   i, monthIdx, year, monthName,
-//   principalDue, principalPaid, principalTotalDue, principalCarry,
-//   interestDue, interestPaid, interestTotalDue, interestCarry
-// }
 function buildSchedule(record) {
   const tenure = Number(record.tenure) || 0
   const pDue = monthlyPrincipalOf(record)
@@ -85,7 +74,6 @@ function buildSchedule(record) {
   return schedule
 }
 
-// Group a record's schedule by calendar year → { year: { monthName: cell } }
 function scheduleByYear(schedule) {
   const byYear = {}
   schedule.forEach(cell => {
@@ -100,19 +88,17 @@ const Borrow = () => {
   const [records, setRecords] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
-  const [toast, setToast] = useState(null)   // { type, msg }
+  const [toast, setToast] = useState(null)
 
   const showToast = (type, msg) => {
     setToast({ type, msg })
     setTimeout(() => setToast(null), 3000)
   }
 
-  // ── Cell edit modal state (principal + interest paid) ──────────────────────
-  const [cellEdit, setCellEdit] = useState(null)  // { record, year, month, cell }
+  const [cellEdit, setCellEdit] = useState(null)
   const [cellForm, setCellForm] = useState({ principalPaid: '', interestPaid: '' })
   const [savingCell, setSavingCell] = useState(false)
 
-  // ── Record edit modal state ──────────────────────────────────────────────
   const [editRecord, setEditRecord] = useState(null)
   const [form, setForm] = useState({ name: '', amount: '', rateOfInterest: '', tenure: '', date: '' })
   const [savingRecord, setSavingRecord] = useState(false)
@@ -134,7 +120,6 @@ const Borrow = () => {
 
   useEffect(() => { fetchRecords() }, [])
 
-  // ── Cell edit handlers ─────────────────────────────────────────────────────
   const openCellEdit = (record, year, month, cell) => {
     setCellEdit({ record, year, month, cell })
     setCellForm({
@@ -159,7 +144,6 @@ const Borrow = () => {
 
     setSavingCell(true)
     const prev = records
-    // optimistic: update payments locally
     setRecords(rs => rs.map(r => {
       if (r._id !== id) return r
       const payments = [...(r.payments || [])]
@@ -202,7 +186,6 @@ const Borrow = () => {
     }
   }
 
-  // ── Record edit modal handlers ───────────────────────────────────────────
   const openEditModal = (record) => {
     setEditRecord(record)
     setForm({
@@ -261,14 +244,15 @@ const Borrow = () => {
 
   const totalBorrowed = records.reduce((s, r) => s + Number(r.amount || 0), 0)
 
-  // Build one group per YEAR. Each group lists every borrower that has an
-  // instalment in that year, with that year's monthly cells.
-  // Carry-forward still flows across years because the full schedule is
-  // computed per record first, then sliced by year.
-  const buildYearGroups = () => {
-    const yearMap = {}   // year -> [{ record, cells: {month: cell}, outstanding }]
+  // ── Split records into interest-bearing vs interest-free ──────────────
+  const withInterest = records.filter(r => Number(r.rateOfInterest) > 0)
+  const interestFree = records.filter(r => !(Number(r.rateOfInterest) > 0))
 
-    records.forEach(r => {
+  // Build the year groups for a subset. Each group holds the borrowers (columns)
+  // active in that year plus their per-month cell map (rows are months).
+  const buildYearGroups = (recordSet) => {
+    const yearMap = {}
+    recordSet.forEach(r => {
       const schedule = buildSchedule(r)
       const byYear = scheduleByYear(schedule)
       const lastCell = schedule[schedule.length - 1]
@@ -285,23 +269,137 @@ const Borrow = () => {
     return Object.keys(yearMap)
       .map(Number)
       .sort((a, b) => a - b)
-      .map(year => ({ year, rows: yearMap[year] }))
+      .map(year => ({ year, columns: yearMap[year] }))
   }
 
-  const yearGroups = buildYearGroups()
+  const withInterestYearGroups = buildYearGroups(withInterest)
+  const interestFreeYearGroups = buildYearGroups(interestFree)
 
-  // Sum a single borrower-row's totals for the year it's shown in.
-  // Uses each instalment's own due (principalDue/interestDue), and the
-  // remaining balance after that year's last cell as the row's outstanding.
-  const rowYearTotals = (cells) => {
+  // Per-borrower totals across the year (used in the Total row at the bottom).
+  const colYearTotals = (cells) => {
     const list = Object.values(cells || {})
     let pDue = 0, pPaid = 0, iDue = 0, iPaid = 0
     list.forEach(c => { pDue += c.principalDue; pPaid += c.principalPaid; iDue += c.interestDue; iPaid += c.interestPaid })
-    // last cell chronologically in this year
     const last = list.slice().sort((a, b) => a.i - b.i)[list.length - 1]
     const outstanding = last ? Math.max(0, last.principalCarry) + Math.max(0, last.interestCarry) : 0
     return { pDue, pPaid, iDue, iPaid, outstanding }
   }
+
+  // ── Transposed table renderer: months = rows, borrowers = columns. ──
+  const renderYearGroups = (yearGroups, showInterest) => (
+    yearGroups.map(({ year, columns }) => (
+      <div className="bw-card" key={year}>
+        <div className="bw-year-head">
+          <span className="bw-year-label">{year}</span>
+          <span className="bw-year-count">{columns.length} borrowing{columns.length !== 1 ? 's' : ''} active</span>
+        </div>
+        <div className="bw-scroll">
+          <table className="grid">
+            <thead>
+              <tr>
+                <th className="month-head head" rowSpan={2} style={{ position: 'sticky', left: 0 }}>Month</th>
+                {columns.map(({ record: r }) => (
+                  <th
+                    key={r._id}
+                    colSpan={showInterest ? 4 : 2}
+                    className="th-borrower borrower-group"
+                  >
+                    <div className="th-borrower-name">{r.name}</div>
+                    <div className="th-borrower-meta">
+                      {fmt(r.amount)} · {r.rateOfInterest}%/mo · {r.tenure} mo
+                    </div>
+                    <div className="th-borrower-actions">
+                      <button className="edit-btn" onClick={() => openEditModal(r)}>Edit</button>
+                      <button className="del-btn" onClick={() => handleDelete(r._id)}>Delete</button>
+                    </div>
+                  </th>
+                ))}
+              </tr>
+              <tr>
+                {columns.map(({ record: r }) => (
+                  <React.Fragment key={r._id}>
+                    <th className="th-sub p-due borrower-group">P·Due</th>
+                    <th className="th-sub p-paid" style={!showInterest ? { borderRight: '1px solid #ececec' } : undefined}>P·Paid</th>
+                    {showInterest && <th className="th-sub i-due">I·Due</th>}
+                    {showInterest && <th className="th-sub i-paid">I·Paid</th>}
+                  </React.Fragment>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {MONTHS.map((m) => {
+                const anyActive = columns.some(col => col.cells?.[m])
+                return (
+                  <tr key={m} className={anyActive ? '' : 'row-inactive'}>
+                    <td className="month-cell">{m}</td>
+                    {columns.map(({ record: r, cells }) => {
+                      const cell = cells?.[m]
+                      if (!cell) {
+                        return <td key={r._id} className="td-inactive" colSpan={showInterest ? 4 : 2}>—</td>
+                      }
+                      const pCarry = cell.principalCarry > 0.005
+                      const iCarry = cell.interestCarry > 0.005
+                      return (
+                        <React.Fragment key={r._id}>
+                          <td className="cell p-due borrower-group">
+                            <div>{fmt(cell.principalTotalDue)}</div>
+                            {pCarry && <div className="carry">carry {fmt(cell.principalCarry)} →</div>}
+                          </td>
+                          <td
+                            className="cell p-paid"
+                            style={!showInterest ? { borderRight: '1px solid #ececec' } : undefined}
+                            onClick={() => openCellEdit(r, year, m, cell)}
+                            title="Click to edit paid amounts"
+                          >
+                            {fmt(cell.principalPaid)}
+                          </td>
+                          {showInterest && (
+                            <td className="cell i-due">
+                              <div>{fmt(cell.interestTotalDue)}</div>
+                              {iCarry && <div className="carry">carry {fmt(cell.interestCarry)} →</div>}
+                            </td>
+                          )}
+                          {showInterest && (
+                            <td
+                              className="cell i-paid"
+                              onClick={() => openCellEdit(r, year, m, cell)}
+                              title="Click to edit paid amounts"
+                            >
+                              {fmt(cell.interestPaid)}
+                            </td>
+                          )}
+                        </React.Fragment>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
+              {/* Totals row (per borrower, across the year) */}
+              <tr className="row-total">
+                <td className="month-cell total-month">Total ({year})</td>
+                {columns.map(({ record: r, cells, outstanding }) => {
+                  const t = colYearTotals(cells)
+                  return (
+                    <React.Fragment key={r._id}>
+                      <td className="cell p-due total-cell borrower-group">
+                        <div>{fmt(t.pDue)}</div>
+                        <div className={`out-badge ${outstanding <= 0.005 ? 'clear' : 'owed'}`}>
+                          {outstanding <= 0.005 ? '✓ Cleared' : `Out ${fmt(outstanding)}`}
+                        </div>
+                      </td>
+                      <td className="cell p-paid total-cell" style={!showInterest ? { borderRight: '1px solid #ececec' } : undefined}>{fmt(t.pPaid)}</td>
+                      {showInterest && <td className="cell i-due total-cell">{fmt(t.iDue)}</td>}
+                      {showInterest && <td className="cell i-paid total-cell">{fmt(t.iPaid)}</td>}
+                    </React.Fragment>
+                  )
+                })}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    ))
+  )
 
   return (
     <div className="bw-page">
@@ -328,6 +426,15 @@ const Borrow = () => {
         }
         .add-btn:hover { background: #000; transform: translateY(-1px); }
 
+        .bw-section-title {
+          display: flex; align-items: center; gap: 8px;
+          font-size: 14px; font-weight: 700; color: #4338ca;
+          letter-spacing: 0.2px; margin: 26px 0 14px;
+        }
+        .bw-section-title .dot { width: 7px; height: 7px; border-radius: 50%; background: #4f46e5; display: inline-block; }
+        .bw-section-title.free { color: #16a34a; }
+        .bw-section-title.free .dot { background: #16a34a; }
+
         .bw-card {
           margin-bottom: 22px; border-radius: 16px; border: 1px solid #ececec;
           overflow: hidden; box-shadow: 0 1px 3px rgba(16,24,40,0.04); background: #fff;
@@ -344,28 +451,32 @@ const Borrow = () => {
         table.grid { border-collapse: collapse; white-space: nowrap; width: 100%; }
         .grid th, .grid td { border-right: 1px solid #f4f4f5; }
 
-        /* Sticky name + year columns */
-        .name-cell {
+        /* Sticky left column now holds the MONTH names (rows) */
+        .month-head {
+          position: sticky; left: 0; z-index: 4; background: #fafafa;
+          color: #9ca3af; text-align: left; font-size: 10.5px; font-weight: 600;
+          letter-spacing: 0.3px; text-transform: uppercase; padding: 9px 14px;
+          border-right: 1px solid #ececec; border-bottom: 1px solid #ececec;
+          min-width: 96px;
+        }
+        .month-cell {
           position: sticky; left: 0; z-index: 2; background: #fff;
-          min-width: 150px; max-width: 190px; border-right: 1px solid #ececec;
-          padding: 10px 14px; vertical-align: top;
+          min-width: 96px; border-right: 1px solid #ececec; padding: 9px 14px;
+          font-size: 12px; font-weight: 700; color: #18181b; letter-spacing: -0.2px;
+          border-bottom: 1px solid #f4f4f5;
         }
-        .name-cell.head { background: #fafafa; z-index: 4; }
-        .name-main { font-size: 13px; font-weight: 700; color: #18181b; letter-spacing: -0.2px; white-space: normal; }
-        .name-meta { font-size: 10.5px; color: #6b7280; margin-top: 3px; white-space: normal; line-height: 1.5; }
-        .name-actions { margin-top: 8px; display: flex; gap: 6px; }
-        .yr-cell {
-          position: sticky; left: 150px; z-index: 2; background: #fff;
-          min-width: 66px; border-right: 1px solid #ececec;
-          font-size: 12px; font-weight: 700; color: #4338ca; padding: 10px 12px; text-align: center;
-        }
-        .yr-cell.head { background: #fafafa; z-index: 4; }
+        .month-cell.total-month { background: #f6f6f7; color: #4338ca; }
+        .row-inactive .month-cell { color: #d9d9de; }
 
-        .th-month {
-          background: #fafafa; color: #9ca3af; text-align: center; font-size: 10.5px;
-          font-weight: 500; letter-spacing: 0.3px; padding: 9px 4px; border-bottom: 1px solid #ececec;
+        /* Borrower column headers (across the top) */
+        .th-borrower {
+          background: #fafafa; text-align: center; padding: 10px 8px;
+          border-bottom: 1px solid #ececec; vertical-align: top; min-width: 130px;
         }
-        .th-month.inactive { color: #d9d9de; }
+        .th-borrower-name { font-size: 12px; font-weight: 700; color: #18181b; letter-spacing: -0.2px; white-space: normal; }
+        .th-borrower-meta { font-size: 10px; color: #6b7280; margin-top: 3px; white-space: normal; font-weight: 500; line-height: 1.4; }
+        .th-borrower-actions { margin-top: 7px; display: flex; gap: 6px; justify-content: center; }
+
         .th-sub {
           text-align: center; font-size: 8.5px; font-weight: 600; letter-spacing: 0.2px;
           padding: 5px 6px; border-bottom: 1px solid #ececec; min-width: 62px; background: #fafafa;
@@ -376,7 +487,8 @@ const Borrow = () => {
         .th-sub.i-due { color: #d97706; }
         .th-sub.i-paid { color: #16a34a; border-right: 1px solid #ececec; }
 
-        .month-group { border-left: 1px solid #ececec; }
+        /* Left border now separates each BORROWER block */
+        .borrower-group { border-left: 2px solid #ececec; }
 
         td.cell {
           text-align: right; padding: 8px 8px; font-variant-numeric: tabular-nums; font-size: 11px;
@@ -392,36 +504,32 @@ const Borrow = () => {
         td.i-due .carry { color: #d97706; }
         .td-inactive {
           background: #fafafa; color: #d9d9de; text-align: center; font-size: 11px;
-          border-bottom: 1px solid #f4f4f5; padding: 8px 6px; border-left: 1px solid #ececec;
+          border-bottom: 1px solid #f4f4f5; padding: 8px 6px; border-left: 2px solid #ececec;
         }
 
         .edit-btn {
           border: 1px solid #d6d6d6; background: #fff; color: #374151;
-          border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 500;
+          border-radius: 6px; padding: 3px 9px; font-size: 10.5px; font-weight: 500;
           cursor: pointer; font-family: inherit; transition: all 0.13s;
         }
         .edit-btn:hover { background: #f4f4f5; border-color: #c4c4c4; }
         .del-btn {
           border: 1px solid #f1d5d5; background: #fff5f5; color: #dc2626;
-          border-radius: 6px; padding: 4px 10px; font-size: 11px; font-weight: 500;
+          border-radius: 6px; padding: 3px 9px; font-size: 10.5px; font-weight: 500;
           cursor: pointer; font-family: inherit; transition: all 0.13s;
         }
         .del-btn:hover { background: #fee2e2; border-color: #fca5a5; }
-        .out-badge { display: inline-block; font-size: 10px; font-weight: 600; margin-top: 6px; }
+        .out-badge { display: block; font-size: 9.5px; font-weight: 600; margin-top: 4px; text-align: right; }
         .out-badge.owed { color: #dc2626; }
         .out-badge.clear { color: #16a34a; }
 
-        /* Inline Total column (after December) */
-        .th-month.total-group {
-          background: #f3f4f6; color: #4338ca; font-weight: 700; border-left: 2px solid #d4d4d8;
-        }
-        .th-sub.total-group { border-left: 2px solid #d4d4d8; }
-        .th-sub.tot { background: #f3f4f6; }
+        /* Totals row styling */
+        .row-total td { border-top: 2px solid #d4d4d8; }
         .cell.total-cell {
           background: #f6f6f7; font-weight: 700; color: #18181b;
           cursor: default; border-bottom: 1px solid #f4f4f5;
         }
-        .cell.p-due.total-cell { border-left: 2px solid #d4d4d8; color: #6b21a8; }
+        .cell.p-due.total-cell { color: #6b21a8; }
         .cell.p-paid.total-cell, .cell.i-paid.total-cell { color: #16a34a; }
         .cell.i-due.total-cell { color: #b45309; }
         .cell.total-cell:hover { background: #f6f6f7; }
@@ -432,7 +540,6 @@ const Borrow = () => {
         }
         .err { color: #dc2626; }
 
-        /* Toast */
         .bw-toast {
           position: fixed; bottom: 28px; right: 28px; padding: 13px 18px; border-radius: 12px;
           font-family: inherit; font-size: 13px; font-weight: 500; display: flex; align-items: center;
@@ -449,7 +556,6 @@ const Borrow = () => {
         .bw-toast-ic.error { background: #ef4444; }
         @keyframes toastIn { from { opacity: 0; transform: translateY(16px) scale(0.96); } to { opacity: 1; transform: translateY(0) scale(1); } }
 
-        /* Modal */
         .modal-overlay {
           position: fixed; inset: 0; background: rgba(24,24,27,0.45);
           display: flex; align-items: center; justify-content: center;
@@ -501,7 +607,7 @@ const Borrow = () => {
           <div className="bw-eyebrow">Borrow Tracker</div>
           <h2 className="bw-title">Borrowings</h2>
           <p className="bw-sub">
-            Total borrowed <b>{fmt(totalBorrowed)}</b> · {records.length} record{records.length !== 1 ? 's' : ''} · Each month splits into <span style={{ color: '#7c3aed' }}>Principal</span> and <span style={{ color: '#d97706' }}>Interest</span> · click a <span style={{ color: '#16a34a' }}>Paid</span> cell to edit
+            Total borrowed <b>{fmt(totalBorrowed)}</b> · {records.length} record{records.length !== 1 ? 's' : ''} · click a <span style={{ color: '#16a34a' }}>Paid</span> cell to edit
           </p>
         </div>
         <button className="add-btn" onClick={() => navigate('/borrowform')}>
@@ -516,110 +622,29 @@ const Borrow = () => {
       ) : records.length === 0 ? (
         <div className="empty">No borrow records yet. Click “Add Amount” to create one.</div>
       ) : (
-        yearGroups.map(({ year, rows }) => (
-          <div className="bw-card" key={year}>
-            <div className="bw-year-head">
-              <span className="bw-year-label">{year}</span>
-              <span className="bw-year-count">{rows.length} borrowing{rows.length !== 1 ? 's' : ''} active</span>
-            </div>
-            <div className="bw-scroll">
-              <table className="grid">
-                <thead>
-                  <tr>
-                    <th className="name-cell head" rowSpan={2} style={{ position: 'sticky', left: 0 }}>Borrower</th>
-                    {MONTHS.map((m) => {
-                      const anyActive = rows.some(row => row.cells?.[m])
-                      return <th key={m} colSpan={4} className={`th-month month-group${anyActive ? '' : ' inactive'}`}>{m}</th>
-                    })}
-                    <th colSpan={4} className="th-month total-group">Total ({year})</th>
-                  </tr>
-                  <tr>
-                    {MONTHS.map((m) => (
-                      <React.Fragment key={m}>
-                        <th className="th-sub p-due month-group">P·Due</th>
-                        <th className="th-sub p-paid">P·Paid</th>
-                        <th className="th-sub i-due">I·Due</th>
-                        <th className="th-sub i-paid">I·Paid</th>
-                      </React.Fragment>
-                    ))}
-                    <th className="th-sub p-due total-group">P·Due</th>
-                    <th className="th-sub p-paid tot">P·Paid</th>
-                    <th className="th-sub i-due tot">I·Due</th>
-                    <th className="th-sub i-paid tot">I·Paid</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((row) => {
-                    const r = row.record
-                    return (
-                      <tr key={`${r._id}-${year}`}>
-                        <td className="name-cell">
-                          <div className="name-main">{r.name}</div>
-                          <div className="name-meta">
-                            Borrowed {fmt(r.amount)} · {r.rateOfInterest}%/mo · {r.tenure} mo<br />
-                            from {parseDate(r.date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                          </div>
-                          <div className={`out-badge ${row.outstanding <= 0.005 ? 'clear' : 'owed'}`}>
-                            {row.outstanding <= 0.005 ? '✓ Cleared' : `Outstanding ${fmt(row.outstanding)}`}
-                          </div>
-                          <div className="name-actions">
-                            <button className="edit-btn" onClick={() => openEditModal(r)}>Edit</button>
-                            <button className="del-btn" onClick={() => handleDelete(r._id)}>Delete</button>
-                          </div>
-                        </td>
-                        {MONTHS.map((m) => {
-                          const cell = row.cells?.[m]
-                          if (!cell) {
-                            return <td key={m} className="td-inactive" colSpan={4}>—</td>
-                          }
-                          const pCarry = cell.principalCarry > 0.005
-                          const iCarry = cell.interestCarry > 0.005
-                          return (
-                            <React.Fragment key={m}>
-                              <td className="cell p-due month-group">
-                                <div>{fmt(cell.principalTotalDue)}</div>
-                                {pCarry && <div className="carry">carry {fmt(cell.principalCarry)} →</div>}
-                              </td>
-                              <td
-                                className="cell p-paid"
-                                onClick={() => openCellEdit(r, year, m, cell)}
-                                title="Click to edit paid amounts"
-                              >
-                                {fmt(cell.principalPaid)}
-                              </td>
-                              <td className="cell i-due">
-                                <div>{fmt(cell.interestTotalDue)}</div>
-                                {iCarry && <div className="carry">carry {fmt(cell.interestCarry)} →</div>}
-                              </td>
-                              <td
-                                className="cell i-paid"
-                                onClick={() => openCellEdit(r, year, m, cell)}
-                                title="Click to edit paid amounts"
-                              >
-                                {fmt(cell.interestPaid)}
-                              </td>
-                            </React.Fragment>
-                          )
-                        })}
-                        {(() => {
-                          const t = rowYearTotals(row.cells)
-                          return (
-                            <>
-                              <td className="cell p-due total-cell">{fmt(t.pDue)}</td>
-                              <td className="cell p-paid total-cell">{fmt(t.pPaid)}</td>
-                              <td className="cell i-due total-cell">{fmt(t.iDue)}</td>
-                              <td className="cell i-paid total-cell">{fmt(t.iPaid)}</td>
-                            </>
-                          )
-                        })()}
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        ))
+        <>
+          {/* ── With Interest tables ─────────────────────────────────────── */}
+          {withInterest.length > 0 && (
+            <>
+              <div className="bw-section-title">
+                <span className="dot" />
+                With Interest ({withInterest.length})
+              </div>
+              {renderYearGroups(withInterestYearGroups, true)}
+            </>
+          )}
+
+          {/* ── Interest-Free tables ─────────────────────────────────────── */}
+          {interestFree.length > 0 && (
+            <>
+              <div className="bw-section-title free">
+                <span className="dot" />
+                Interest-Free ({interestFree.length})
+              </div>
+              {renderYearGroups(interestFreeYearGroups, false)}
+            </>
+          )}
+        </>
       )}
 
       {/* ── Cell edit modal (principal + interest paid) ─────────────────── */}
@@ -650,23 +675,25 @@ const Borrow = () => {
                   />
                 </div>
               </div>
-              <div className="field-row">
-                <div className="field">
-                  <label className="field-label">
-                    Interest paid
-                    <span className="field-hint">due {fmt(cellEdit.cell.interestTotalDue)}</span>
-                  </label>
-                  <input
-                    className="field-input"
-                    type="number"
-                    step="0.01"
-                    value={cellForm.interestPaid}
-                    onChange={(e) => setCellField('interestPaid', e.target.value)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') handleCellSave() }}
-                    placeholder="0"
-                  />
+              {Number(cellEdit.record.rateOfInterest) > 0 && (
+                <div className="field-row">
+                  <div className="field">
+                    <label className="field-label">
+                      Interest paid
+                      <span className="field-hint">due {fmt(cellEdit.cell.interestTotalDue)}</span>
+                    </label>
+                    <input
+                      className="field-input"
+                      type="number"
+                      step="0.01"
+                      value={cellForm.interestPaid}
+                      onChange={(e) => setCellField('interestPaid', e.target.value)}
+                      onKeyDown={(e) => { if (e.key === 'Enter') handleCellSave() }}
+                      placeholder="0"
+                    />
+                  </div>
                 </div>
-              </div>
+              )}
             </div>
             <div className="modal-foot">
               <button className="btn-cancel" onClick={closeCellEdit} disabled={savingCell}>Cancel</button>

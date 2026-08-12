@@ -20,6 +20,9 @@ const Borrow        = lazy(() => import('./assets/borrow'))
 const Borrowform    = lazy(() => import('./assets/borrowform'))
 const Lending       = lazy(() => import('./assets/Lending'))
 const Lendingform   = lazy(() => import('./assets/lendingform'))
+const Staff         = lazy(() => import('./assets/staff'))
+const Staffform     = lazy(() => import('./assets/staffform'))
+const Attendance    = lazy(() => import('./assets/Attendance'))
 
 const PageLoader = () => (
   <div style={{
@@ -239,6 +242,11 @@ function SignedInApp() {
               <Route path="/borrowform"     element={<Borrowform />} />
               <Route path="/lending"        element={<Lending />} />
               <Route path="/lendingform"    element={<Lendingform />} />
+
+              <Route path="/staff"          element={<Staff />} />
+              <Route path="/staffform"      element={<Staffform />} />
+
+              <Route path="/attendance"     element={<Attendance />} />
 
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

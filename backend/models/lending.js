@@ -21,6 +21,12 @@ const lendingSchema = new mongoose.Schema(
       type: Date,
       required: true,
     },
+    // Which pool the lent money left from (money out of that pool)
+    lentPool: {
+      type: String,
+      enum: ['Home', 'Office'],
+      default: 'Home',
+    },
     // How much of `amount` has been received back so far
     receivedAmount: {
       type: Number,
@@ -31,6 +37,12 @@ const lendingSchema = new mongoose.Schema(
     receivedDate: {
       type: Date,
       default: null,
+    },
+    // Which budget pool a received repayment credits (defaults to Home)
+    receivedPool: {
+      type: String,
+      enum: ['Home', 'Office'],
+      default: 'Home',
     },
   },
   { timestamps: true }

@@ -1535,8 +1535,11 @@ const MonthViewModal = memo(function MonthViewModal({
   budgets,
   transfers,
   onSetBudget,
+  borrows,
+  lendings,
   onTransfer,
   onDeleteTransfer, 
+  onAddExpense,
 }) {
   const [editMode, setEditMode] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
@@ -1617,7 +1620,7 @@ const MonthViewModal = memo(function MonthViewModal({
         _paySource: existingPay?.source || (emp.category === 'Home' ? 'Home' : 'Office'),
       }
     })
-    const oneTime = oneTimeRows.map(exp => {
+const oneTime = oneTimeRows.map(exp => {
       const isPaid = !!exp.otPaid
       return {
         _id: exp._id,
@@ -1637,10 +1640,22 @@ const MonthViewModal = memo(function MonthViewModal({
         _paySource: exp.otSource || (exp.category === 'Home' ? 'Home' : 'Office'),
       }
     })
-    return [...recurring, ...oneTime]
+    const all = [...recurring, ...oneTime]
+    // Two-level sort:
+    //   1) group by expense type, alphabetical (A before B)
+    //   2) within each type, unpaid first (due > 0), paid last
+    return all.sort((a, b) => {
+      const typeA = (a.expenseType || '').toLowerCase()
+      const typeB = (b.expenseType || '').toLowerCase()
+      if (typeA !== typeB) return typeA.localeCompare(typeB)
+      const aPaid = (a.due || 0) <= 0
+      const bPaid = (b.due || 0) <= 0
+      if (aPaid === bPaid) return 0
+      return aPaid ? 1 : -1
+    })
   }, [recurringRows, oneTimeRows, calYr, monthName, monthIndex])
 
-    const recurringTotal = recurringRows.reduce((s, r) => s + (r.cell.amt  || 0), 0)
+  const recurringTotal = recurringRows.reduce((s, r) => s + (r.cell.amt  || 0), 0)
   const recurringPaid  = recurringRows.reduce((s, r) => s + (r.cell.paid || 0), 0)
   const oneTimeTotal   = oneTimeRows.reduce((s, r) => s + r.amount, 0)
   const oneTimePaid    = oneTimeRows.reduce((s, r) => s + (r.otPaid ? r.amount : 0), 0)
@@ -1681,6 +1696,45 @@ const MonthViewModal = memo(function MonthViewModal({
       })
       return spent
     }
+    // Net borrow/lending effect on a pool for a given FY month.
+    // + = money into the pool, − = money out.
+    const loanFlowFor = (mName, pool) => {
+      const cy = calYearForFYMonth(selectedYear, mName)
+      const mIdx = MONTHS.indexOf(mName)
+      let net = 0
+
+      ;(borrows || []).forEach(b => {
+        // Borrow received → credited to borrowedPool, in the borrow's own month
+        const d = parseUTCDate(b.date)
+        if (d.getMonth() === mIdx && d.getFullYear() === cy) {
+          if ((b.borrowedPool || 'Home') === pool) net += (b.amount || 0)
+        }
+        // Borrow repayments → deducted from payment.pool, in the payment's month
+        ;(b.payments || []).forEach(p => {
+          if (p.year === cy && p.month === mName && (p.pool || 'Home') === pool) {
+            net -= (p.principalPaid || 0) + (p.interestPaid || 0)
+          }
+        })
+      })
+
+      ;(lendings || []).forEach(l => {
+        // Lending given out → deducted from lentPool, in the lending's own month
+        const d = parseUTCDate(l.date)
+        if (d.getMonth() === mIdx && d.getFullYear() === cy) {
+          if ((l.lentPool || 'Home') === pool) net -= (l.amount || 0)
+        }
+        // Lending received back → credited to receivedPool, in the received month
+        if (l.receivedAmount > 0 && l.receivedDate) {
+          const rd = parseUTCDate(l.receivedDate)
+          if (rd.getMonth() === mIdx && rd.getFullYear() === cy) {
+            if ((l.receivedPool || 'Home') === pool) net += (l.receivedAmount || 0)
+          }
+        }
+      })
+
+      return net
+    }
+
     const build = (pool) => {
       let opening = 0
       const rows = {}
@@ -1688,16 +1742,17 @@ const MonthViewModal = memo(function MonthViewModal({
         const deposit = depFor(mName, pool)
         const xfer    = xferFor(mName, pool)
         const spent   = spendFor(mName, pool)
-        const available = opening + deposit + xfer
+        const loanFlow = loanFlowFor(mName, pool)
+        const available = opening + deposit + xfer + loanFlow
         const surplus   = available - spent
-        rows[mName] = { opening, deposit, xfer, spent, available, surplus }
+        rows[mName] = { opening, deposit, xfer, spent, loanFlow, available, surplus }
         opening = Math.max(0, surplus)
         if (mName === monthName) break
       }
       return rows[monthName] || { opening: 0, deposit: 0, xfer: 0, spent: 0, available: 0, surplus: 0 }
     }
     return { Home: build('Home'), Office: build('Office') }
-  }, [budgets, transfers, selectedYear, monthName, allExpenses])
+  }, [budgets, transfers, borrows, lendings, selectedYear, monthName, allExpenses])
 
   useEffect(() => {
     document.body.style.overflow = 'hidden'
@@ -1837,8 +1892,34 @@ const MonthViewModal = memo(function MonthViewModal({
                   fontSize: 12.5, fontWeight: editMode ? 600 : 500, fontFamily: "'Inter', sans-serif",
                 }}
               >
-                <span style={{ fontSize: 13 }}>✏️</span>
+               <span style={{ fontSize: 13 }}>✏️</span>
                 {editMode ? 'Done editing' : 'Edit'}
+              </button>
+              <button
+                onClick={onClose}
+                title="Go back to the master expense table"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                  border: '1px solid #ececec', background: '#fff', color: '#4b5563',
+                  fontSize: 12.5, fontWeight: 500, fontFamily: "'Inter', sans-serif",
+                }}
+              >
+              <span style={{ fontSize: 13 }}>📋</span>
+                Category
+              </button>
+              <button
+                onClick={() => onAddExpense()}
+                title="Go to the Add Expense page"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                  border: 'none', background: '#18181b', color: '#fff',
+                  fontSize: 12.5, fontWeight: 600, fontFamily: "'Inter', sans-serif",
+                }}
+              >
+                <span style={{ fontSize: 15, lineHeight: 1 }}>+</span>
+                Add Expense
               </button>
               <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid #ececec', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, color: '#6b7280' }}>✕</button>
             </div>
@@ -2156,7 +2237,7 @@ const EmployeeTable = () => {
 
   const [deleteTarget,       setDeleteTarget]       = useState(null)
   const [deleting,           setDeleting]           = useState(false)
-  const [monthViewIndex,     setMonthViewIndex]     = useState(null)
+  const [monthViewIndex,     setMonthViewIndex]     = useState(() => new Date().getMonth())
 
   const [overrideTarget,     setOverrideTarget]     = useState(null)
   const [savingOverride,     setSavingOverride]     = useState(false)
@@ -2179,7 +2260,8 @@ const EmployeeTable = () => {
   const [budgets, setBudgets] = useState([])
   const [transfers, setTransfers] = useState([])
   
-
+  const [borrows, setBorrows] = useState([])
+  const [lendings, setLendings] = useState([])
 
 
   const visibleExpenses = useMemo(() => {
@@ -2247,6 +2329,24 @@ const EmployeeTable = () => {
       }
     }
     fetchBudgets()
+  }, [])
+
+  useEffect(() => {
+    const fetchLoans = async () => {
+      try {
+        const [bRes, lRes] = await Promise.all([
+          fetch(`${API_BASE}/borrow`),
+          fetch(`${API_BASE}/lending`),
+        ])
+        const bData = await bRes.json()
+        const lData = await lRes.json()
+        setBorrows(Array.isArray(bData) ? bData : [])
+        setLendings(Array.isArray(lData) ? lData : [])
+      } catch (err) {
+        console.error('Failed to fetch borrows/lendings:', err)
+      }
+    }
+    fetchLoans()
   }, [])
 
   const resolveRealId = useCallback((mergedId, month, year) => {
@@ -2797,9 +2897,13 @@ const handleSetBudget = useCallback(async (fyStartYear, month, year, pool, value
           onAmountEdit={handleMonthAmountEdit}
           budgets={budgets}
           transfers={transfers}
+          borrows={borrows}
+          lendings={lendings}
           onSetBudget={handleSetBudget}
           onTransfer={handleTransfer}
+          onAddExpense={() => { setMonthViewIndex(null); navigate('/employee') }}
           onDeleteTransfer={handleDeleteTransfer}
+
         />
       )}
       {overrideTarget && (

@@ -16,6 +16,7 @@ const Lendingform = () => {
     name: '',
     amount: '',
     date: todayISO(),
+    lentPool: 'Home',
   })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
@@ -24,6 +25,10 @@ const Lendingform = () => {
   const handleChange = (e) => {
     const { name, value } = e.target
     setForm(prev => ({ ...prev, [name]: value }))
+  }
+
+  const setPool = (pool) => {
+    setForm(prev => ({ ...prev, lentPool: pool === 'Office' ? 'Office' : 'Home' }))
   }
 
   const handleSubmit = async () => {
@@ -41,6 +46,7 @@ const Lendingform = () => {
           name: form.name.trim(),
           amount: Number(form.amount),
           date: form.date,
+          lentPool: form.lentPool === 'Office' ? 'Office' : 'Home',
         }),
       })
       if (!res.ok) {
@@ -80,10 +86,26 @@ const Lendingform = () => {
           transition: border 0.15s, box-shadow 0.15s; outline: none;
         }
         .lf-input:focus { border-color: #18181b; box-shadow: 0 0 0 3px rgba(24,24,27,0.06); }
+        .lf-hint { font-size: 11.5px; color: #9ca3af; margin-top: 5px; }
         .lf-err {
           background: #fff5f5; border: 1px solid #fca5a5; color: #dc2626;
           padding: 9px 12px; border-radius: 9px; font-size: 13px; margin-bottom: 16px;
         }
+
+        /* Pool selector (Home / Office) */
+        .lf-pool { display: flex; gap: 10px; }
+        .lf-pool-opt {
+          flex: 1; text-align: center; padding: 11px 12px; border-radius: 9px;
+          border: 1px solid #e5e7eb; background: #fff; color: #6b7280;
+          font-family: inherit; font-size: 14px; font-weight: 600; cursor: pointer;
+          transition: all 0.13s;
+        }
+        .lf-pool-opt:hover { border-color: #c4c4c4; }
+        .lf-pool-opt.active {
+          border-color: #18181b; background: #18181b; color: #fff;
+          box-shadow: 0 0 0 3px rgba(24,24,27,0.06);
+        }
+
         .lf-actions { display: flex; gap: 10px; margin-top: 22px; }
         .lf-btn {
           flex: 1; padding: 11px; border-radius: 9px; font-family: inherit;
@@ -210,6 +232,27 @@ const Lendingform = () => {
             className="lf-input" type="date" name="date"
             value={form.date} onChange={handleChange}
           />
+        </div>
+
+        <div className="lf-field">
+          <label className="lf-label">Lend from pool</label>
+          <div className="lf-pool">
+            <button
+              type="button"
+              className={`lf-pool-opt${form.lentPool === 'Home' ? ' active' : ''}`}
+              onClick={() => setPool('Home')}
+            >
+              Home
+            </button>
+            <button
+              type="button"
+              className={`lf-pool-opt${form.lentPool === 'Office' ? ' active' : ''}`}
+              onClick={() => setPool('Office')}
+            >
+              Office
+            </button>
+          </div>
+          <div className="lf-hint">The lent money is deducted from this pool for its month.</div>
         </div>
 
         <div className="lf-actions">

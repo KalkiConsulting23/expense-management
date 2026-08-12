@@ -8,6 +8,8 @@ const paymentSchema = new mongoose.Schema(
     month: { type: String, required: true },       // 'Jan' … 'Dec'
     principalPaid: { type: Number, default: 0 },   // principal repaid this month
     interestPaid: { type: Number, default: 0 },    // interest repaid this month
+    // Which pool this repayment is deducted from (money leaving that pool)
+    pool: { type: String, enum: ['Home', 'Office'], default: 'Home' },
   },
   { _id: false }
 )
@@ -43,6 +45,12 @@ const borrowSchema = new mongoose.Schema(
     date: {
       type: Date,
       required: true,
+    },
+    // Which budget pool the borrowed amount credits (defaults to Home)
+    borrowedPool: {
+      type: String,
+      enum: ['Home', 'Office'],
+      default: 'Home',
     },
     // Every borrowing now works the same way:
     //   monthly principal due = amount / tenure

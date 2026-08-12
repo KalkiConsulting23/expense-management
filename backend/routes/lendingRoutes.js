@@ -30,15 +30,17 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   try {
     const { userId } = getAuth(req)
-    const { name, amount, date, receivedAmount } = req.body
+    const { name, amount, date, receivedAmount, receivedPool, lentPool } = req.body
 
     const record = new Lending({
       userId,
       name,
       amount: Number(amount),
       date: date ? new Date(date) : new Date(),
+      lentPool: ['Home', 'Office'].includes(lentPool) ? lentPool : 'Home',
       receivedAmount: receivedAmount !== undefined ? Number(receivedAmount) : 0,
       receivedDate: receivedAmount && Number(receivedAmount) > 0 ? new Date() : null,
+      receivedPool: ['Home', 'Office'].includes(receivedPool) ? receivedPool : 'Home',
     })
 
     const saved = await record.save()
@@ -48,17 +50,19 @@ router.post('/', async (req, res) => {
   }
 })
 
-// PATCH update a lending record (name/amount/date)
+// PATCH update a lending record (name/amount/date/pools)
 router.patch('/:id', async (req, res) => {
   try {
     const { userId } = getAuth(req)
-    const { name, amount, date, receivedAmount, receivedDate } = req.body
+    const { name, amount, date, receivedAmount, receivedDate, receivedPool, lentPool } = req.body
     const update = {}
     if (name !== undefined) update.name = name
     if (amount !== undefined) update.amount = Number(amount)
     if (date !== undefined) update.date = new Date(date)
     if (receivedAmount !== undefined) update.receivedAmount = Number(receivedAmount)
     if (receivedDate !== undefined) update.receivedDate = receivedDate ? new Date(receivedDate) : null
+    if (receivedPool !== undefined && ['Home', 'Office'].includes(receivedPool)) update.receivedPool = receivedPool
+    if (lentPool !== undefined && ['Home', 'Office'].includes(lentPool)) update.lentPool = lentPool
 
     const updated = await Lending.findOneAndUpdate(
       { _id: req.params.id, userId },
@@ -76,7 +80,7 @@ router.patch('/:id', async (req, res) => {
 router.patch('/:id/receive', async (req, res) => {
   try {
     const { userId } = getAuth(req)
-    const { received } = req.body
+    const { received, pool } = req.body
     const value = Number(received)
     if (isNaN(value) || value < 0) {
       return res.status(400).json({ error: 'received must be a non-negative number' })
@@ -89,6 +93,7 @@ router.patch('/:id/receive', async (req, res) => {
     const newTotal = Number(record.receivedAmount || 0) + value
     record.receivedAmount = Math.min(newTotal, record.amount)
     record.receivedDate = record.receivedAmount > 0 ? new Date() : null
+    if (pool && ['Home', 'Office'].includes(pool)) record.receivedPool = pool
 
     const saved = await record.save()
     res.json(saved)

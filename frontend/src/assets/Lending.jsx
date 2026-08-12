@@ -10,6 +10,8 @@ const Lending = () => {
   const [error, setError] = useState('')
   // Local draft values for the "new payment" inputs, keyed by record id
   const [drafts, setDrafts] = useState({})
+  // Which pool each receive credits, keyed by record id (defaults to Home)
+  const [poolDrafts, setPoolDrafts] = useState({})
   const [savingId, setSavingId] = useState(null)
 
   const fetchRecords = async () => {
@@ -21,10 +23,15 @@ const Lending = () => {
       const data = await res.json()
       const list = Array.isArray(data) ? data : []
       setRecords(list)
-      // start every new-payment input blank
+      // start every new-payment input blank; pool defaults to the record's receivedPool or Home
       const seed = {}
-      list.forEach(r => { seed[r._id] = '' })
+      const poolSeed = {}
+      list.forEach(r => {
+        seed[r._id] = ''
+        poolSeed[r._id] = r.receivedPool || 'Home'
+      })
       setDrafts(seed)
+      setPoolDrafts(poolSeed)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -38,6 +45,10 @@ const Lending = () => {
 
   const handleDraftChange = (id, value) => {
     setDrafts(prev => ({ ...prev, [id]: value }))
+  }
+
+  const handlePoolChange = (id, pool) => {
+    setPoolDrafts(prev => ({ ...prev, [id]: pool === 'Office' ? 'Office' : 'Home' }))
   }
 
   const handleSaveReceived = async (record) => {
@@ -59,13 +70,15 @@ const Lending = () => {
       return
     }
 
+    const pool = poolDrafts[record._id] === 'Office' ? 'Office' : 'Home'
+
     setSavingId(record._id)
     const prev = records
     const newTotal = alreadyReceived + value
     // optimistic update — add to the running total
     setRecords(records.map(r =>
       r._id === record._id
-        ? { ...r, receivedAmount: newTotal, receivedDate: new Date().toISOString() }
+        ? { ...r, receivedAmount: newTotal, receivedDate: new Date().toISOString(), receivedPool: pool }
         : r
     ))
 
@@ -73,7 +86,7 @@ const Lending = () => {
       const res = await fetch(`${API_BASE}/lending/${record._id}/receive`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ received: value }),
+        body: JSON.stringify({ received: value, pool }),
       })
       if (!res.ok) throw new Error('Failed to update received amount')
       const saved = await res.json()
@@ -119,7 +132,7 @@ const Lending = () => {
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         .lend-page {
           font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-          max-width: 1050px; margin: 0 auto; padding: 24px 20px 60px;
+          max-width: 1120px; margin: 0 auto; padding: 24px 20px 60px;
         }
         .lend-head {
           display: flex; align-items: flex-start; justify-content: space-between;
@@ -184,6 +197,16 @@ const Lending = () => {
           border-radius: 20px; margin-left: 8px; vertical-align: middle;
         }
         .pill.done { background: #dcfce7; color: #16a34a; }
+
+        /* Pool selector (Home / Office) for receive-into-pool */
+        .pool-mini { display: inline-flex; border: 1px solid #e5e7eb; border-radius: 7px; overflow: hidden; }
+        .pool-mini button {
+          border: none; background: #fff; color: #6b7280; font-family: inherit;
+          font-size: 12px; font-weight: 600; padding: 6px 11px; cursor: pointer; transition: all 0.13s;
+        }
+        .pool-mini button + button { border-left: 1px solid #e5e7eb; }
+        .pool-mini button.active { background: #18181b; color: #fff; }
+        .pool-mini button:disabled { opacity: 0.5; cursor: not-allowed; }
       `}</style>
 
       <div className="lend-head">
@@ -219,6 +242,7 @@ const Lending = () => {
                 <th>Date</th>
                 <th>Received (₹)</th>
                 <th>Add Payment (₹)</th>
+                <th>Credit to pool</th>
                 <th>Remaining (₹)</th>
                 <th></th>
               </tr>
@@ -228,6 +252,7 @@ const Lending = () => {
                 const received = Number(r.receivedAmount || 0)
                 const remaining = Number(r.amount) - received
                 const cleared = remaining <= 0
+                const selPool = poolDrafts[r._id] === 'Office' ? 'Office' : 'Home'
                 return (
                   <tr key={r._id}>
                     <td className="cell-name">
@@ -261,6 +286,26 @@ const Lending = () => {
                           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
                             <polyline points="20 6 9 17 4 12"/>
                           </svg>
+                        </button>
+                      </div>
+                    </td>
+                    <td>
+                      <div className="pool-mini">
+                        <button
+                          className={selPool === 'Home' ? 'active' : ''}
+                          onClick={() => handlePoolChange(r._id, 'Home')}
+                          disabled={cleared}
+                          type="button"
+                        >
+                          Home
+                        </button>
+                        <button
+                          className={selPool === 'Office' ? 'active' : ''}
+                          onClick={() => handlePoolChange(r._id, 'Office')}
+                          disabled={cleared}
+                          type="button"
+                        >
+                          Office
                         </button>
                       </div>
                     </td>
