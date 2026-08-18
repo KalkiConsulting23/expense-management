@@ -5,15 +5,33 @@ const { getAuth } = require('@clerk/express');
 
 const isValidId = (id) => /^[0-9a-fA-F]{24}$/.test(id);
 
+// NOTE: employeeId is intentionally NOT in this list — it is generated on the
+// backend at creation time and must not be overwritten by client input.
 const STAFF_FIELDS = [
-  'employeeId', 'firstName', 'lastName', 'department', 'email', 'designation',
+  'firstName', 'lastName', 'department', 'email', 'designation',
   'workPhoneNumber', 'dateOfJoining', 'reportingManager', 'dateOfBirth',
   'personalMobileNumber', 'personalEmailAddress', 'dateOfExit', 'gender',
   'maritalStatus', 'sourceOfHire', 'employeeStatus', 'employmentType', 'age',
+  'salary',
   'currentExperience', 'totalExperience', 'permanentAddress', 'aadhaar', 'pan',
   'fatherName', 'paymentMode', 'bankHolderName', 'bankName', 'accountNumber',
   'ifscCode', 'bankAccountType',
 ];
+
+// Build an employee ID like "DEEP1033": a 4-letter name prefix + a unique
+// 4-digit number, scoped per user so two admins can't clash.
+const generateEmployeeId = async (userId, firstName) => {
+  const clean = String(firstName || 'EMP').replace(/[^a-zA-Z]/g, '').toUpperCase();
+  const prefix = (clean + 'XXXX').slice(0, 4); // pad short names, e.g. "JO" -> "JOXX"
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const num = Math.floor(1000 + Math.random() * 9000); // 1000–9999
+    const candidate = `${prefix}${num}`;
+    const exists = await Staff.exists({ userId, employeeId: candidate });
+    if (!exists) return candidate;
+  }
+  // Fallback guarantees uniqueness if we somehow collide 20 times in a row.
+  return `${prefix}${Date.now().toString().slice(-4)}`;
+};
 
 // ─── ADD STAFF ───
 router.post('/add', async (req, res) => {
@@ -25,7 +43,9 @@ router.post('/add', async (req, res) => {
       if (req.body[field] !== undefined) data[field] = req.body[field];
     });
 
-    const newStaff = new Staff({ userId, ...data });
+    const employeeId = await generateEmployeeId(userId, data.firstName);
+
+    const newStaff = new Staff({ userId, employeeId, ...data });
     await newStaff.save();
     res.status(201).json(newStaff);
   } catch (err) {

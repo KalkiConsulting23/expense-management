@@ -9,6 +9,7 @@ const DETAIL_FIELDS = [
   ['gender', 'Gender'],
   ['maritalStatus', 'Marital Status'],
   ['age', 'Age'],
+  ['salary', 'Salary'],
   ['aadhaar', 'Aadhaar'],
   ['pan', 'PAN'],
   ['permanentAddress', 'Permanent Address'],
@@ -28,6 +29,18 @@ const DETAIL_FIELDS = [
 ]
 
 const DATE_FIELDS = new Set(['dateOfBirth', 'dateOfExit'])
+
+// Compute whole-year age from a date-of-birth so the shown value never goes stale.
+const calcAge = (dob) => {
+  if (!dob) return ''
+  const b = new Date(dob)
+  if (isNaN(b)) return ''
+  const now = new Date()
+  let age = now.getFullYear() - b.getFullYear()
+  const m = now.getMonth() - b.getMonth()
+  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age--
+  return age >= 0 ? age : ''
+}
 
 const Staff = () => {
   const navigate = useNavigate()
@@ -74,7 +87,16 @@ const Staff = () => {
     return new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
   }
 
-  const formatValue = (key, value) => {
+  const formatValue = (key, value, record) => {
+    // Age is always derived live from DOB, so it stays correct after birthdays.
+    if (key === 'age') {
+      const a = calcAge(record.dateOfBirth)
+      return a === '' ? '—' : a
+    }
+    if (key === 'salary') {
+      if (value === undefined || value === null || value === '') return '—'
+      return '₹' + Number(value).toLocaleString('en-IN')
+    }
     if (value === undefined || value === null || value === '') return '—'
     if (DATE_FIELDS.has(key)) return formatDate(value)
     return value
@@ -220,7 +242,7 @@ const Staff = () => {
                             {DETAIL_FIELDS.map(([key, label]) => (
                               <div className="stf-detail-item" key={key}>
                                 <span className="stf-detail-label">{label}</span>
-                                <span className="stf-detail-value">{formatValue(key, r[key])}</span>
+                                <span className="stf-detail-value">{formatValue(key, r[key], r)}</span>
                               </div>
                             ))}
                           </div>

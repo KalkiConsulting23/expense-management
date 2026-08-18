@@ -3,10 +3,9 @@ import { useNavigate } from 'react-router-dom'
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api'
 
-const REQUIRED_FIELDS = ['employeeId', 'firstName', 'lastName']
+const REQUIRED_FIELDS = ['firstName', 'lastName']
 
 const BLANK_FORM = {
-  employeeId: '',
   firstName: '',
   lastName: '',
   department: '',
@@ -25,6 +24,7 @@ const BLANK_FORM = {
   employeeStatus: '',
   employmentType: '',
   age: '',
+  salary: '',
   currentExperience: '',
   totalExperience: '',
   permanentAddress: '',
@@ -39,7 +39,44 @@ const BLANK_FORM = {
   bankAccountType: '',
 }
 
-const Field = ({ label, name, type = 'text', options, value, error, onChange }) => (
+// Compute whole-year age from a YYYY-MM-DD date-of-birth string.
+const calcAge = (dob) => {
+  if (!dob) return ''
+  const b = new Date(dob)
+  if (isNaN(b)) return ''
+  const now = new Date()
+  let age = now.getFullYear() - b.getFullYear()
+  const m = now.getMonth() - b.getMonth()
+  if (m < 0 || (m === 0 && now.getDate() < b.getDate())) age--
+  return age >= 0 ? age : ''
+}
+
+// Human-readable experience from joining date to today, e.g. "1 yr 8 mo".
+// Returns both the friendly text (for display) and a decimal-years value
+// (for the numeric schema field, e.g. 1.7).
+const calcExperience = (doj) => {
+  if (!doj) return { text: '', years: '' }
+  const start = new Date(doj)
+  if (isNaN(start)) return { text: '', years: '' }
+  const now = new Date()
+  if (start > now) return { text: '', years: '' }
+
+  let months = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth())
+  if (now.getDate() < start.getDate()) months -= 1
+  if (months < 0) months = 0
+
+  const y = Math.floor(months / 12)
+  const m = months % 12
+  const parts = []
+  if (y > 0) parts.push(`${y} yr${y !== 1 ? 's' : ''}`)
+  if (m > 0) parts.push(`${m} mo`)
+  const text = parts.length ? parts.join(' ') : '0 mo'
+
+  const years = Math.round((months / 12) * 10) / 10
+  return { text, years }
+}
+
+const Field = ({ label, name, type = 'text', options, value, error, onChange, readOnly, placeholder }) => (
   <div className="sf-field">
     <label className="sf-label">
       {label}
@@ -65,11 +102,13 @@ const Field = ({ label, name, type = 'text', options, value, error, onChange }) 
       />
     ) : (
       <input
-        className={`sf-input${error ? ' err' : ''}`}
+        className={`sf-input${error ? ' err' : ''}${readOnly ? ' sf-readonly' : ''}`}
         type={type}
         name={name}
         value={value}
         onChange={onChange}
+        readOnly={readOnly}
+        placeholder={placeholder}
       />
     )}
     {error && <div className="sf-err">⚠ {error}</div>}
@@ -79,6 +118,7 @@ const Field = ({ label, name, type = 'text', options, value, error, onChange }) 
 const Staffform = () => {
   const navigate = useNavigate()
   const [form, setForm] = useState({ ...BLANK_FORM })
+  const [currentExpText, setCurrentExpText] = useState('')
   const [errors, setErrors] = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState(null)
@@ -90,13 +130,22 @@ const Staffform = () => {
 
   const handleChange = (e) => {
     const { name, value } = e.target
-    setForm(prev => ({ ...prev, [name]: value }))
+    if (name === 'dateOfBirth') {
+      // Auto-fill age whenever DOB changes.
+      setForm(prev => ({ ...prev, dateOfBirth: value, age: calcAge(value) }))
+    } else if (name === 'dateOfJoining') {
+      // Auto-fill current experience whenever joining date changes.
+      const exp = calcExperience(value)
+      setCurrentExpText(exp.text)
+      setForm(prev => ({ ...prev, dateOfJoining: value, currentExperience: exp.years }))
+    } else {
+      setForm(prev => ({ ...prev, [name]: value }))
+    }
     if (errors[name]) setErrors(prev => ({ ...prev, [name]: undefined }))
   }
 
   const validate = () => {
     const e = {}
-    if (!form.employeeId.trim()) e.employeeId = 'Employee ID is required'
     if (!form.firstName.trim()) e.firstName = 'First name is required'
     if (!form.lastName.trim()) e.lastName = 'Last name is required'
     return e
@@ -111,7 +160,7 @@ const Staffform = () => {
     }
 
     const payload = { ...form }
-    ;['age', 'currentExperience', 'totalExperience'].forEach((f) => {
+    ;['age', 'salary', 'currentExperience', 'totalExperience'].forEach((f) => {
       payload[f] = payload[f] === '' ? undefined : Number(payload[f])
     })
     ;['dateOfJoining', 'dateOfBirth', 'dateOfExit'].forEach((f) => {
@@ -179,8 +228,11 @@ const Staffform = () => {
         }
         .sf-input:focus { border-color: #18181b; box-shadow: 0 0 0 3px rgba(24,24,27,0.06); }
         .sf-input.err { border-color: #dc2626; background: #fef2f2; }
+        .sf-input.sf-readonly { background: #f7f7f8; color: #6b7280; cursor: default; }
+        .sf-input.sf-readonly:focus { border-color: #e5e7eb; box-shadow: none; }
         .sf-textarea { resize: vertical; font-family: inherit; }
         .sf-err { font-size: 11.5px; color: #dc2626; font-weight: 500; margin-top: 5px; }
+        .sf-hint { font-size: 11.5px; color: #9ca3af; font-weight: 500; margin-top: 5px; }
 
         .sf-actions { display: flex; gap: 10px; justify-content: flex-end; }
         .sf-btn {
@@ -215,7 +267,7 @@ const Staffform = () => {
       `}</style>
 
       <div className="sf-title">Add Staff</div>
-      <div className="sf-sub">Fill in the staff member's details below.</div>
+      <div className="sf-sub">Fill in the staff member's details below. An Employee ID is generated automatically on save.</div>
 
       <div className="sf-card">
         <div className="sf-section-title">Personal Details</div>
@@ -226,7 +278,7 @@ const Staffform = () => {
           {field('Date of Birth', 'dateOfBirth', { type: 'date' })}
           {field('Gender', 'gender', { type: 'select', options: ['Male', 'Female', 'Other'] })}
           {field('Marital Status', 'maritalStatus', { type: 'select', options: ['Single', 'Married', 'Other'] })}
-          {field('Age', 'age', { type: 'number' })}
+          {field('Age', 'age', { type: 'number', readOnly: true, placeholder: 'Auto from DOB' })}
           {field('Aadhaar', 'aadhaar')}
           {field('PAN', 'pan')}
           <div className="sf-field full">
@@ -238,16 +290,25 @@ const Staffform = () => {
       <div className="sf-card">
         <div className="sf-section-title">Employment Details</div>
         <div className="sf-grid">
-          {field('Employee ID', 'employeeId')}
           {field('Department', 'department')}
           {field('Designation', 'designation')}
+          {field('Salary (₹ / month)', 'salary', { type: 'number' })}
           {field('Reporting Manager', 'reportingManager')}
           {field('Date of Joining', 'dateOfJoining', { type: 'date' })}
           {field('Date of Exit', 'dateOfExit', { type: 'date' })}
           {field('Employee Status', 'employeeStatus', { type: 'select', options: ['Active', 'Inactive'] })}
           {field('Employment Type', 'employmentType', { type: 'select', options: ['Full-time', 'Part-time', 'Contract', 'Intern'] })}
           {field('Source of Hire', 'sourceOfHire')}
-          {field('Current Experience (yrs)', 'currentExperience', { type: 'number' })}
+          <Field
+            label="Current Experience"
+            name="currentExperience"
+            type="text"
+            value={currentExpText}
+            error={errors.currentExperience}
+            onChange={() => {}}
+            readOnly
+            placeholder="Auto from joining date"
+          />
           {field('Total Experience (yrs)', 'totalExperience', { type: 'number' })}
         </div>
       </div>

@@ -3,8 +3,10 @@ const mongoose = require("mongoose");
 const staffSchema = new mongoose.Schema(
   {
     userId: { type: String, required: true, index: true },
-     
-    employeeId: { type: String, required: true, trim: true },
+
+    // Auto-generated on the backend (e.g. "DEEP1033"); client does not send it.
+    employeeId: { type: String, trim: true, index: true },
+    salary: { type: Number },
     firstName: { type: String, required: true, trim: true },
     lastName: { type: String, required: true, trim: true },
     department: { type: String, trim: true },
