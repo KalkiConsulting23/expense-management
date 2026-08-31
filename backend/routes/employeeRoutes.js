@@ -12,6 +12,22 @@ const coerceBool = (v) => {
 const isValidId = (id) => /^[0-9a-fA-F]{24}$/.test(id);
 
 const normaliseCategory = (c) => (['Home', 'Office'].includes(c) ? c : 'Office');
+const normaliseSource = (s) => (['Home', 'Office'].includes(s) ? s : 'Office');
+
+// Given a payment doc (possibly legacy), return a normalised splits array.
+// Legacy records with only { paid, source } are lifted into a single split.
+function readSplits(payment) {
+  if (!payment) return [];
+  if (Array.isArray(payment.splits) && payment.splits.length > 0) {
+    return payment.splits.map(s => ({ paid: Number(s.paid) || 0, source: normaliseSource(s.source) }));
+  }
+  if (Number(payment.paid) > 0) {
+    return [{ paid: Number(payment.paid), source: normaliseSource(payment.source) }];
+  }
+  return [];
+}
+
+const sumSplits = (splits) => splits.reduce((s, x) => s + (Number(x.paid) || 0), 0);
 
 // ─── ADD EXPENSE ───
 router.post('/add', async (req, res) => {
@@ -57,7 +73,13 @@ router.get('/all', async (req, res) => {
   }
 });
 
-// ─── UPDATE PAYMENT (per month/year) ───
+// ─── UPDATE PAYMENT (per month/year, split-aware) ───
+// Body: { year, month, source, paid }
+//   paid   = the amount to set FOR THAT POOL (the split), not the whole month.
+//   source = which pool ('Home' | 'Office'); defaults to 'Office'.
+// Setting paid = 0 removes that pool's split. The month's total is derived
+// from the remaining splits. Records are always written in the new `splits`
+// shape, lifting any legacy single-source payment along the way.
 router.patch('/update-payment/:id', async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -65,24 +87,46 @@ router.patch('/update-payment/:id', async (req, res) => {
     if (!isValidId(id)) return res.status(400).json({ message: 'Invalid expense ID.' });
 
     const { year, month, paid, source } = req.body;
+    const src = normaliseSource(source);
+    const payVal = Math.max(0, Number(paid) || 0);
+
     const employee = await Employee.findOne({ _id: id, userId });
     if (!employee) return res.status(404).json({ message: 'Expense not found.' });
 
-    const idx = (employee.payments || []).findIndex(
-      p => p.year === Number(year) && p.month === month
-    );
+    const payments = (employee.payments || []).map(p => (p.toObject ? p.toObject() : p));
+    const idx = payments.findIndex(p => p.year === Number(year) && p.month === month);
 
-    let updateQuery;
     if (idx > -1) {
-      updateQuery = { $set: { [`payments.${idx}.paid`]: Number(paid) } };
-      if (source) updateQuery.$set[`payments.${idx}.source`] = source;
-    } else {
-      const entry = { year: Number(year), month, paid: Number(paid) };
-      if (source) entry.source = source;
-      updateQuery = { $push: { payments: entry } };
+      // Existing month entry — merge into its splits.
+      const splits = readSplits(payments[idx]);
+      const sIdx = splits.findIndex(s => s.source === src);
+      if (payVal <= 0) {
+        if (sIdx > -1) splits.splice(sIdx, 1);       // remove this pool's split
+      } else if (sIdx > -1) {
+        splits[sIdx].paid = payVal;                  // update this pool's split
+      } else {
+        splits.push({ paid: payVal, source: src });  // add a new pool split
+      }
+      payments[idx] = {
+        year: Number(year),
+        month,
+        paid: sumSplits(splits),   // keep legacy total in sync
+        source: src,               // legacy hint (last-touched pool)
+        splits,
+      };
+    } else if (payVal > 0) {
+      // No entry yet — create one with a single split.
+      payments.push({
+        year: Number(year),
+        month,
+        paid: payVal,
+        source: src,
+        splits: [{ paid: payVal, source: src }],
+      });
     }
 
-    const updated = await Employee.findOneAndUpdate({ _id: id, userId }, updateQuery, { new: true });
+    employee.payments = payments;
+    const updated = await employee.save();
     res.status(200).json({ message: 'Payment updated.', employee: updated });
   } catch (err) {
     res.status(500).json({ message: 'Failed updating payment.', error: err.message });
@@ -187,7 +231,7 @@ router.patch('/update-category/:id', async (req, res) => {
   }
 });
 
-// ─── UPDATE CATEGORY (bulk — for merged recurring records sharing a name) ───
+// ─── UPDATE CATEGORY (bulk) ───
 router.patch('/update-category-bulk', async (req, res) => {
   try {
     const { userId } = getAuth(req);

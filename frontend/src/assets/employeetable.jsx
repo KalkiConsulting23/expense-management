@@ -53,6 +53,16 @@ function getEffectiveAmount(baseAmount, overrides = [], monthIndex, year) {
   return applicable[applicable.length - 1].amount
 }
 
+// Normalise a payment doc into a splits array (lifts legacy single-source).
+function readPaymentSplits(payment) {
+  if (!payment) return []
+  if (Array.isArray(payment.splits) && payment.splits.length > 0) {
+    return payment.splits.map(s => ({ paid: Number(s.paid) || 0, source: s.source || 'Office' }))
+  }
+  if (Number(payment.paid) > 0) return [{ paid: Number(payment.paid), source: payment.source || 'Office' }]
+  return []
+}
+
 // ─── Core helpers ─────────────────────────────────────────────────────────────
 function parseUTCDate(dateStr) {
   const d = new Date(dateStr)
@@ -1604,25 +1614,29 @@ const MonthViewModal = memo(function MonthViewModal({
       // Existing payment for this month (if any) — used to restore the pool
       // source when unticking Paid.
       const existingPay = (ownerRec?.payments || []).find(
-        p => p.year === calYr && p.month === monthName
-      )
-      return {
-        _id: emp._id,
-        name: emp.expenseName || emp.name,
-        expenseType: emp.expenseType,
-        category: emp.category || 'Office',
-        kind: 'recurring',
-        amt, paid, due,
-        overridden: !!(emp.cell._srcId) && emp.amountOverrides?.some(ov => ov.year === calYr && ov.month === monthName && ov._srcId === emp.cell._srcId),
-        sub: 'since ' + parseUTCDate(emp.startDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
-        _emp: emp,
-        _cell: emp.cell,
-        _realId: ownerRec?._id || null,
-        _calYr: calYr,
-        _monthName: monthName,
-        _isPaid: due <= 0,
-        _paySource: existingPay?.source || (emp.category === 'Home' ? 'Home' : 'Office'),
-      }
+  p => p.year === calYr && p.month === monthName
+)
+const paySplits = readPaymentSplits(existingPay)
+const paidHome   = paySplits.filter(s => s.source === 'Home').reduce((a, s) => a + s.paid, 0)
+const paidOffice = paySplits.filter(s => s.source === 'Office').reduce((a, s) => a + s.paid, 0)
+return {
+  _id: emp._id,
+  name: emp.expenseName || emp.name,
+  expenseType: emp.expenseType,
+  category: emp.category || 'Office',
+  kind: 'recurring',
+  amt, paid, due,
+  overridden: !!(emp.cell._srcId) && emp.amountOverrides?.some(ov => ov.year === calYr && ov.month === monthName && ov._srcId === emp.cell._srcId),
+  sub: 'since ' + parseUTCDate(emp.startDate).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+  _emp: emp,
+  _cell: emp.cell,
+  _realId: ownerRec?._id || null,
+  _calYr: calYr,
+  _monthName: monthName,
+  _isPaid: due <= 0,
+  _paidHome: paidHome,
+  _paidOffice: paidOffice,
+}
     })
 const oneTime = oneTimeRows.map(exp => {
       const isPaid = !!exp.otPaid
@@ -1641,6 +1655,8 @@ const oneTime = oneTimeRows.map(exp => {
         _calYr: calYr,
         _monthName: monthName,
         _isPaid: isPaid,
+        _paidHome:   (isPaid && (exp.otSource || 'Office') === 'Home') ? exp.amount : 0,
+        _paidOffice: (isPaid && (exp.otSource || 'Office') !== 'Home') ? exp.amount : 0,
         _paySource: exp.otSource || (exp.category === 'Home' ? 'Home' : 'Office'),
       }
     })
@@ -1683,11 +1699,13 @@ const oneTime = oneTimeRows.map(exp => {
       const cy = calYearForFYMonth(selectedYear, mName)
       let spent = 0
       allExpenses.forEach(e => {
-        (e.payments || []).forEach(p => {
-          const src = p.source || 'Office'
-          if (p.year === cy && p.month === mName && src === pool) spent += (p.paid || 0)
-        })
-      })
+  (e.payments || []).forEach(p => {
+    if (p.year !== cy || p.month !== mName) return
+    readPaymentSplits(p).forEach(s => {
+      if ((s.source || 'Office') === pool) spent += (s.paid || 0)
+    })
+  })
+})
       // One-time expenses paid from this pool in this month
       allExpenses.forEach(e => {
         if (e.type !== 'one-time' || !e.otPaid) return
@@ -2218,31 +2236,21 @@ const oneTime = oneTimeRows.map(exp => {
                             savingPaidId === row._id ? (
                               <span style={{ display: 'inline-block', width: 15, height: 15, border: '2px solid #e0e7ff', borderTopColor: '#4f46e5', borderRadius: '50%', animation: 'spin 0.7s linear infinite' }} />
                             ) : (
-                              <div style={{ display: 'flex', gap: 10, justifyContent: 'center', alignItems: 'center' }}>
+                                                            <div style={{ display: 'flex', gap: 10, justifyContent: 'center', alignItems: 'center' }}>
                                 {['Home', 'Office'].map(pool => {
-                                  const checked = row._isPaid && row._paySource === pool
-                                  const accent  = pool === 'Home' ? '#16a34a' : '#4f46e5'
+                                  const poolPaid = pool === 'Home' ? (row._paidHome || 0) : (row._paidOffice || 0)
+                                  const checked  = poolPaid > 0
+                                  const accent   = pool === 'Home' ? '#16a34a' : '#4f46e5'
                                   return (
                                     <label
                                       key={pool}
-                                      title={
-                                        row._isPaid
-                                          ? (checked ? `Paid from ${pool} — untick to unpay` : `Paid from ${row._paySource}`)
-                                          : `Mark paid from ${pool} pool`
-                                      }
+                                      title={checked ? `${fmt(poolPaid)} paid from ${pool} — untick to remove` : `Pay remaining ${fmt(row.due)} from ${pool}`}
                                       style={{ display: 'inline-flex', alignItems: 'center', gap: 3, cursor: 'pointer', fontSize: 10, fontWeight: 600, color: checked ? accent : '#9ca3af' }}
                                     >
                                       <input
                                         type="checkbox"
                                         checked={checked}
-                                        onChange={() => {
-                                          if (row._isPaid && checked) {
-                                            onMarkPaid(row)          // untick → unpay
-                                          } else if (!row._isPaid) {
-                                            onMarkPaid(row, pool)    // pay from this pool
-                                          }
-                                          // clicking other pool while already paid: ignored
-                                        }}
+                                        onChange={() => onMarkPaid(row, pool)}
                                         style={{ width: 15, height: 15, cursor: 'pointer', accentColor: accent }}
                                       />
                                       {pool === 'Home' ? '🏠' : '🏢'}
@@ -2517,16 +2525,28 @@ const EmployeeTable = () => {
     setOverrideTarget({ emp, month, year, currentAmt })
   }, [])
 
-const writePayment = useCallback(async (realId, calYr, monthName, payValue, source) => {
+const writePayment = useCallback(async (realId, calYr, monthName, poolPaid, source) => {
+    const src = source || 'Office'
+    const payVal = Math.max(0, parseInt(poolPaid) || 0)
     setAllExpenses(exps => {
       const updated = exps.map(e => {
         if (e._id !== realId) return e
-        const idx = (e.payments || []).findIndex(p => p.year === calYr && p.month === monthName)
         const payments = [...(e.payments || [])]
-        const entry = { year: calYr, month: monthName, paid: payValue }
-        if (source) entry.source = source
-        if (idx > -1) payments[idx] = { ...payments[idx], ...entry }
-        else payments.push(entry)
+        const idx = payments.findIndex(p => p.year === calYr && p.month === monthName)
+        if (idx > -1) {
+          const cur = payments[idx]
+          const splits = (Array.isArray(cur.splits) && cur.splits.length > 0)
+            ? cur.splits.map(s => ({ ...s }))
+            : (cur.paid > 0 ? [{ paid: cur.paid, source: cur.source || 'Office' }] : [])
+          const sIdx = splits.findIndex(s => (s.source || 'Office') === src)
+          if (payVal <= 0) { if (sIdx > -1) splits.splice(sIdx, 1) }
+          else if (sIdx > -1) splits[sIdx].paid = payVal
+          else splits.push({ paid: payVal, source: src })
+          const total = splits.reduce((s, x) => s + (x.paid || 0), 0)
+          payments[idx] = { ...cur, paid: total, source: src, splits }
+        } else if (payVal > 0) {
+          payments.push({ year: calYr, month: monthName, paid: payVal, source: src, splits: [{ paid: payVal, source: src }] })
+        }
         return { ...e, payments }
       })
       sessionStorage.setItem(CACHE_KEY, JSON.stringify(updated))
@@ -2536,7 +2556,7 @@ const writePayment = useCallback(async (realId, calYr, monthName, payValue, sour
       const res = await fetch(`${API_BASE}/employee/update-payment/${realId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ year: calYr, month: monthName, paid: payValue, source }),
+        body: JSON.stringify({ year: calYr, month: monthName, paid: payVal, source: src }),
       })
       if (!res.ok) throw new Error(`Server responded ${res.status}`)
     } catch (err) {
@@ -2580,23 +2600,18 @@ const handleMarkPaid = useCallback((row, source) => {
 
     // ── Recurring expenses ──
     if (row.kind !== 'recurring' || !row._realId) return
-    const key = `${row._realId}::${row._calYr}::${row._monthName}`
-    if (row._isPaid) {
-      // Untick: restore previous paid value
-      const restore = prePaidRef.current[key]
-      const restoreVal = restore != null ? restore : 0
-      delete prePaidRef.current[key]
+    const poolPaid = source === 'Home' ? (row._paidHome || 0) : (row._paidOffice || 0)
+    if (poolPaid > 0) {
       setSavingPaidId(row._id)
-      writePayment(row._realId, row._calYr, row._monthName, restoreVal, row._paySource)
+      writePayment(row._realId, row._calYr, row._monthName, 0, source)
         .finally(() => setSavingPaidId(null))
-      return
+    } else {
+      const addAmount = Math.max(0, row.due || 0)
+      if (addAmount <= 0) return
+      setSavingPaidId(row._id)
+      writePayment(row._realId, row._calYr, row._monthName, addAmount, source)
+        .finally(() => setSavingPaidId(null))
     }
-    // Tick: pay in full from the chosen pool
-    prePaidRef.current[key] = row.paid || 0
-    const payValue = (row.paid || 0) + (row.due || 0)
-    setSavingPaidId(row._id)
-    writePayment(row._realId, row._calYr, row._monthName, payValue, source)
-      .finally(() => setSavingPaidId(null))
   }, [writePayment, payOneTime])
 
 

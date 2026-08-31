@@ -1,10 +1,22 @@
 const mongoose = require("mongoose");
 
+// A single contribution toward a month's payment, tagged with its pool.
+// Enables one month to be paid partly from Home and partly from Office.
+const paymentSplitSchema = new mongoose.Schema({
+  paid:   { type: Number, required: true },
+  source: { type: String, enum: ["Home", "Office"], default: "Office" },
+}, { _id: false });
+
 const paymentSchema = new mongoose.Schema({
   year:   { type: Number, required: true },
   month:  { type: String, required: true },
-  paid:   { type: Number, required: true },
+  // Legacy single-source fields — kept for backward compatibility with
+  // records created before split support. New code reads/writes `splits`.
+  paid:   { type: Number, default: 0 },
   source: { type: String, enum: ["Home", "Office"], default: "Office" },
+  // New: per-pool breakdown. When present, this is the source of truth and
+  // the month's total paid = sum of splits[].paid.
+  splits: { type: [paymentSplitSchema], default: undefined },
 }, { _id: false });
 
 // Stores a mid-year amount change starting from a specific month+year
@@ -29,8 +41,6 @@ const employeeSchema = new mongoose.Schema(
       type: String,
       required: [true, "Expense name is required"],
     },
-    // Broad segregation bucket: "Home" or "Office".
-    // Defaults to "Office" for existing/legacy records.
     category: {
       type: String,
       enum: ["Home", "Office"],
@@ -46,16 +56,10 @@ const employeeSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
-    // Array of mid-year amount changes.
-    // e.g. [{ year: 2025, month: "Mar", amount: 20000 }]
-    // means from Mar 2025 onwards use 20000 instead of base `amount`.
     amountOverrides: {
       type: [amountOverrideSchema],
       default: [],
     },
-    // Whether an unpaid monthly balance for this expense should roll into
-    // the following month's due amount. Only meaningful for recurring
-    // expenses. Defaults to true (existing/legacy behaviour).
     carryForward: {
       type: Boolean,
       default: true,
@@ -76,7 +80,6 @@ const employeeSchema = new mongoose.Schema(
       type: Date,
       required: [function () { return this.type === "one-time"; }, "Date is required"],
     },
-    // One-time payment tracking (mirrors recurring payments[] but single-shot)
     otPaid: {
       type: Boolean,
       default: false,
