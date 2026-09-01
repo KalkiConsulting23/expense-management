@@ -11,7 +11,7 @@ const WEEKDAY = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
 const STATUS_META = {
   1:   { label: 'P', color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0', name: 'Present' },
   0.5: { label: 'H', color: '#d97706', bg: '#fffbeb', border: '#fde68a', name: 'Half day' },
-  0:   { label: 'A', color: '#dc2626', bg: '#fef2f2', border: '#fecaca', name: 'Absent' },
+  0:   { label: 'A', color: '#dc2626', bg: '#fef2f2', border: '#fecaca', name: 'present' },
 }
 
 const daysInMonth = (year, month) => new Date(year, month + 1, 0).getDate()
