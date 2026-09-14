@@ -30,6 +30,7 @@ const DETAIL_FIELDS = [
 
 const DATE_FIELDS = new Set(['dateOfBirth', 'dateOfExit'])
 
+
 // Compute whole-year age from a date-of-birth so the shown value never goes stale.
 const calcAge = (dob) => {
   if (!dob) return ''
