@@ -2,6 +2,7 @@ const express = require("express");
 const router = express.Router();
 const Budget = require("../models/budget");
 const BudgetTransfer = require("../models/budgetTransfer");
+const BudgetLedger = require("../models/budgetLedger");
 const { getAuth } = require("@clerk/express");
 
 const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -23,7 +24,6 @@ router.get("/all", async (req, res) => {
 
 // ─── UPSERT A MONTH'S DEPOSITS ───
 // Body: { fyStartYear, month, year, homeDeposit?, officeDeposit? }
-// Only the fields sent are updated (so you can set one pool without wiping the other).
 router.patch("/set", async (req, res) => {
   try {
     const { userId } = getAuth(req);
@@ -48,6 +48,65 @@ router.patch("/set", async (req, res) => {
     res.status(200).json({ message: "Budget saved.", budget: updated });
   } catch (err) {
     res.status(500).json({ message: "Failed saving budget.", error: err.message });
+  }
+});
+
+// ─── ADJUST A POOL DEPOSIT (add / withdraw via delta) ───
+// Body: { fyStartYear, month, year, pool, delta }
+// delta is signed: positive to add, negative to withdraw. Pool never goes below 0.
+// Each movement is logged to BudgetLedger for the dated transaction history.
+router.patch("/adjust", async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const { fyStartYear, month, year, pool, delta } = req.body;
+    if (fyStartYear === undefined || !month || year === undefined) {
+      return res.status(400).json({ message: "fyStartYear, month and year are required." });
+    }
+    if (!MONTHS.includes(month)) return res.status(400).json({ message: "Invalid month." });
+    if (!POOLS.includes(pool))   return res.status(400).json({ message: "pool must be Home or Office." });
+
+    let incVal = Number(delta);
+    if (isNaN(incVal)) return res.status(400).json({ message: "delta must be a number." });
+
+    const field = pool === "Home" ? "homeDeposit" : "officeDeposit";
+
+    // Load current so a withdrawal can't drive the pool below zero.
+    const existing = await Budget.findOne({ userId, fyStartYear: Number(fyStartYear), month });
+    const current = existing ? (existing[field] || 0) : 0;
+    if (incVal < 0 && Math.abs(incVal) > current) incVal = -current; // clamp withdraw
+    if (incVal === 0) {
+      return res.status(200).json({ message: "No change.", budget: existing });
+    }
+
+    const updated = await Budget.findOneAndUpdate(
+      { userId, fyStartYear: Number(fyStartYear), month },
+      { $inc: { [field]: incVal }, $setOnInsert: { year: Number(year) } },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
+
+    // Log the movement for the dated ledger.
+    await BudgetLedger.create({
+      userId, fyStartYear: Number(fyStartYear), month, year: Number(year),
+      pool, amount: incVal, date: new Date(),
+    });
+
+    res.status(200).json({ message: "Budget adjusted.", budget: updated });
+  } catch (err) {
+    res.status(500).json({ message: "Failed adjusting budget.", error: err.message });
+  }
+});
+
+// ─── GET LEDGER ENTRIES (direct add/withdraw history) ───
+router.get("/ledger", async (req, res) => {
+  try {
+    const { userId } = getAuth(req);
+    const { fyStartYear } = req.query;
+    const filter = { userId };
+    if (fyStartYear !== undefined) filter.fyStartYear = Number(fyStartYear);
+    const entries = await BudgetLedger.find(filter).sort({ date: 1 });
+    res.status(200).json(entries);
+  } catch (err) {
+    res.status(500).json({ message: "Server error", error: err.message });
   }
 });
 

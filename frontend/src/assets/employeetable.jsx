@@ -1544,21 +1544,27 @@ const MonthViewModal = memo(function MonthViewModal({
   onAmountEdit,
   budgets,
   transfers,
+  ledger,
   onSetBudget,
+  onAdjustBudget,
   borrows,
   lendings,
   onTransfer,
   onDeleteTransfer, 
   onAddExpense,
   onCategory,
+
 }) {
   const [editMode, setEditMode] = useState(false)
   const [showTransfer, setShowTransfer] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
   const [deletingTransferId, setDeletingTransferId] = useState(null)
   const [showAddAmount, setShowAddAmount] = useState(false)
+  const [analyticsPool, setAnalyticsPool] = useState(null)  // 'Home' | 'Office' | null
+  const [expenseFilter, setExpenseFilter] = useState('all')  // 'all' | 'Home' | 'Office'
   const [addForm, setAddForm] = useState({ name: '', amount: '', expenseType: '', category: 'Office' })
   const [savingAdd, setSavingAdd] = useState(false)
+  const [downloadFor, setDownloadFor] = useState(null)
 
   const [editCell, setEditCell] = useState(null)  // { rowId, field } field: 'paid'|'amt'
   const [editVal, setEditVal]   = useState('')
@@ -1599,13 +1605,15 @@ const MonthViewModal = memo(function MonthViewModal({
       .sort((a, b) => a._sortDate - b._sortDate)
   }, [allExpenses, monthIndex, calYr])
 
+    
+
   const combinedRows = useMemo(() => {
     const recurring = recurringRows.map(emp => {
       const amt  = emp.cell.amt  || 0
       const paid = emp.cell.paid || 0
       // Due includes any balance carried in from prior months. cell.carry is the
       // month-end balance; when positive it's what's still owed this month.
-      const due = Math.max(0, emp.cell.carry > 0 ? emp.cell.carry : (amt - paid))
+      const due = Math.max(0, amt - paid)
       // Resolve the underlying record that owns this month (merged emps span
       // several date-range records), so mark-as-paid writes to the right _id.
       const ownerRec = emp._merged
@@ -1675,6 +1683,75 @@ const oneTime = oneTimeRows.map(exp => {
     })
   }, [recurringRows, oneTimeRows, calYr, monthName, monthIndex])
 
+    const visibleRows = useMemo(() => (
+    expenseFilter === 'all'
+      ? combinedRows
+      : combinedRows.filter(r => (r.category || 'Office') === expenseFilter)
+  ), [combinedRows, expenseFilter])
+
+    const filteredTotals = useMemo(() => {
+    const due  = visibleRows.reduce((s, r) => s + (r.due || 0), 0)
+    const paid = visibleRows.reduce((s, r) => s + (r.paid || 0), 0)
+    const bal  = visibleRows.reduce((s, r) => s + ((r.amt || 0) - (r.paid || 0)), 0)
+    return { due, paid, bal }
+  }, [visibleRows])
+
+   const getExportData = (what) => {
+    if (what === 'expenses') {
+      const headers = ['#', 'Expense Name', 'Type', 'Kind', 'Amount', 'Paid', 'Balance']
+      const rows = visibleRows.map((r, i) => [
+        i + 1, r.name, r.expenseType || '', r.kind,
+        r.amt || 0, r.paid || 0, (r.amt || 0) - (r.paid || 0),
+      ])
+      const title = `Expenses — ${monthFull} ${calYr}`
+      return { headers, rows, title, numericCols: [4, 5, 6] }
+    }
+    const bd = poolBreakdown[what]
+    const headers = ['Date', 'Description', 'Amount', 'Balance']
+    const rows = bd.rows.map(r => [
+      r.date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }),
+      r.label, r.amount, r.balance,
+    ])
+    const title = `${what} Pool Statement — ${monthFull} ${calYr}`
+    return { headers, rows, title, numericCols: [2, 3] }
+  }
+
+  const downloadCSV = (what) => {
+    const { headers, rows, title } = getExportData(what)
+    const esc = (v) => {
+      const s = String(v)
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+    }
+    const csv = [headers.map(esc).join(','), ...rows.map(r => r.map(esc).join(','))].join('\n')
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = title.replace(/[^a-z0-9]+/gi, '_') + '.csv'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const downloadPDF = (what) => {
+    const { headers, rows, title, numericCols } = getExportData(what)
+    const th = headers.map((h, i) => `<th style="text-align:${numericCols.includes(i) ? 'right' : 'left'};padding:8px;border-bottom:2px solid #333;font-size:11px;text-transform:uppercase">${h}</th>`).join('')
+    const trs = rows.map(r => '<tr>' + r.map((cell, i) => {
+      const isNum = numericCols.includes(i)
+      const val = isNum ? fmt(Number(cell)) : cell
+      return `<td style="padding:8px;border-bottom:1px solid #eee;text-align:${isNum ? 'right' : 'left'}">${val}</td>`
+    }).join('') + '</tr>').join('')
+    const html = `<!doctype html><html><head><meta charset="utf-8"><title>${title}</title>
+      <style>body{font-family:Arial,sans-serif;padding:32px;color:#18181b}h1{font-size:18px}
+      table{width:100%;border-collapse:collapse;font-size:13px;margin-top:16px}</style></head><body>
+      <h1>${title}</h1>
+      <table><thead><tr>${th}</tr></thead><tbody>${trs || '<tr><td colspan="' + headers.length + '" style="padding:16px;text-align:center;color:#999">No records</td></tr>'}</tbody></table>
+      </body></html>`
+    const w = window.open('', '_blank')
+    if (!w) { alert('Please allow popups to download.'); return }
+    w.document.write(html); w.document.close(); w.focus()
+    setTimeout(() => w.print(), 300)
+  }
+
   const recurringTotal = recurringRows.reduce((s, r) => s + (r.cell.amt  || 0), 0)
   const recurringPaid  = recurringRows.reduce((s, r) => s + (r.cell.paid || 0), 0)
   const oneTimeTotal   = oneTimeRows.reduce((s, r) => s + r.amount, 0)
@@ -1698,8 +1775,8 @@ const oneTime = oneTimeRows.map(exp => {
     const spendFor = (mName, pool) => {
       const cy = calYearForFYMonth(selectedYear, mName)
       let spent = 0
-      allExpenses.forEach(e => {
-  (e.payments || []).forEach(p => {
+            allExpenses.forEach(e => {
+        ;(e.payments || []).forEach(p => {
     if (p.year !== cy || p.month !== mName) return
     readPaymentSplits(p).forEach(s => {
       if ((s.source || 'Office') === pool) spent += (s.paid || 0)
@@ -1718,63 +1795,79 @@ const oneTime = oneTimeRows.map(exp => {
       })
       return spent
     }
-    // Net borrow/lending effect on a pool for a given FY month.
-    // + = money into the pool, − = money out.
-    const loanFlowFor = (mName, pool) => {
-      const cy = calYearForFYMonth(selectedYear, mName)
-      const mIdx = MONTHS.indexOf(mName)
-      let net = 0
 
-      ;(borrows || []).forEach(b => {
-        // Borrow received → credited to borrowedPool, in the borrow's own month
-        const d = parseUTCDate(b.date)
-        if (d.getMonth() === mIdx && d.getFullYear() === cy) {
-          if ((b.borrowedPool || 'Home') === pool) net += (b.amount || 0)
-        }
-        // Borrow repayments → deducted from payment.pool, in the payment's month
-        ;(b.payments || []).forEach(p => {
-          if (p.year === cy && p.month === mName && (p.pool || 'Home') === pool) {
-            net -= (p.principalPaid || 0) + (p.interestPaid || 0)
-          }
+      const build = (pool) => {
+      const deposit = depFor(monthName, pool)
+      const xfer    = xferFor(monthName, pool)
+      const spent   = spendFor(monthName, pool)
+      const available = deposit + xfer
+      const surplus   = available - spent
+      return { opening: 0, deposit, xfer, spent, loanFlow: 0, available, surplus }
+    }
+    return { Home: build('Home'), Office: build('Office') }
+  },  [budgets, transfers, selectedYear, monthName, allExpenses])
+
+    // For the per-pool analytics popup: every expense paid from a given pool
+  // in the viewed month, plus the transfers that touched that pool.
+  const poolBreakdown = useMemo(() => {
+    const build = (pool) => {
+      const events = []
+
+      // 1) Direct deposits / withdrawals from the ledger
+      ;(ledger || []).forEach(l => {
+        if (l.fyStartYear !== selectedYear || l.month !== monthName || l.pool !== pool) return
+        events.push({
+          date: l.date ? new Date(l.date) : new Date(),
+          label: (l.amount >= 0 ? 'Added to pool' : 'Withdrawn from pool'),
+          amount: l.amount,
+          type: 'deposit',
         })
       })
 
-      ;(lendings || []).forEach(l => {
-        // Lending given out → deducted from lentPool, in the lending's own month
-        const d = parseUTCDate(l.date)
-        if (d.getMonth() === mIdx && d.getFullYear() === cy) {
-          if ((l.lentPool || 'Home') === pool) net -= (l.amount || 0)
-        }
-        // Lending received back → credited to receivedPool, in the received month
-        if (l.receivedAmount > 0 && l.receivedDate) {
-          const rd = parseUTCDate(l.receivedDate)
-          if (rd.getMonth() === mIdx && rd.getFullYear() === cy) {
-            if ((l.receivedPool || 'Home') === pool) net += (l.receivedAmount || 0)
+      // 2) Expenses paid from this pool (split-aware)
+      allExpenses.forEach(e => {
+        ;(e.payments || []).forEach(p => {
+          if (p.year !== calYr || p.month !== monthName) return
+          const splits = (Array.isArray(p.splits) && p.splits.length > 0)
+            ? p.splits
+            : (p.paid > 0 ? [{ paid: p.paid, source: p.source || 'Office' }] : [])
+          splits.forEach(s => {
+            if ((s.source || 'Office') === pool && (s.paid || 0) > 0) {
+              events.push({
+                date: s.paidDate ? new Date(s.paidDate) : (p.updatedAt ? new Date(p.updatedAt) : new Date(calYr, monthIndex, 1)),
+                label: e.expenseName,
+                amount: -(s.paid || 0),
+                type: 'expense',
+              })
+            }
+          })
+        })
+        if (e.type === 'one-time' && e.otPaid) {
+          const src = e.otSource || 'Office'
+          const d = parseUTCDate(e.date)
+          if (src === pool && d.getMonth() === monthIndex && d.getFullYear() === calYr) {
+            events.push({ date: d, label: e.expenseName, amount: -(e.amount || 0), type: 'expense' })
           }
         }
       })
 
-      return net
-    }
+      // 3) Transfers touching this pool
+      ;(transfers || []).forEach(t => {
+        if (t.fyStartYear !== selectedYear || t.month !== monthName) return
+        if (t.to === pool)   events.push({ date: t.createdAt ? new Date(t.createdAt) : new Date(calYr, monthIndex, 1), label: `Transfer from ${t.from}`, amount: (t.amount || 0), type: 'transfer' })
+        if (t.from === pool) events.push({ date: t.createdAt ? new Date(t.createdAt) : new Date(calYr, monthIndex, 1), label: `Transfer to ${t.to}`, amount: -(t.amount || 0), type: 'transfer' })
+      })
 
-    const build = (pool) => {
-      let opening = 0
-      const rows = {}
-      for (const mName of FY_MONTHS) {
-        const deposit = depFor(mName, pool)
-        const xfer    = xferFor(mName, pool)
-        const spent   = spendFor(mName, pool)
-        const loanFlow = loanFlowFor(mName, pool)
-        const available = opening + deposit + xfer + loanFlow
-        const surplus   = available - spent
-        rows[mName] = { opening, deposit, xfer, spent, loanFlow, available, surplus }
-        opening = Math.max(0, surplus)
-        if (mName === monthName) break
-      }
-      return rows[monthName] || { opening: 0, deposit: 0, xfer: 0, spent: 0, available: 0, surplus: 0 }
+      events.sort((a, b) => a.date - b.date)
+      let running = 0
+      const rows = events.map(ev => {
+        running += ev.amount
+        return { ...ev, balance: running }
+      })
+      return { rows, finalBalance: running }
     }
     return { Home: build('Home'), Office: build('Office') }
-  }, [budgets, transfers, borrows, lendings, selectedYear, monthName, allExpenses])
+  }, [ledger, allExpenses, transfers, calYr, monthName, monthIndex, selectedYear])
 
   useEffect(() => {
     document.body.style.overflow = 'hidden'
@@ -2054,6 +2147,19 @@ const oneTime = oneTimeRows.map(exp => {
                 <span style={{ fontSize: 13 }}>🗂️</span>
                 Category
               </button>
+              <button
+                onClick={() => setDownloadFor('expenses')}
+                title="Download the expense table"
+                style={{
+                  display: 'inline-flex', alignItems: 'center', gap: 6,
+                  padding: '7px 14px', borderRadius: 10, cursor: 'pointer',
+                  border: '1px solid #ececec', background: '#fff', color: '#4b5563',
+                  fontSize: 12.5, fontWeight: 500, fontFamily: "'Inter', sans-serif",
+                }}
+              >
+                <span style={{ fontSize: 13 }}>⬇</span>
+                Download
+              </button>
               <button onClick={onClose} style={{ width: 32, height: 32, borderRadius: 10, border: '1px solid #ececec', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', fontSize: 16, color: '#6b7280' }}>✕</button>
             </div>
           </div>
@@ -2080,54 +2186,187 @@ const oneTime = oneTimeRows.map(exp => {
           </div>
 
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8, alignItems: 'stretch' }}>
-            {['Home', 'Office'].map(pool => {
+                        {['Home', 'Office'].map(pool => {
               const c = budgetChain[pool]
               const accent = pool === 'Home' ? '#16a34a' : '#4338ca'
               const bg     = pool === 'Home' ? '#f0fdf4' : '#eef2ff'
               const border = pool === 'Home' ? '#bbf7d0' : '#e0e7ff'
+              const isDeficit = c.surplus < 0
               return (
-                <div key={pool} style={{ flex: '1 1 260px', minWidth: 240, background: bg, border: `1px solid ${border}`, borderRadius: 12, padding: '10px 14px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+                <div key={pool} style={{ flex: '1 1 320px', minWidth: 300, background: bg, border: `1px solid ${border}`, borderRadius: 12, padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
                     <span style={{ fontSize: 12, fontWeight: 700, color: accent }}>{pool === 'Home' ? '🏠 Home Pool' : '🏢 Office Pool'}</span>
-                    <span style={{ fontSize: 10.5, color: '#6b7280' }}>Surplus → <b style={{ color: c.surplus >= 0 ? '#16a34a' : '#dc2626' }}>{fmt(Math.abs(c.surplus))}</b></span>
+                    <button
+                      onClick={() => setAnalyticsPool(pool)}
+                      title="View detailed analytics"
+                      style={{ width: 26, height: 26, borderRadius: 8, border: '1px solid ' + border, background: '#fff', color: accent, cursor: 'pointer', fontSize: 15, lineHeight: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                    >
+                      ⋯
+                    </button>
                   </div>
-                  <div style={{ display: 'flex', gap: 6, marginBottom: 8, fontSize: 10.5, color: '#6b7280', flexWrap: 'wrap' }}>
-                    <span>Open: <b style={{ color: '#374151' }}>{fmt(c.opening)}</b></span>
-                    <span>· Avail: <b style={{ color: '#374151' }}>{fmt(Math.max(0, c.surplus))}</b></span>
-                    <span>· Spent: <b style={{ color: '#374151' }}>{fmt(c.spent)}</b></span>
-                    {c.xfer !== 0 && <span>· Xfer: <b style={{ color: c.xfer > 0 ? '#16a34a' : '#dc2626' }}>{c.xfer > 0 ? '+' : ''}{fmt(c.xfer)}</b></span>}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6, marginBottom: 10 }}>
+                    <div>
+                      <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.3, color: '#9ca3af', fontWeight: 600, marginBottom: 2 }}>Available</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: '#374151' }}>{fmt(c.available)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.3, color: '#9ca3af', fontWeight: 600, marginBottom: 2 }}>Spent</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: '#d97706' }}>{fmt(c.spent)}</div>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: 0.3, color: '#9ca3af', fontWeight: 600, marginBottom: 2 }}>{isDeficit ? 'Deficit' : 'Surplus'}</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, fontVariantNumeric: 'tabular-nums', color: isDeficit ? '#dc2626' : '#16a34a' }}>{fmt(Math.abs(c.surplus))}</div>
+                    </div>
                   </div>
-                  <div style={{ position: 'relative' }}>
-                    <span style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontSize: 13, fontWeight: 600 }}>₹</span>
-                    <input
-                      type="number"
-                      defaultValue={c.deposit || ''}
-                      key={`${selectedYear}-${monthName}-${pool}-${c.deposit}`}
-                      placeholder="0"
-                      onBlur={(e) => onSetBudget(selectedYear, monthName, calYr, pool, e.target.value)}
-                      onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur() }}
-                      style={{ width: '100%', padding: '6px 8px 6px 22px', border: '1px solid #ececec', borderRadius: 8, fontVariantNumeric: 'tabular-nums', fontSize: 15, fontWeight: 700, color: '#18181b', outline: 'none', background: '#fff' }}
-                    />
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                    <div style={{ position: 'relative', width: 90, flexShrink: 0 }}>
+                      <span style={{ position: 'absolute', left: 7, top: '50%', transform: 'translateY(-50%)', color: '#9ca3af', fontSize: 12, fontWeight: 600 }}>₹</span>
+                      <input
+                        type="number"
+                        id={`pool-input-${pool}`}
+                        placeholder="0"
+                        style={{ width: '100%', padding: '6px 6px 6px 18px', border: '1px solid ' + border, borderRadius: 8, fontVariantNumeric: 'tabular-nums', fontSize: 13, fontWeight: 700, color: '#18181b', outline: 'none', background: '#fff' }}
+                      />
+                    </div>
+                    <button
+                      onClick={() => {
+                        const el = document.getElementById(`pool-input-${pool}`)
+                        const v = Math.abs(parseInt(el?.value) || 0)
+                        if (v <= 0) return
+                        onAdjustBudget(selectedYear, monthName, calYr, pool, v)
+                        if (el) el.value = ''
+                      }}
+                      style={{ flex: 1, padding: '6px 0', borderRadius: 8, border: 'none', background: accent, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: "'Inter', sans-serif" }}
+                    >
+                      + Add
+                    </button>
+                    <button
+                      onClick={() => {
+                        const el = document.getElementById(`pool-input-${pool}`)
+                        const v = Math.abs(parseInt(el?.value) || 0)
+                        if (v <= 0) return
+                        onAdjustBudget(selectedYear, monthName, calYr, pool, -v)
+                        if (el) el.value = ''
+                      }}
+                      style={{ flex: 1, padding: '6px 0', borderRadius: 8, border: '1px solid ' + border, background: '#fff', color: accent, fontSize: 12, fontWeight: 700, cursor: 'pointer', fontFamily: "'Inter', sans-serif" }}
+                    >
+                      − Withdraw
+                    </button>
                   </div>
                 </div>
               )
             })}
+               <select
+                value={expenseFilter}
+                onChange={(e) => setExpenseFilter(e.target.value)}
+                style={{ height: 38, boxSizing: 'border-box', padding: '0 14px', borderRadius: 10, border: '1px solid #ececec', background: '#fff', color: '#4b5563', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'Inter', sans-serif", outline: 'none' }}
+              >
+                <option value="all">All Expenses</option>
+                <option value="Home">🏠 Home</option>
+                <option value="Office">🏢 Office</option>
+              </select>
+
             <div style={{ flex: '0 0 auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <button
-                onClick={() => setShowTransfer(true)}
-                style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid #ececec', background: '#fff', color: '#4b5563', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: "'Inter', sans-serif", whiteSpace: 'nowrap' }}
-              >
-                ⇄ Transfer funds
-              </button>
-              <button
-                onClick={() => setShowHistory(true)}
-                style={{ padding: '10px 16px', borderRadius: 10, border: '1px solid #ececec', background: '#fff', color: '#4b5563', fontSize: 12.5, fontWeight: 600, cursor: 'pointer', fontFamily: "'Inter', sans-serif", whiteSpace: 'nowrap' }}
-              >
-                🕑 History
-              </button>
+                
+                <button
+                  onClick={() => setShowTransfer(true)}
+                  style={{ padding: '8px 14px', borderRadius: 10, border: '1px solid #ececec', background: '#fff', color: '#4b5563', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'Inter', sans-serif", whiteSpace: 'nowrap' }}
+                >
+                  ⇄ Transfer funds
+                </button>
+                <button
+                  onClick={() => setShowHistory(true)}
+                  style={{ padding: '8px 14px', borderRadius: 10, border: '1px solid #ececec', background: '#fff', color: '#4b5563', fontSize: 12, fontWeight: 600, cursor: 'pointer', fontFamily: "'Inter', sans-serif", whiteSpace: 'nowrap' }}
+                >
+                  🕑 History
+                </button>
             </div>
           </div>
         </div>
+      
+            {analyticsPool && (() => {
+        const c = budgetChain[analyticsPool]
+        const bd = poolBreakdown[analyticsPool]
+        return (
+          <div
+            style={{ position: 'fixed', inset: 0, zIndex: 1450, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(17,24,39,0.45)', backdropFilter: 'blur(4px)' }}
+            onClick={() => setAnalyticsPool(null)}
+          >
+            <div onClick={e => e.stopPropagation()} style={{ background: '#fff', border: '1px solid #ececec', borderRadius: 20, boxShadow: '0 24px 60px rgba(16,24,40,0.25)', maxWidth: 640, width: '94vw', maxHeight: '85vh', display: 'flex', flexDirection: 'column', fontFamily: "'Inter', sans-serif", overflow: 'hidden' }}>
+              <div style={{ padding: '18px 24px 14px', borderBottom: '1px solid #ececec', background: '#fafafa', flexShrink: 0, display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 10.5, letterSpacing: 0.4, textTransform: 'uppercase', color: '#9ca3af', marginBottom: 4, fontWeight: 500 }}>{analyticsPool === 'Home' ? '🏠 Home Pool' : '🏢 Office Pool'} · Transactions</div>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: '#18181b' }}>{monthFull} {calYr}</div>
+                </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                  <button onClick={() => setDownloadFor(analyticsPool)} title="Download statement" style={{ height: 30, padding: '0 12px', borderRadius: 8, border: '1px solid #ececec', background: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600, color: '#4b5563' }}>⬇</button>
+                  <button onClick={() => setAnalyticsPool(null)} style={{ width: 30, height: 30, borderRadius: 8, border: '1px solid #ececec', background: '#fff', cursor: 'pointer', fontSize: 15, color: '#6b7280' }}>✕</button>
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, padding: '14px 24px', flexShrink: 0, borderBottom: '1px solid #f4f4f5' }}>
+                <div style={{ flex: 1, background: '#fafafa', border: '1px solid #ececec', borderRadius: 10, padding: '8px 12px' }}>
+                  <div style={{ fontSize: 9, textTransform: 'uppercase', color: '#9ca3af', fontWeight: 600 }}>Available</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#374151', fontVariantNumeric: 'tabular-nums' }}>{fmt(c.available)}</div>
+                </div>
+                <div style={{ flex: 1, background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '8px 12px' }}>
+                  <div style={{ fontSize: 9, textTransform: 'uppercase', color: '#9ca3af', fontWeight: 600 }}>Spent</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: '#d97706', fontVariantNumeric: 'tabular-nums' }}>{fmt(c.spent)}</div>
+                </div>
+                <div style={{ flex: 1, background: c.surplus < 0 ? '#fef2f2' : '#f0fdf4', border: '1px solid ' + (c.surplus < 0 ? '#fecaca' : '#bbf7d0'), borderRadius: 10, padding: '8px 12px' }}>
+                  <div style={{ fontSize: 9, textTransform: 'uppercase', color: '#9ca3af', fontWeight: 600 }}>{c.surplus < 0 ? 'Deficit' : 'Balance'}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: c.surplus < 0 ? '#dc2626' : '#16a34a', fontVariantNumeric: 'tabular-nums' }}>{fmt(Math.abs(c.surplus))}</div>
+                </div>
+              </div>
+
+              <div style={{ overflowY: 'auto', flex: 1, padding: '8px 24px 20px' }}>
+                {bd.rows.length === 0 ? (
+                  <div style={{ fontSize: 12.5, color: '#9ca3af', padding: '24px 0', textAlign: 'center' }}>No transactions for this pool this month.</div>
+                ) : (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12.5 }}>
+                    <thead>
+                      <tr style={{ textAlign: 'left', color: '#9ca3af', fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.3 }}>
+                        <th style={{ padding: '8px 6px', fontWeight: 600 }}>Date</th>
+                        <th style={{ padding: '8px 6px', fontWeight: 600 }}>Description</th>
+                        <th style={{ padding: '8px 6px', fontWeight: 600, textAlign: 'right' }}>Amount</th>
+                        <th style={{ padding: '8px 6px', fontWeight: 600, textAlign: 'right' }}>Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bd.rows.map((r, i) => {
+                        const isCredit = r.amount >= 0
+                        const icon = r.type === 'deposit' ? '💰' : r.type === 'transfer' ? '⇄' : '🧾'
+                        return (
+                          <tr key={i} style={{ borderTop: '1px solid #f4f4f5' }}>
+                            <td style={{ padding: '9px 6px', color: '#6b7280', whiteSpace: 'nowrap' }}>{r.date.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</td>
+                            <td style={{ padding: '9px 6px', color: '#18181b' }}><span style={{ marginRight: 6 }}>{icon}</span>{r.label}</td>
+                            <td style={{ padding: '9px 6px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: isCredit ? '#16a34a' : '#dc2626' }}>{isCredit ? '+' : '−'}{fmt(Math.abs(r.amount))}</td>
+                            <td style={{ padding: '9px 6px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: '#374151' }}>{fmt(r.balance)}</td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+         {downloadFor && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 1500, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(17,24,39,0.45)', backdropFilter: 'blur(4px)' }} onClick={() => setDownloadFor(null)}>
+          <div onClick={e => e.stopPropagation()} style={{ background: '#fff', borderRadius: 16, padding: 24, width: 340, fontFamily: "'Inter', sans-serif", boxShadow: '0 20px 50px rgba(0,0,0,0.25)' }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: '#18181b', marginBottom: 4 }}>Download {downloadFor === 'expenses' ? 'Expense Table' : `${downloadFor} Pool Statement`}</div>
+            <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 18 }}>{monthFull} {calYr} — choose a format</div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => { downloadPDF(downloadFor); setDownloadFor(null) }} style={{ flex: 1, padding: '12px 0', borderRadius: 10, border: '1px solid #ececec', background: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#dc2626' }}>📄 PDF</button>
+              <button onClick={() => { downloadCSV(downloadFor); setDownloadFor(null) }} style={{ flex: 1, padding: '12px 0', borderRadius: 10, border: '1px solid #ececec', background: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: '#16a34a' }}>📊 Excel (CSV)</button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
         <div style={{ overflowY: 'auto', flex: 1, padding: '24px 32px 32px', maxWidth: 1400, width: '100%', margin: '0 auto' }}>
           {combinedRows.length > 0 ? (
@@ -2147,7 +2386,7 @@ const oneTime = oneTimeRows.map(exp => {
                     </tr>
                   </thead>
                   <tbody>
-                    {combinedRows.map((row, idx) => (
+                    {visibleRows.map((row, idx) => (
                       <tr key={row._id} onMouseEnter={e => e.currentTarget.style.background = '#fafafa'} onMouseLeave={e => e.currentTarget.style.background = ''}>
                         <td style={{ ...tdBase, width: 36, color: '#c5c5c9', fontVariantNumeric: 'tabular-nums', fontSize: 11, borderRight: '1px solid #f4f4f5' }}>{idx + 1}</td>
                         <td style={{ ...tdBase, borderRight: '1px solid #f4f4f5' }}>
@@ -2267,17 +2506,17 @@ const oneTime = oneTimeRows.map(exp => {
                     ))}
                   </tbody>
                   <tfoot>
-                    <tr style={{ background: '#fafafa' }}>
-                      <td colSpan={4} style={{ padding: '10px 14px', fontSize: 10.5, fontWeight: 600, color: '#6b7280', letterSpacing: 0.3, borderTop: '1px solid #ececec', fontFamily: "'Inter', sans-serif" }}>
-                        Total ({combinedRows.length})
-                      </td>
-                      <td style={{ padding: '10px 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: '#d97706', borderTop: '1px solid #ececec', borderRight: '1px solid #f4f4f5' }}>{fmt(totalDue)}</td>
-                      <td style={{ padding: '10px 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: '#16a34a', borderTop: '1px solid #ececec', borderRight: '1px solid #f4f4f5' }}>{fmt(totalPaid)}</td>
-                      <td style={{ padding: '10px 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: totalBalance > 0 ? '#d97706' : '#16a34a', borderTop: '1px solid #ececec', borderRight: '1px solid #f4f4f5' }}>{fmt(totalBalance)}</td>
-                      <td style={{ borderTop: '1px solid #ececec' }} />
-                    </tr>
-                  </tfoot>
-                </table>
+                      <tr style={{ background: '#fafafa' }}>
+                        <td colSpan={4} style={{ background: '#fafafa', padding: '10px 14px', fontSize: 10.5, fontWeight: 600, color: '#6b7280', letterSpacing: 0.3, borderTop: '2px solid #ececec', fontFamily: "'Inter', sans-serif" }}>
+                          Total ({visibleRows.length})
+                        </td>
+                        <td style={{ background: '#fafafa', padding: '10px 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: '#d97706', borderTop: '2px solid #ececec', borderRight: '1px solid #f4f4f5' }}>{fmt(filteredTotals.due)}</td>
+                        <td style={{ background: '#fafafa', padding: '10px 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: '#16a34a', borderTop: '2px solid #ececec', borderRight: '1px solid #f4f4f5' }}>{fmt(filteredTotals.paid)}</td>
+                        <td style={{ background: '#fafafa', padding: '10px 14px', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: filteredTotals.bal > 0 ? '#d97706' : '#16a34a', borderTop: '2px solid #ececec', borderRight: '1px solid #f4f4f5' }}>{fmt(filteredTotals.bal)}</td>
+                        <td style={{ background: '#fafafa', borderTop: '2px solid #ececec' }} />
+                      </tr>
+                    </tfoot>
+                   </table>
               </div>
             </div>
           ) : (
@@ -2382,6 +2621,7 @@ const EmployeeTable = () => {
   
   const [budgets, setBudgets] = useState([])
   const [transfers, setTransfers] = useState([])
+    const [ledger, setLedger] = useState([])
   
   const [borrows, setBorrows] = useState([])
   const [lendings, setLendings] = useState([])
@@ -2439,20 +2679,24 @@ const EmployeeTable = () => {
  useEffect(() => {
     const fetchBudgets = async () => {
       try {
-        const [bRes, tRes] = await Promise.all([
+        const [bRes, tRes, lRes] = await Promise.all([
           fetch(`${API_BASE}/budget/all`),
           fetch(`${API_BASE}/budget/transfers`),
+          fetch(`${API_BASE}/budget/ledger`),
         ])
         const bData = await bRes.json()
         const tData = await tRes.json()
+        const lData = await lRes.json()
         setBudgets(Array.isArray(bData) ? bData : [])
         setTransfers(Array.isArray(tData) ? tData : [])
+        setLedger(Array.isArray(lData) ? lData : [])
       } catch (err) {
-        console.error('Failed to fetch budgets/transfers:', err)
+        console.error('Failed to fetch budgets/transfers/ledger:', err)
       }
     }
     fetchBudgets()
   }, [])
+
 
   useEffect(() => {
     const fetchLoans = async () => {
@@ -2676,6 +2920,31 @@ const handleMarkPaid = useCallback((row, source) => {
       if (!res.ok) throw new Error(`Server responded ${res.status}`)
     } catch (err) {
       console.error('Failed to save amount override:', err)
+    }
+  }, [])
+
+    const handleAdjustBudget = useCallback(async (fyStartYear, month, year, pool, delta) => {
+    const d = Number(delta) || 0
+    if (d === 0) return
+    const field = pool === 'Home' ? 'homeDeposit' : 'officeDeposit'
+    setBudgets(prev => {
+      const idx = prev.findIndex(b => b.fyStartYear === fyStartYear && b.month === month)
+      if (idx > -1) {
+        const copy = [...prev]
+        copy[idx] = { ...copy[idx], [field]: Math.max(0, (copy[idx][field] || 0) + d), year }
+        return copy
+      }
+      return [...prev, { fyStartYear, month, year, homeDeposit: 0, officeDeposit: 0, [field]: Math.max(0, d) }]
+    })
+    try {
+      const res = await fetch(`${API_BASE}/budget/adjust`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fyStartYear, month, year, pool, delta: d }),
+      })
+      if (!res.ok) throw new Error(`Server responded ${res.status}`)
+    } catch (err) {
+      console.error('Failed to adjust budget:', err)
     }
   }, [])
 
@@ -3055,10 +3324,11 @@ const handleSetBudget = useCallback(async (fyStartYear, month, year, pool, value
           borrows={borrows}
           lendings={lendings}
           onSetBudget={handleSetBudget}
+          onAdjustBudget={handleAdjustBudget}
           onTransfer={handleTransfer}
+          ledger={ledger}
           onAddExpense={() => { setMonthViewIndex(null); navigate('/employee') }}
           onDeleteTransfer={handleDeleteTransfer}
-          onAddExpense={() => { setMonthViewIndex(null); navigate('/employee') }}
           onCategory={() => { setMonthViewIndex(null); navigate('/employeetable') }}
         />
       )}
