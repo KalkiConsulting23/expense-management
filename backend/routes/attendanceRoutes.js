@@ -5,7 +5,10 @@ const Holiday = require('../models/holiday')
 const { getAuth } = require('@clerk/express')
 
 const isValidId = (id) => /^[0-9a-fA-F]{24}$/.test(id)
-const validStatus = (v) => v === 0 || v === 1 || v === 0.5
+
+// 1 = present, 2 = work from home, 0.5 = half day, 0 = absent
+const VALID_STATUSES = [1, 2, 0.5, 0]
+const validStatus = (v) => VALID_STATUSES.includes(v)
 
 // ─── GET attendance for a whole month (all staff) ───
 // Returns { attendance: [...], holidays: [...] } for the given year/month.
@@ -29,7 +32,8 @@ router.get('/month', async (req, res) => {
 })
 
 // ─── SET one day's status for one staff member (upsert) ───
-// Body: { staffId, year, month, day, status }  status ∈ {0, 0.5, 1}
+// Body: { staffId, year, month, day, status }  status ∈ {1, 2, 0.5, 0}
+//   1 = present, 2 = work from home, 0.5 = half day, 0 = absent
 // status === null clears that day.
 router.patch('/mark', async (req, res) => {
   try {
@@ -43,7 +47,7 @@ router.patch('/mark', async (req, res) => {
     }
     const clearing = status === null || status === undefined
     if (!clearing && !validStatus(Number(status))) {
-      return res.status(400).json({ error: 'status must be 0, 0.5 or 1' })
+      return res.status(400).json({ error: 'status must be 1 (present), 2 (WFH), 0.5 (half day) or 0 (absent)' })
     }
 
     const record = await Attendance.findOne({ userId, staffId, year: y, month: m })

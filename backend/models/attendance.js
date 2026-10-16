@@ -1,10 +1,14 @@
 const mongoose = require('mongoose')
 
-// One document per staff member per (year, month).
-// `days` is a Map of dayNumber (1–31 as string) → status:
-//   1   = present
-//   0   = absent
+// Allowed day statuses:
+//   1   = present (in office)
+//   2   = work from home (full day, counts as 1 payable day)
 //   0.5 = half day
+//   0   = absent
+const ATTENDANCE_STATUSES = [1, 2, 0.5, 0]
+
+// One document per staff member per (year, month).
+// `days` is a Map of dayNumber (1–31 as string) → status (see above).
 // Weekends (Sat/Sun) and company holidays are NOT stored here — they are
 // derived at display time (weekends from the calendar, holidays from the
 // separate Holiday collection).
@@ -29,10 +33,13 @@ const attendanceSchema = new mongoose.Schema(
       type: Number,
       required: true, // 0 = Jan … 11 = Dec
     },
-    // dayNumber (string) → 1 | 0 | 0.5
+    // dayNumber (string) → 1 | 2 | 0.5 | 0
     days: {
       type: Map,
-      of: Number,
+      of: {
+        type: Number,
+        enum: ATTENDANCE_STATUSES,
+      },
       default: {},
     },
   },
@@ -42,4 +49,7 @@ const attendanceSchema = new mongoose.Schema(
 // One attendance sheet per staff member per month per user.
 attendanceSchema.index({ userId: 1, staffId: 1, year: 1, month: 1 }, { unique: true })
 
-module.exports = mongoose.model('Attendance', attendanceSchema)
+const Attendance = mongoose.model('Attendance', attendanceSchema)
+
+module.exports = Attendance
+module.exports.ATTENDANCE_STATUSES = ATTENDANCE_STATUSES

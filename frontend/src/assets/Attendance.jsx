@@ -8,10 +8,12 @@ const MONTH_FULL = ['January','February','March','April','May','June','July','Au
 const WEEKDAY = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
 
 // status → display
+//   1 = present, 2 = work from home, 0.5 = half day, 0 = absent
 const STATUS_META = {
   1:   { label: 'P', color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0', name: 'Present' },
+  2:   { label: 'W', color: '#0284c7', bg: '#f0f9ff', border: '#bae6fd', name: 'Work from home' },
   0.5: { label: 'H', color: '#d97706', bg: '#fffbeb', border: '#fde68a', name: 'Half day' },
-  0:   { label: 'A', color: '#dc2626', bg: '#fef2f2', border: '#fecaca', name: 'present' },
+  0:   { label: 'A', color: '#dc2626', bg: '#fef2f2', border: '#fecaca', name: 'Absent' },
 }
 
 const daysInMonth = (year, month) => new Date(year, month + 1, 0).getDate()
@@ -20,10 +22,11 @@ const isWeekend = (year, month, day) => {
   return wd === 0 || wd === 6 // Sun or Sat
 }
 
-// Click cycle: undefined → 1 → 0.5 → 0 → undefined
+// Click cycle: undefined → 1 (P) → 2 (WFH) → 0.5 (H) → 0 (A) → undefined
 const nextStatus = (cur) => {
   if (cur === undefined || cur === null) return 1
-  if (cur === 1) return 0.5
+  if (cur === 1) return 2
+  if (cur === 2) return 0.5
   if (cur === 0.5) return 0
   return null // clears
 }
@@ -195,7 +198,7 @@ const Attendance = () => {
     }
   }
 
-  // ── Payable days per staff: present(1) + half(0.5), holidays excluded ──
+  // ── Payable days per staff: present(1) + WFH(1) + half(0.5), holidays excluded ──
   const payableFor = (staffId) => {
     const days = attMap[staffId] || {}
     let sum = 0
@@ -203,10 +206,22 @@ const Attendance = () => {
       const d = Number(dStr)
       if (isWeekend(year, month, d) || holidaySet.has(d)) return
       const v = days[dStr]
-      if (v === 1) sum += 1
+      if (v === 1 || v === 2) sum += 1
       else if (v === 0.5) sum += 0.5
     })
     return sum
+  }
+
+  // ── WFH days count per staff (shown under the payable total) ──
+  const wfhFor = (staffId) => {
+    const days = attMap[staffId] || {}
+    let count = 0
+    Object.keys(days).forEach(dStr => {
+      const d = Number(dStr)
+      if (isWeekend(year, month, d) || holidaySet.has(d)) return
+      if (days[dStr] === 2) count += 1
+    })
+    return count
   }
 
   const goPrev = () => { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) }
@@ -295,6 +310,7 @@ const Attendance = () => {
           color: #4338ca; border-left: 1px solid #ececec; padding: 8px 10px;
         }
         .total-cell.head { z-index: 4; font-size: 10.5px; color: #9ca3af; font-weight: 500; letter-spacing: 0.3px; }
+        .total-wfh { display: block; font-size: 9.5px; font-weight: 600; color: #0284c7; margin-top: 2px; }
 
         .state, .empty {
           text-align: center; padding: 48px 20px; color: #9ca3af; font-size: 14px;
@@ -316,7 +332,7 @@ const Attendance = () => {
           <div className="att-eyebrow">Attendance</div>
           <h2 className="att-title">Staff Attendance</h2>
           <p className="att-sub">
-            Click a cell to cycle <b style={{ color: '#16a34a' }}>Present</b> → <b style={{ color: '#d97706' }}>Half</b> → <b style={{ color: '#dc2626' }}>Absent</b> → clear · weekends are holidays
+            Click a cell to cycle <b style={{ color: '#16a34a' }}>Present</b> → <b style={{ color: '#0284c7' }}>WFH</b> → <b style={{ color: '#d97706' }}>Half</b> → <b style={{ color: '#dc2626' }}>Absent</b> → clear · weekends are holidays
           </p>
         </div>
         <div className="att-nav">
@@ -328,6 +344,7 @@ const Attendance = () => {
 
       <div className="att-legend">
         <span><span className="att-chip" style={{ background: '#f0fdf4', color: '#16a34a', border: '1px solid #bbf7d0' }}>P</span> Present (1)</span>
+        <span><span className="att-chip" style={{ background: '#f0f9ff', color: '#0284c7', border: '1px solid #bae6fd' }}>W</span> Work from home (1)</span>
         <span><span className="att-chip" style={{ background: '#fffbeb', color: '#d97706', border: '1px solid #fde68a' }}>H</span> Half (0.5)</span>
         <span><span className="att-chip" style={{ background: '#fef2f2', color: '#dc2626', border: '1px solid #fecaca' }}>A</span> Absent (0)</span>
         <span><span className="att-chip" style={{ background: '#f3f4f6', color: '#9ca3af' }}>—</span> Weekend</span>
@@ -403,7 +420,12 @@ const Attendance = () => {
                           </td>
                         )
                       })}
-                      <td className="total-cell">{payableFor(s._id)}</td>
+                      <td className="total-cell">
+                        {payableFor(s._id)}
+                        {wfhFor(s._id) > 0 && (
+                          <span className="total-wfh">{wfhFor(s._id)} WFH</span>
+                        )}
+                      </td>
                     </tr>
                   )
                 })}
