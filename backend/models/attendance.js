@@ -1,14 +1,49 @@
 const mongoose = require('mongoose')
 
-// Allowed day statuses:
-//   1   = present (in office)
-//   2   = work from home (full day, counts as 1 payable day)
-//   0.5 = half day
-//   0   = absent
-const ATTENDANCE_STATUSES = [1, 2, 0.5, 0]
+// Allowed day statuses (stored as plain words):
+//   'present' = in office            (1 payable day)
+//   'wfh'     = work from home        (1 payable day)
+//   'halfday' = half day              (0.5 payable day)
+//   'leave'   = on leave
+//   'absent'  = absent                (0)
+const ATTENDANCE_STATUSES = ['present', 'absent', 'wfh', 'leave', 'halfday']
+
+const ATTENDANCE_LABELS = {
+  present: 'Present',
+  absent: 'Absent',
+  wfh: 'Work From Home',
+  leave: 'Leave',
+  halfday: 'Half Day',
+}
+
+// Older records stored numbers. These map them to the new words.
+const LEGACY_STATUS_MAP = {
+  1: 'present',
+  2: 'wfh',
+  0.5: 'halfday',
+  0: 'absent',
+  3: 'leave',
+}
+
+// Turns any stored/incoming value (old number, "1", "Present", "WFH" …) into
+// one of ATTENDANCE_STATUSES, or null if it is not a valid status.
+const normalizeStatus = (value) => {
+  if (value === null || value === undefined || value === '') return null
+  if (typeof value === 'string') {
+    const word = value.trim().toLowerCase().replace(/[\s_-]+/g, '')
+    if (ATTENDANCE_STATUSES.includes(word)) return word
+    if (word === 'workfromhome') return 'wfh'
+    if (word === 'half') return 'halfday'
+    const asNumber = Number(value)
+    if (!Number.isNaN(asNumber) && LEGACY_STATUS_MAP[asNumber]) return LEGACY_STATUS_MAP[asNumber]
+    return null
+  }
+  if (typeof value === 'number') return LEGACY_STATUS_MAP[value] || null
+  return null
+}
 
 // One document per staff member per (year, month).
-// `days` is a Map of dayNumber (1–31 as string) → status (see above).
+// `days` is a Map of dayNumber (1–31 as string) → status word (see above).
 // Weekends (Sat/Sun) and company holidays are NOT stored here — they are
 // derived at display time (weekends from the calendar, holidays from the
 // separate Holiday collection).
@@ -33,11 +68,11 @@ const attendanceSchema = new mongoose.Schema(
       type: Number,
       required: true, // 0 = Jan … 11 = Dec
     },
-    // dayNumber (string) → 1 | 2 | 0.5 | 0
+    // dayNumber (string) → 'present' | 'absent' | 'wfh' | 'leave' | 'halfday'
     days: {
       type: Map,
       of: {
-        type: Number,
+        type: String,
         enum: ATTENDANCE_STATUSES,
       },
       default: {},
@@ -53,3 +88,6 @@ const Attendance = mongoose.model('Attendance', attendanceSchema)
 
 module.exports = Attendance
 module.exports.ATTENDANCE_STATUSES = ATTENDANCE_STATUSES
+module.exports.ATTENDANCE_LABELS = ATTENDANCE_LABELS
+module.exports.LEGACY_STATUS_MAP = LEGACY_STATUS_MAP
+module.exports.normalizeStatus = normalizeStatus

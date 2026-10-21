@@ -3,12 +3,26 @@ const router = express.Router()
 const Attendance = require('../models/attendance')
 const Holiday = require('../models/holiday')
 const { getAuth } = require('@clerk/express')
+const { ATTENDANCE_STATUSES, normalizeStatus } = require('../models/attendance')
 
 const isValidId = (id) => /^[0-9a-fA-F]{24}$/.test(id)
 
-// 1 = present, 2 = work from home, 0.5 = half day, 0 = absent
-const VALID_STATUSES = [1, 2, 0.5, 0]
-const validStatus = (v) => VALID_STATUSES.includes(v)
+// Plain object of days with every value converted to a status word
+// (old numeric records are converted on the fly).
+const normalizedDays = (days) => {
+  const out = {}
+  const entries = days instanceof Map ? days.entries() : Object.entries(days || {})
+  for (const [day, value] of entries) {
+    const status = normalizeStatus(value)
+    if (status) out[day] = status
+  }
+  return out
+}
+
+const toClient = (doc) => {
+  const obj = doc.toObject ? doc.toObject({ flattenMaps: true }) : { ...doc }
+  return { ...obj, days: normalizedDays(doc.days) }
+}
 
 // ─── GET attendance for a whole month (all staff) ───
 // Returns { attendance: [...], holidays: [...] } for the given year/month.
@@ -25,16 +39,16 @@ router.get('/month', async (req, res) => {
       Attendance.find({ userId, year, month }),
       Holiday.find({ userId, year, month }),
     ])
-    res.json({ attendance, holidays })
+    res.json({ attendance: attendance.map(toClient), holidays })
   } catch (err) {
     res.status(500).json({ error: err.message })
   }
 })
 
 // ─── SET one day's status for one staff member (upsert) ───
-// Body: { staffId, year, month, day, status }  status ∈ {1, 2, 0.5, 0}
-//   1 = present, 2 = work from home, 0.5 = half day, 0 = absent
-// status === null clears that day.
+// Body: { staffId, year, month, day, status }
+//   status ∈ 'present' | 'absent' | 'wfh' | 'leave' | 'halfday'
+//   status === null clears that day.
 router.patch('/mark', async (req, res) => {
   try {
     const { userId } = getAuth(req)
@@ -45,19 +59,24 @@ router.patch('/mark', async (req, res) => {
     if (isNaN(y) || isNaN(m) || isNaN(d)) {
       return res.status(400).json({ error: 'year, month and day are required' })
     }
-    const clearing = status === null || status === undefined
-    if (!clearing && !validStatus(Number(status))) {
-      return res.status(400).json({ error: 'status must be 1 (present), 2 (WFH), 0.5 (half day) or 0 (absent)' })
+    const clearing = status === null || status === undefined || status === ''
+    const nextStatus = clearing ? null : normalizeStatus(status)
+    if (!clearing && !nextStatus) {
+      return res.status(400).json({ error: `status must be one of: ${ATTENDANCE_STATUSES.join(', ')}` })
     }
 
     const record = await Attendance.findOne({ userId, staffId, year: y, month: m })
       || new Attendance({ userId, staffId, year: y, month: m, days: {} })
 
+    // Convert any old numeric values in this sheet so the whole document saves cleanly
+    const current = normalizedDays(record.days)
+    record.days = new Map(Object.entries(current))
+
     if (clearing) record.days.delete(String(d))
-    else record.days.set(String(d), Number(status))
+    else record.days.set(String(d), nextStatus)
 
     const saved = await record.save()
-    res.json(saved)
+    res.json(toClient(saved))
   } catch (err) {
     res.status(400).json({ error: err.message })
   }
