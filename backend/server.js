@@ -59,7 +59,7 @@ const lendingRoutes = require("./routes/lendingRoutes");
 const budgetRoutes = require("./routes/budgetRoutes");
 const staffRoutes = require("./routes/staffRoutes");
 const attendanceRoutes = require("./routes/attendanceRoutes");
-const myAttendanceRoutes = require("./routes/myAttendanceRoutes");
+const myAttendanceRoutes = require("./routes/");
 
 // Health Check Endpoint (public)
 app.get("/api/health", (req, res) => {
