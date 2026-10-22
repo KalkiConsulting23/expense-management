@@ -10,7 +10,7 @@ const app = express();
 
 // 1. Explicit CORS configuration to allow Authorization headers and preflight checks
 const allowedOrigins = [
-  "http://localhost:5000",
+  "http://localhost:5173",
   "https://expenses-emc1.onrender.com",
 ];
 
@@ -59,7 +59,7 @@ const lendingRoutes = require("./routes/lendingRoutes");
 const budgetRoutes = require("./routes/budgetRoutes");
 const staffRoutes = require("./routes/staffRoutes");
 const attendanceRoutes = require("./routes/attendanceRoutes");
-const myAttendanceRoutes = require("./routes/");
+const myAttendanceRoutes = require("./routes/myAttendanceRoutes");
 
 // Health Check Endpoint (public)
 app.get("/api/health", (req, res) => {
