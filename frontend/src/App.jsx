@@ -1,6 +1,7 @@
 import React, { lazy, Suspense, useEffect, useState, useRef } from 'react'
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
 import { SignedIn, SignedOut, useAuth, useUser } from '@clerk/clerk-react'
+import RoleGate from './assets/rolegate'
 
 const Navbar        = lazy(() => import('./assets/Navbar'))
 const Login         = lazy(() => import('./assets/login'))
@@ -192,6 +193,9 @@ function ApiTokenBridge({ children }) {
 }
 
 // Shows a one-time full-screen welcome overlay per sign-in.
+// RoleGate then decides what the person sees:
+//   - staff member (email is in Staff) → only their own attendance page
+//   - anyone else                      → the full dashboard below
 function SignedInApp() {
   const { user } = useUser()
   const [welcomeName, setWelcomeName] = useState(null)
@@ -215,44 +219,46 @@ function SignedInApp() {
       {welcomeName && (
         <WelcomeOverlay name={welcomeName} onDone={() => setWelcomeName(null)} />
       )}
-      <BrowserRouter>
-        <Suspense fallback={<PageLoader />}>
-          <Navbar />
-          <div style={{ minHeight: '100vh', background: '#f7f7f8' }}>
-            <Routes>
-              <Route path="/"               element={<Projectanl />} />
-              <Route path="/employeetable"  element={<EmployeeTable />} />
-              <Route path="/employee"       element={<Employee />} />
+      <RoleGate>
+        <BrowserRouter>
+          <Suspense fallback={<PageLoader />}>
+            <Navbar />
+            <div style={{ minHeight: '100vh', background: '#f7f7f8' }}>
+              <Routes>
+                <Route path="/"               element={<Projectanl />} />
+                <Route path="/employeetable"  element={<EmployeeTable />} />
+                <Route path="/employee"       element={<Employee />} />
 
-              <Route path="/projecttable"   element={<Projecttable />} />
-              <Route path="/project"        element={<Project />} />
+                <Route path="/projecttable"   element={<Projecttable />} />
+                <Route path="/project"        element={<Project />} />
 
-              <Route path="/salesform"      element={<Salesform />} />
-              <Route path="/salestable"     element={<Salestable />} />
+                <Route path="/salesform"      element={<Salesform />} />
+                <Route path="/salestable"     element={<Salestable />} />
 
-              <Route path="/salesanl"       element={<Salesanl />} />
-              <Route path="/projectanl"     element={<Projectanl />} />
-              <Route path="/expenseanl"     element={<Expenseanl />} />
+                <Route path="/salesanl"       element={<Salesanl />} />
+                <Route path="/projectanl"     element={<Projectanl />} />
+                <Route path="/expenseanl"     element={<Expenseanl />} />
 
-              <Route path="/expensemaster"  element={<Expensemaster />} />
-              <Route path="/projectmaster"  element={<Projectmaster />} />
+                <Route path="/expensemaster"  element={<Expensemaster />} />
+                <Route path="/projectmaster"  element={<Projectmaster />} />
 
-              <Route path="/incometracker"  element={<Incometracker />} />
-              <Route path="/borrow"         element={<Borrow />} />
-              <Route path="/borrowform"     element={<Borrowform />} />
-              <Route path="/lending"        element={<Lending />} />
-              <Route path="/lendingform"    element={<Lendingform />} />
+                <Route path="/incometracker"  element={<Incometracker />} />
+                <Route path="/borrow"         element={<Borrow />} />
+                <Route path="/borrowform"     element={<Borrowform />} />
+                <Route path="/lending"        element={<Lending />} />
+                <Route path="/lendingform"    element={<Lendingform />} />
 
-              <Route path="/staff"          element={<Staff />} />
-              <Route path="/staffform"      element={<Staffform />} />
+                <Route path="/staff"          element={<Staff />} />
+                <Route path="/staffform"      element={<Staffform />} />
 
-              <Route path="/attendance"     element={<Attendance />} />
+                <Route path="/attendance"     element={<Attendance />} />
 
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
-          </div>
-        </Suspense>
-      </BrowserRouter>
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </div>
+          </Suspense>
+        </BrowserRouter>
+      </RoleGate>
     </ApiTokenBridge>
   )
 }
