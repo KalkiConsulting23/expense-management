@@ -18,6 +18,45 @@ const STAFF_FIELDS = [
   'ifscCode', 'bankAccountType',
 ];
 
+// Dates and numbers can't be saved as "" — an empty value means "clear it".
+const BLANK_TO_NULL_FIELDS = new Set([
+  'dateOfJoining', 'dateOfBirth', 'dateOfExit',
+  'age', 'salary', 'currentExperience', 'totalExperience',
+]);
+
+// Pick only the allowed fields from the request body and tidy their values.
+// mode 'add'    → blank dates/numbers are left out
+// mode 'update' → blank dates/numbers become null (clears the saved value)
+const pickStaffFields = (body = {}, mode = 'add') => {
+  const data = {};
+  STAFF_FIELDS.forEach((field) => {
+    if (body[field] === undefined) return;
+    let value = body[field];
+    if (typeof value === 'string') value = value.trim();
+    if (BLANK_TO_NULL_FIELDS.has(field) && (value === '' || value === null)) {
+      if (mode === 'update') data[field] = null;
+      return;
+    }
+    data[field] = value;
+  });
+  return data;
+};
+
+// Turn Mongoose errors into a clear message for the form.
+const sendSaveError = (res, err, fallback) => {
+  if (err && err.name === 'ValidationError') {
+    const message = Object.values(err.errors).map((e) => e.message).join(', ');
+    return res.status(400).json({ message: message || fallback, error: err.message });
+  }
+  if (err && err.name === 'CastError') {
+    return res.status(400).json({ message: `Invalid value for ${err.path}.`, error: err.message });
+  }
+  if (err && err.code === 11000) {
+    return res.status(409).json({ message: 'A staff member with these details already exists.', error: err.message });
+  }
+  return res.status(500).json({ message: fallback, error: err && err.message });
+};
+
 // Build an employee ID like "DEEP1033": a 4-letter name prefix + a unique
 // 4-digit number, scoped per user so two admins can't clash.
 const generateEmployeeId = async (userId, firstName) => {
@@ -38,17 +77,16 @@ router.post('/add', async (req, res) => {
   try {
     const { userId } = getAuth(req);
 
-    const data = {};
-    STAFF_FIELDS.forEach((field) => {
-      if (req.body[field] !== undefined) data[field] = req.body[field];
-    });
-
+    const data = pickStaffFields(req.body, 'add');
     const employeeId = await generateEmployeeId(userId, data.firstName);
 
     const newStaff = new Staff({ userId, employeeId, ...data });
     await newStaff.save();
     res.status(201).json(newStaff);
   } catch (err) {
+    if (err && (err.name === 'ValidationError' || err.name === 'CastError' || err.code === 11000)) {
+      return sendSaveError(res, err, 'Failed adding staff.');
+    }
     res.status(400).json({ message: 'Failed adding staff.', error: err.message });
   }
 });
@@ -81,32 +119,37 @@ router.get('/:id', async (req, res) => {
 });
 
 // ─── UPDATE STAFF ───
-router.patch('/update/:id', async (req, res) => {
+// Send only the fields that changed. employeeId and userId can never be changed.
+// PATCH and PUT both work, so either style from the frontend is fine.
+const updateStaff = async (req, res) => {
   try {
     const { userId } = getAuth(req);
     const { id } = req.params;
     if (!isValidId(id)) return res.status(400).json({ message: 'Invalid staff ID.' });
 
-    const setFields = {};
-    STAFF_FIELDS.forEach((field) => {
-      if (req.body[field] !== undefined) setFields[field] = req.body[field];
-    });
+    const setFields = pickStaffFields(req.body, 'update');
     if (Object.keys(setFields).length === 0) {
       return res.status(400).json({ message: 'No fields to update.' });
+    }
+    if ('firstName' in setFields && !setFields.firstName) {
+      return res.status(400).json({ message: 'First name cannot be empty.' });
     }
 
     const updated = await Staff.findOneAndUpdate(
       { _id: id, userId },
       { $set: setFields },
-      { new: true }
+      { new: true, runValidators: true, context: 'query' }
     );
     if (!updated) return res.status(404).json({ message: 'Staff not found.' });
 
     res.status(200).json({ message: 'Staff updated.', staff: updated });
   } catch (err) {
-    res.status(500).json({ message: 'Failed updating staff.', error: err.message });
+    sendSaveError(res, err, 'Failed updating staff.');
   }
-});
+};
+
+router.patch('/update/:id', updateStaff);
+router.put('/update/:id', updateStaff);
 
 // ─── DELETE STAFF ───
 router.delete('/delete/:id', async (req, res) => {
