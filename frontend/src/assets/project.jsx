@@ -43,7 +43,27 @@ const BLANK_FORM = {
   defaultHourlyRate: "", defaultDailyRate: "",
   daysCycle: "30",
   includeGst: false,
+  // Team & project attendance (optional)
+  loginTime: "",
+  lateWindowMinutes: "30",
+  assignedStaff: [],
 };
+
+// "09:00" → "9:00 AM"
+const fmtTime12 = (hhmm) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ""));
+  if (!m) return "";
+  const h = Number(m[1]);
+  return `${((h + 11) % 12) + 1}:${m[2]} ${h < 12 ? "AM" : "PM"}`;
+};
+// "09:00" + 30 → "09:30"
+const addMinutes = (hhmm, mins) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ""));
+  if (!m) return "";
+  const t = Math.min(24 * 60 - 1, Number(m[1]) * 60 + Number(m[2]) + Number(mins || 0));
+  return `${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")}`;
+};
+const staffName = (s) => `${s.firstName || ""} ${s.lastName || ""}`.trim() || s.employeeId || "Staff";
 
 // Preview helper: how many months forward this cycle pushes earned income
 const monthsForwardPreview = (cycle) => {
@@ -71,6 +91,38 @@ const AddProject = () => {
   const [fxUpdated, setFxUpdated] = useState(null);
 
   const isIntl = formData.projectScope === "international";
+
+  // Staff list for the "Assign Staff" picker
+  const [staffList, setStaffList] = useState([]);
+  const [staffLoading, setStaffLoading] = useState(true);
+  const [staffSearch, setStaffSearch] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/staff/all`);
+        if (!res.ok) throw new Error("bad status");
+        const data = await res.json();
+        if (!cancelled) setStaffList(Array.isArray(data) ? data : []);
+      } catch (err) {
+        if (!cancelled) setStaffList([]);
+      } finally {
+        if (!cancelled) setStaffLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const toggleStaff = (id) => {
+    setFormData((p) => ({
+      ...p,
+      assignedStaff: p.assignedStaff.includes(id)
+        ? p.assignedStaff.filter((x) => x !== id)
+        : [...p.assignedStaff, id],
+    }));
+    if (errors.loginTime) setErrors((p) => ({ ...p, loginTime: undefined }));
+  };
 
   // Fetch live rates once on mount
   useEffect(() => {
@@ -142,6 +194,13 @@ const AddProject = () => {
     if (!formData.daysCycle || Number(formData.daysCycle) <= 0) {
       e.daysCycle = "Enter a valid days cycle";
     }
+    if (formData.assignedStaff.length > 0 && !formData.loginTime) {
+      e.loginTime = "Set a login time for the assigned staff";
+    }
+    if (formData.lateWindowMinutes !== "" &&
+        (Number(formData.lateWindowMinutes) < 0 || Number(formData.lateWindowMinutes) > 240)) {
+      e.lateWindowMinutes = "Enter 0 to 240 minutes";
+    }
     if (formData.projectType === "monthly") {
       if (!formData.expectedAmount || Number(formData.expectedAmount) <= 0) {
         e.expectedAmount = "Expected amount is required";
@@ -194,6 +253,10 @@ const AddProject = () => {
       startDate:         formData.startDate,
       endDate:           formData.endDate,
       daysCycle:         Number(formData.daysCycle),
+      // Team & project attendance
+      loginTime:         formData.loginTime,
+      lateWindowMinutes: formData.lateWindowMinutes === "" ? 30 : Number(formData.lateWindowMinutes),
+      assignedStaff:     formData.assignedStaff,
     };
 
     setLoading(true);
@@ -382,6 +445,19 @@ const AddProject = () => {
         .ap-section-label { font-size: 12px; font-weight: 600; color: #6b7280; display: flex; align-items: center; gap: 10px; margin: 4px 0; }
         .ap-section-label::after { content: ''; flex: 1; height: 1px; background: #f1f1f1; }
         .ap-info-box { font-size: 12px; color: #6b7280; background: #fafafa; padding: 12px 15px; border-radius: 10px; border: 1px dashed #d1d5db; line-height: 1.6; }
+        .ap-time-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+        .ap-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+        .ap-chip { display: inline-flex; align-items: center; gap: 6px; padding: 5px 7px 5px 11px; border-radius: 999px; background: #f3f4f6; border: 1px solid #e5e7eb; color: #18181b; font-size: 12.5px; font-weight: 500; }
+        .ap-chip button { border: none; background: transparent; color: #6b7280; cursor: pointer; font-size: 15px; line-height: 1; padding: 0 2px; }
+        .ap-chip button:hover { color: #dc2626; }
+        .ap-staff-list { border: 1px solid #ececec; border-radius: 10px; max-height: 220px; overflow-y: auto; background: #fff; }
+        .ap-staff-item { display: flex; align-items: center; gap: 10px; padding: 9px 13px; cursor: pointer; border-bottom: 1px solid #f4f4f5; font-size: 13px; color: #18181b; }
+        .ap-staff-item:last-child { border-bottom: none; }
+        .ap-staff-item:hover { background: #fafafa; }
+        .ap-staff-item input { width: 15px; height: 15px; accent-color: #18181b; cursor: pointer; flex-shrink: 0; }
+        .ap-staff-meta { font-size: 11px; color: #9ca3af; margin-top: 1px; }
+        .ap-staff-empty { padding: 14px; font-size: 12.5px; color: #9ca3af; text-align: center; }
+        .ap-optional { font-size: 10.5px; font-weight: 500; color: #9ca3af; background: #f3f4f6; padding: 2px 7px; border-radius: 20px; }
         @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
         .ap-usd-hint { font-size: 11.5px; color: #6b7280; font-weight: 500; margin-top: 7px; line-height: 1.5; }
         .ap-fx-note { color: #9ca3af; font-weight: 400; }
@@ -503,7 +579,7 @@ const AddProject = () => {
         .ap-ov-dot { width: 5px; height: 5px; border-radius: 50%; background: #22c55e; animation: pulse 1s ease-in-out infinite; }
         @keyframes pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
 
-        @media (max-width: 520px) { .ap-card { padding: 24px 18px; } .ap-date-row { grid-template-columns: 1fr; } .ap-type-group { flex-direction: column; } .ap-toast { left: 16px; right: 16px; bottom: 16px; max-width: none; } }
+        @media (max-width: 520px) { .ap-card { padding: 24px 18px; } .ap-date-row, .ap-time-row { grid-template-columns: 1fr; } .ap-type-group { flex-direction: column; } .ap-toast { left: 16px; right: 16px; bottom: 16px; max-width: none; } }
       `}</style>
 
       <div className="ap-page">
@@ -640,6 +716,108 @@ const AddProject = () => {
                 </div>
               </div>
             )}
+
+            {/* ─── Team & Attendance (optional) ─── */}
+            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              <div className="ap-section-label">Team &amp; Attendance <span className="ap-optional">Optional</span></div>
+
+              <div className="ap-time-row">
+                <div className="ap-field">
+                  <div className="ap-label">
+                    Daily Login Time {formData.assignedStaff.length > 0 && <span className="ap-required">*</span>}
+                  </div>
+                  <input
+                    className={`ap-input${errors.loginTime ? " err" : ""}`}
+                    name="loginTime"
+                    type="time"
+                    value={formData.loginTime}
+                    onChange={handleChange}
+                  />
+                  {errors.loginTime && <div className="ap-err">⚠ {errors.loginTime}</div>}
+                </div>
+                <div className="ap-field">
+                  <div className="ap-label">Late Window <span style={{ color: "#9ca3af", fontWeight: 400 }}>(0 = no late)</span></div>
+                  <div className="ap-prefix-wrap">
+                    <input
+                      className={`ap-input${errors.lateWindowMinutes ? " err" : ""}`}
+                      name="lateWindowMinutes"
+                      type="number"
+                      min="0"
+                      max="240"
+                      value={formData.lateWindowMinutes}
+                      onChange={handleChange}
+                      placeholder="30"
+                      style={{ paddingRight: 52 }}
+                    />
+                    <span className="ap-suffix">mins</span>
+                  </div>
+                  {errors.lateWindowMinutes && <div className="ap-err">⚠ {errors.lateWindowMinutes}</div>}
+                </div>
+              </div>
+
+              <div className="ap-cycle-hint" style={{ marginTop: 0 }}>
+                {formData.loginTime && formData.lateWindowMinutes !== "" && Number(formData.lateWindowMinutes) === 0 ? (
+                  <>Late window is <strong>0</strong> → <strong>no late marking</strong>. Staff can log in <strong>any time</strong> during the day and are marked Present.</>
+                ) : formData.loginTime ? (
+                  <>
+                    Staff can log in from 1 hour before · up to <strong>{fmtTime12(formData.loginTime)}</strong> = Present ·
+                    after that = Late · closed after <strong>{fmtTime12(addMinutes(formData.loginTime, formData.lateWindowMinutes === "" ? 30 : (Number(formData.lateWindowMinutes) || 0)))}</strong>
+                  </>
+                ) : (
+                  <>Set a login time if staff on this project should log in to it each day. Leave it empty if not needed.</>
+                )}
+              </div>
+
+              <div className="ap-field">
+                <div className="ap-label">Assign Staff ({formData.assignedStaff.length})</div>
+                {formData.assignedStaff.length > 0 && (
+                  <div className="ap-chips" style={{ marginBottom: 10 }}>
+                    {formData.assignedStaff.map((id) => {
+                      const s = staffList.find((x) => String(x._id) === id) || { firstName: "Staff" };
+                      return (
+                        <span key={id} className="ap-chip">
+                          {staffName(s)}
+                          <button type="button" aria-label={`Remove ${staffName(s)}`} onClick={() => toggleStaff(id)}>×</button>
+                        </span>
+                      );
+                    })}
+                  </div>
+                )}
+                {staffList.length > 5 && (
+                  <input
+                    className="ap-input"
+                    placeholder="Search staff…"
+                    value={staffSearch}
+                    onChange={(e) => setStaffSearch(e.target.value)}
+                    style={{ marginBottom: 8, padding: "9px 13px", fontSize: 13 }}
+                  />
+                )}
+                <div className="ap-staff-list">
+                  {staffLoading ? (
+                    <div className="ap-staff-empty">Loading staff…</div>
+                  ) : staffList.length === 0 ? (
+                    <div className="ap-staff-empty">No staff added yet. You can assign staff later from the ⋯ button in the Project Tracker.</div>
+                  ) : (() => {
+                    const q = staffSearch.trim().toLowerCase();
+                    const shown = staffList.filter((s) =>
+                      !q || `${staffName(s)} ${s.employeeId || ""} ${s.designation || ""}`.toLowerCase().includes(q));
+                    if (shown.length === 0) return <div className="ap-staff-empty">No match.</div>;
+                    return shown.map((s) => {
+                      const id = String(s._id);
+                      return (
+                        <label key={id} className="ap-staff-item">
+                          <input type="checkbox" checked={formData.assignedStaff.includes(id)} onChange={() => toggleStaff(id)} />
+                          <div style={{ minWidth: 0 }}>
+                            <div>{staffName(s)}</div>
+                            <div className="ap-staff-meta">{[s.employeeId, s.designation].filter(Boolean).join(" · ")}</div>
+                          </div>
+                        </label>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+            </div>
           </div>
 
           <div className="ap-actions">

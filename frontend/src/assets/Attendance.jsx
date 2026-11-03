@@ -18,6 +18,30 @@ const STATUS_META = {
   halfday: { label: 'H', color: '#d97706', bg: '#fffbeb', border: '#fde68a', name: 'Half Day' },
 }
 
+// Project rows: login-based statuses ('late' replaces 'wfh')
+const PROJECT_ORDER = ['present', 'late', 'absent', 'leave', 'halfday']
+const PROJECT_META = {
+  ...STATUS_META,
+  late: { label: 'LT', color: '#ea580c', bg: '#fff7ed', border: '#fed7aa', name: 'Late' },
+}
+
+// "09:00" → "9:00 AM"
+const fmtTime12 = (hhmm) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''))
+  if (!m) return ''
+  const h = Number(m[1])
+  return `${((h + 11) % 12) + 1}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`
+}
+// Saved login timestamp → "9:12 AM" (India time)
+const fmtClock = (iso) => {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return isNaN(d) ? '' : d.toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit' })
+}
+// Project dates are calendar dates saved at UTC midnight → "YYYY-MM-DD"
+const dateOnly = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '')
+const ymd = (y, m, d) => `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+
 // Width of each total column on the right (they stay fixed while the dates scroll)
 const TOTAL_COL_WIDTH = 58
 
@@ -55,7 +79,10 @@ const Attendance = () => {
   const [error, setError] = useState('')
   const [savingKey, setSavingKey] = useState(null) // `${staffId}-${day}`
   const [toast, setToast] = useState(null)
-  const [menu, setMenu] = useState(null) // { staffId, day, top, left } — the open status dropdown
+  const [menu, setMenu] = useState(null) // { staffId, projectId?, day, top, left } — the open status dropdown
+  const [projects, setProjects] = useState([])         // projects running this month
+  const [projectAtt, setProjectAtt] = useState([])     // project sheets for the month
+  const [view, setView] = useState('all')              // 'all' | 'office' | projectId
   const menuRef = useRef(null)
 
   const showToast = (type, msg) => {
@@ -80,6 +107,28 @@ const Attendance = () => {
     })
     return map
   }, [attendance])
+
+  // Fast lookup: `${staffId}_${projectId}` → { day → { status, at, by } }
+  const projMap = useMemo(() => {
+    const map = {}
+    projectAtt.forEach(rec => { map[`${rec.staffId}_${rec.projectId}`] = rec.days || {} })
+    return map
+  }, [projectAtt])
+
+  // Project rows per staff member: projects they're assigned to, plus any project
+  // they still have attendance on this month (e.g. removed from the team later)
+  const projectsByStaff = useMemo(() => {
+    const out = {}
+    projects.forEach(p => {
+      const ids = new Set((p.assignedStaff || []).map(String))
+      projectAtt.forEach(rec => {
+        if (String(rec.projectId) === String(p._id) && Object.keys(rec.days || {}).length) ids.add(String(rec.staffId))
+      })
+      ids.forEach(id => { (out[id] = out[id] || []).push(p) })
+    })
+    Object.values(out).forEach(list => list.sort((a, b) => String(a.loginTime || '99').localeCompare(String(b.loginTime || '99'))))
+    return out
+  }, [projects, projectAtt])
 
   const holidaySet = useMemo(() => {
     const s = new Set()
@@ -125,6 +174,8 @@ const Attendance = () => {
         setStaff(staffData)
         setAttendance(monthData.attendance || [])
         setHolidays(monthData.holidays || [])
+        setProjects(monthData.projects || [])
+        setProjectAtt(monthData.projectAttendance || [])
       } catch (err) {
         if (!cancelled) setError(err.message)
       } finally {
@@ -156,7 +207,7 @@ const Attendance = () => {
   }, [menu])
 
   // ── Open the status dropdown under the clicked cell ──
-  const openMenu = (e, staffId, day) => {
+  const openMenu = (e, staffId, day, projectId = null) => {
     if (isWeekend(year, month, day) || holidaySet.has(day)) return
     const rect = e.currentTarget.getBoundingClientRect()
     const left = Math.min(
@@ -165,7 +216,7 @@ const Attendance = () => {
     )
     const fitsBelow = rect.bottom + 6 + MENU_HEIGHT < window.innerHeight
     const top = fitsBelow ? rect.bottom + 6 : Math.max(8, rect.top - 6 - MENU_HEIGHT)
-    setMenu({ staffId, day, top, left })
+    setMenu({ staffId, projectId, day, top, left })
   }
 
   // ── Save one day's status (status = null clears the day) ──
@@ -216,6 +267,49 @@ const Attendance = () => {
     }
   }
 
+  // ── Save one project day (status = null clears the day) ──
+  const setProjectDayStatus = async (staffId, projectId, day, next) => {
+    setMenu(null)
+    const k = `${staffId}_${projectId}`
+    const cur = projMap[k]?.[String(day)]?.status
+    if ((cur || null) === next) return
+    const key = `${staffId}-${projectId}-${day}`
+    setSavingKey(key)
+
+    const prev = projectAtt
+    setProjectAtt(recs => {
+      const idx = recs.findIndex(r => String(r.staffId) === String(staffId) && String(r.projectId) === String(projectId))
+      const base = idx > -1 ? recs[idx] : { staffId, projectId, year, month, days: {} }
+      const days = { ...(base.days || {}) }
+      if (next === null) delete days[String(day)]
+      else days[String(day)] = { ...(days[String(day)] || {}), status: next, by: 'admin' }
+      const updated = { ...base, days }
+      if (idx > -1) { const copy = [...recs]; copy[idx] = updated; return copy }
+      return [...recs, updated]
+    })
+
+    try {
+      const token = await getToken()
+      const res = await fetch(`${API_BASE}/attendance/project-mark`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ staffId, projectId, year, month, day, status: next }),
+      })
+      const saved = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(saved.error || 'Failed to save')
+      setProjectAtt(recs => {
+        const idx = recs.findIndex(r => String(r.staffId) === String(staffId) && String(r.projectId) === String(projectId))
+        if (idx > -1) { const copy = [...recs]; copy[idx] = saved; return copy }
+        return [...recs, saved]
+      })
+    } catch (err) {
+      setProjectAtt(prev)
+      showToast('error', err.message || 'Something went wrong')
+    } finally {
+      setSavingKey(null)
+    }
+  }
+
   // ── Toggle a company-wide holiday for a day ──
   const handleToggleHoliday = async (day) => {
     if (isWeekend(year, month, day)) return
@@ -259,6 +353,19 @@ const Attendance = () => {
     return counts
   }
 
+  // Project row totals. Present counts on-time and late logins; the WFH column shows "—".
+  const projectCountsFor = (staffId, projectId) => {
+    const counts = { present: 0, late: 0, absent: 0, leave: 0, halfday: 0 }
+    const days = projMap[`${staffId}_${projectId}`] || {}
+    Object.keys(days).forEach(dStr => {
+      const d = Number(dStr)
+      if (isWeekend(year, month, d) || holidaySet.has(d)) return
+      const st = days[dStr]?.status
+      if (counts[st] !== undefined) counts[st] += 1
+    })
+    return counts
+  }
+
   // Sticky position of each total column from the right edge
   const totalColStyle = (idx) => ({
     right: (STATUS_ORDER.length - 1 - idx) * TOTAL_COL_WIDTH,
@@ -270,8 +377,24 @@ const Attendance = () => {
   const goPrev = () => { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) }
   const goNext = () => { if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1) }
 
-  const menuCurrent = menu ? attMap[menu.staffId]?.[String(menu.day)] : undefined
+  const menuProject = menu?.projectId ? projects.find(p => String(p._id) === String(menu.projectId)) : null
+  const menuCurrent = menu
+    ? (menu.projectId
+        ? projMap[`${menu.staffId}_${menu.projectId}`]?.[String(menu.day)]?.status
+        : attMap[menu.staffId]?.[String(menu.day)])
+    : undefined
   const menuStaff = menu ? staff.find(s => s._id === menu.staffId) : null
+  const menuOrder = menu?.projectId ? PROJECT_ORDER : STATUS_ORDER
+  const menuMeta = menu?.projectId ? PROJECT_META : STATUS_META
+  const pickStatus = (key) => (menu.projectId
+    ? setProjectDayStatus(menu.staffId, menu.projectId, menu.day, key)
+    : setDayStatus(menu.staffId, menu.day, key))
+
+  // Which staff / rows to show for the selected view
+  const viewProject = view !== 'all' && view !== 'office' ? projects.find(p => String(p._id) === view) : null
+  const visibleStaff = viewProject
+    ? staff.filter(s => (projectsByStaff[s._id] || []).some(p => String(p._id) === view))
+    : staff
 
   return (
     <div className="att-page">
@@ -366,6 +489,20 @@ const Attendance = () => {
         .total-head-name { font-size: 9.5px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.2px; }
         .total-zero { color: #d4d4d8; font-weight: 600; }
 
+        /* Project rows under each staff member */
+        tr.proj-row td { background: #fcfcfe; }
+        tr.proj-row .name-cell { background: #fcfcfe; padding-left: 22px; }
+        tr.proj-row .name-main { font-size: 12px; font-weight: 600; color: #4338ca; display: flex; align-items: center; gap: 5px; }
+        tr.proj-row .name-main::before { content: '↳'; color: #a5b4fc; font-weight: 400; }
+        tr.proj-row .total-cell { background: #f7f7fd; font-size: 12px; }
+        tr.has-proj > td { border-bottom-color: transparent; }
+        .att-cell.outside { background: #fafafa; color: #e4e4e7; }
+        .late-note { color: #ea580c; font-weight: 600; }
+        .att-view {
+          height: 34px; border-radius: 9px; border: 1px solid #ececec; background: #fff;
+          font: inherit; font-size: 12.5px; color: #374151; padding: 0 10px; cursor: pointer; max-width: 220px;
+        }
+
         .state, .empty {
           text-align: center; padding: 48px 20px; color: #9ca3af; font-size: 14px;
           background: #fff; border: 1px solid #ececec; border-radius: 14px;
@@ -408,10 +545,20 @@ const Attendance = () => {
           <h2 className="att-title">Staff Attendance</h2>
           <p className="att-sub">
             Click a day to choose Present, Absent, WFH, Leave or Half Day · <b>—</b> weekend · <b style={{ color: '#4338ca' }}>★</b> holiday (click "+ Hol" on a date)
+            {projects.length > 0 && <> · <b style={{ color: '#4338ca' }}>↳</b> project rows (<b style={{ color: '#ea580c' }}>LT</b> = late)</>}
           </p>
         </div>
 
         <div className="att-nav">
+          {projects.length > 0 && (
+            <select className="att-view" value={view} onChange={e => { setView(e.target.value); setMenu(null) }} aria-label="Show">
+              <option value="all">Office + projects</option>
+              <option value="office">Office only</option>
+              {projects.map(p => (
+                <option key={p._id} value={String(p._id)}>Project: {p.projectName}</option>
+              ))}
+            </select>
+          )}
           <button className="att-nav-btn" onClick={goPrev} aria-label="Previous month">‹</button>
           <div className="att-month-label">{MONTH_FULL[month]} {year}</div>
           <button className="att-nav-btn" onClick={goNext} aria-label="Next month">›</button>
@@ -469,50 +616,134 @@ const Attendance = () => {
                 </tr>
               </thead>
               <tbody>
-                {staff.map(s => {
+                {visibleStaff.length === 0 && (
+                  <tr>
+                    <td colSpan={dayList.length + 1 + STATUS_ORDER.length} style={{ padding: '22px 16px', color: '#9ca3af', fontSize: 12.5 }}>
+                      No staff on this project yet. Assign staff from the ⋯ button in the Project Tracker.
+                    </td>
+                  </tr>
+                )}
+                {visibleStaff.map(s => {
                   const days = attMap[s._id] || {}
                   const counts = countsFor(s._id)
+                  const staffProjects = view === 'office'
+                    ? []
+                    : (projectsByStaff[s._id] || []).filter(p => !viewProject || String(p._id) === view)
+                  const showOffice = !viewProject
                   return (
-                    <tr key={s._id}>
-                      <td className="name-cell">
-                        <div className="name-main">{s.firstName} {s.lastName}</div>
-                        <div className="name-meta">{s.employeeId}{s.designation ? ` · ${s.designation}` : ''}</div>
-                      </td>
-                      {dayList.map(day => {
-                        const wknd = isWeekend(year, month, day)
-                        const hol = holidaySet.has(day)
-                        const key = `${s._id}-${day}`
-                        if (wknd) return <td key={day} className="att-cell weekend">—</td>
-                        if (hol)  return <td key={day} className="att-cell holiday">★</td>
-                        const status = days[String(day)]
-                        const meta = status ? STATUS_META[status] : null
-                        const isOpen = menu && menu.staffId === s._id && menu.day === day
-                        return (
-                          <td key={day} className={`att-cell${savingKey === key ? ' saving' : ''}`}>
-                            <button
-                              type="button"
-                              className={`box${isOpen ? ' open' : ''}`}
-                              onClick={(e) => (isOpen ? setMenu(null) : openMenu(e, s._id, day))}
-                              title={meta ? `${meta.name} — click to change` : 'Not marked — click to choose'}
-                              aria-haspopup="menu"
-                              aria-expanded={Boolean(isOpen)}
-                              style={meta ? { background: meta.bg, color: meta.color, borderColor: meta.border } : { background: '#fff', color: '#d1d5db', borderColor: '#ececec' }}
-                            >
-                              {meta ? meta.label : ''}
-                            </button>
+                    <React.Fragment key={s._id}>
+                      {showOffice && (
+                        <tr className={staffProjects.length ? 'has-proj' : ''}>
+                          <td className="name-cell">
+                            <div className="name-main">{s.firstName} {s.lastName}</div>
+                            <div className="name-meta">
+                              {s.employeeId}{s.designation ? ` · ${s.designation}` : ''}
+                              {staffProjects.length > 0 ? ' · Office' : ''}
+                            </div>
                           </td>
+                          {dayList.map(day => {
+                            const wknd = isWeekend(year, month, day)
+                            const hol = holidaySet.has(day)
+                            const key = `${s._id}-${day}`
+                            if (wknd) return <td key={day} className="att-cell weekend">—</td>
+                            if (hol)  return <td key={day} className="att-cell holiday">★</td>
+                            const status = days[String(day)]
+                            const meta = status ? STATUS_META[status] : null
+                            const isOpen = menu && !menu.projectId && menu.staffId === s._id && menu.day === day
+                            return (
+                              <td key={day} className={`att-cell${savingKey === key ? ' saving' : ''}`}>
+                                <button
+                                  type="button"
+                                  className={`box${isOpen ? ' open' : ''}`}
+                                  onClick={(e) => (isOpen ? setMenu(null) : openMenu(e, s._id, day))}
+                                  title={meta ? `${meta.name} — click to change` : 'Not marked — click to choose'}
+                                  aria-haspopup="menu"
+                                  aria-expanded={Boolean(isOpen)}
+                                  style={meta ? { background: meta.bg, color: meta.color, borderColor: meta.border } : { background: '#fff', color: '#d1d5db', borderColor: '#ececec' }}
+                                >
+                                  {meta ? meta.label : ''}
+                                </button>
+                              </td>
+                            )
+                          })}
+                          {STATUS_ORDER.map((key, idx) => (
+                            <td
+                              key={key}
+                              className={`total-cell${idx === 0 ? ' first' : ''}`}
+                              style={{ ...totalColStyle(idx), color: STATUS_META[key].color }}
+                            >
+                              {counts[key] > 0 ? counts[key] : <span className="total-zero">0</span>}
+                            </td>
+                          ))}
+                        </tr>
+                      )}
+
+                      {staffProjects.map(p => {
+                        const pdays = projMap[`${s._id}_${p._id}`] || {}
+                        const pc = projectCountsFor(s._id, p._id)
+                        const start = dateOnly(p.startDate)
+                        const end = dateOnly(p.endDate)
+                        const presentTotal = pc.present + pc.late
+                        const totals = { present: presentTotal, absent: pc.absent, wfh: null, leave: pc.leave, halfday: pc.halfday }
+                        return (
+                          <tr key={`${s._id}-${p._id}`} className="proj-row">
+                            <td className="name-cell">
+                              <div className="name-main" title={p.projectName}>
+                                {viewProject ? `${s.firstName} ${s.lastName}` : p.projectName}
+                              </div>
+                              <div className="name-meta">
+                                {viewProject ? `${p.projectName} · ` : ''}
+                                {!p.loginTime ? 'No login time' : Number(p.lateWindowMinutes) === 0 ? 'Login any time' : `Login ${fmtTime12(p.loginTime)}`}
+                                {pc.late > 0 && <span className="late-note"> · {pc.late} late</span>}
+                              </div>
+                            </td>
+                            {dayList.map(day => {
+                              const wknd = isWeekend(year, month, day)
+                              const hol = holidaySet.has(day)
+                              const key = `${s._id}-${p._id}-${day}`
+                              if (wknd) return <td key={day} className="att-cell weekend">—</td>
+                              if (hol)  return <td key={day} className="att-cell holiday">★</td>
+                              const dstr = ymd(year, month, day)
+                              const entry = pdays[String(day)]
+                              if (((start && dstr < start) || (end && dstr > end)) && !entry) {
+                                return <td key={day} className="att-cell outside" title="Project not running on this day">·</td>
+                              }
+                              const meta = entry ? PROJECT_META[entry.status] : null
+                              const isOpen = menu && String(menu.projectId) === String(p._id) && menu.staffId === s._id && menu.day === day
+                              const loggedAt = entry?.at ? ` · logged in ${fmtClock(entry.at)}` : ''
+                              const byWho = entry ? (entry.by === 'employee' ? ' (self)' : ' (admin)') : ''
+                              return (
+                                <td key={day} className={`att-cell${savingKey === key ? ' saving' : ''}`}>
+                                  <button
+                                    type="button"
+                                    className={`box${isOpen ? ' open' : ''}`}
+                                    onClick={(e) => (isOpen ? setMenu(null) : openMenu(e, s._id, day, p._id))}
+                                    title={meta ? `${p.projectName}: ${meta.name}${loggedAt}${byWho} — click to change` : `${p.projectName}: not marked — click to choose`}
+                                    aria-haspopup="menu"
+                                    aria-expanded={Boolean(isOpen)}
+                                    style={meta ? { background: meta.bg, color: meta.color, borderColor: meta.border, fontSize: meta.label.length > 1 ? 9 : undefined } : { background: '#fff', color: '#d1d5db', borderColor: '#ececec' }}
+                                  >
+                                    {meta ? meta.label : ''}
+                                  </button>
+                                </td>
+                              )
+                            })}
+                            {STATUS_ORDER.map((key, idx) => (
+                              <td
+                                key={key}
+                                className={`total-cell${idx === 0 ? ' first' : ''}`}
+                                style={{ ...totalColStyle(idx), color: STATUS_META[key].color }}
+                                title={key === 'present' && pc.late ? `${pc.present} on time + ${pc.late} late` : key === 'wfh' ? 'Not used for projects' : undefined}
+                              >
+                                {totals[key] === null
+                                  ? <span className="total-zero">—</span>
+                                  : totals[key] > 0 ? totals[key] : <span className="total-zero">0</span>}
+                              </td>
+                            ))}
+                          </tr>
                         )
                       })}
-                      {STATUS_ORDER.map((key, idx) => (
-                        <td
-                          key={key}
-                          className={`total-cell${idx === 0 ? ' first' : ''}`}
-                          style={{ ...totalColStyle(idx), color: STATUS_META[key].color }}
-                        >
-                          {counts[key] > 0 ? counts[key] : <span className="total-zero">0</span>}
-                        </td>
-                      ))}
-                    </tr>
+                    </React.Fragment>
                   )
                 })}
               </tbody>
@@ -530,10 +761,11 @@ const Attendance = () => {
           style={{ top: menu.top, left: menu.left }}
         >
           <div className="att-menu-title">
-            {menuStaff ? `${menuStaff.firstName} ${menuStaff.lastName}` : 'Staff'} · {menu.day} {MONTH_FULL[month].slice(0, 3)}
+            {menuStaff ? `${menuStaff.firstName} ${menuStaff.lastName}` : 'Staff'}
+            {menuProject ? ` · ${menuProject.projectName}` : ''} · {menu.day} {MONTH_FULL[month].slice(0, 3)}
           </div>
-          {STATUS_ORDER.map(key => {
-            const meta = STATUS_META[key]
+          {menuOrder.map(key => {
+            const meta = menuMeta[key]
             const active = menuCurrent === key
             return (
               <button
@@ -541,7 +773,7 @@ const Attendance = () => {
                 type="button"
                 role="menuitem"
                 className={`att-menu-item${active ? ' active' : ''}`}
-                onClick={() => setDayStatus(menu.staffId, menu.day, key)}
+                onClick={() => pickStatus(key)}
               >
                 <span className="att-chip" style={{ background: meta.bg, color: meta.color, borderColor: meta.border }}>{meta.label}</span>
                 {meta.name}
@@ -554,7 +786,7 @@ const Attendance = () => {
               type="button"
               role="menuitem"
               className="att-menu-item att-menu-clear"
-              onClick={() => setDayStatus(menu.staffId, menu.day, null)}
+              onClick={() => pickStatus(null)}
             >
               <span className="att-chip" style={{ background: '#fff', color: '#9ca3af', borderColor: '#e4e4e7' }}>✕</span>
               Clear

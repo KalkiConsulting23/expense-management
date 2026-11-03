@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const MONTH_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -15,6 +15,22 @@ function parseUTCDate(dateStr) {
   const d = new Date(dateStr)
   if (isNaN(d)) return null
   return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+}
+
+// "09:00" → "9:00 AM"
+const fmtTime12 = (hhmm) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''))
+  if (!m) return ''
+  const h = Number(m[1])
+  return `${((h + 11) % 12) + 1}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`
+}
+
+// Billing shown in the projects table, e.g. "₹1,00,000 / month"
+function billingText(p) {
+  const type = (p.projectType || 'monthly').toLowerCase()
+  if (type === 'hourly') return `${fmt(p.defaultHourlyRate)} / hr`
+  if (type === 'daily') return `${fmt(p.defaultDailyRate)} / day`
+  return `${fmt(p.expectedAmount)} / month`
 }
 
 function fmtDate(dateStr) {
@@ -34,6 +50,396 @@ function isProjectActive(p) {
   return true
 }
 
+
+// ═════════════════════════════════════════════════════════════
+//  EDIT PROJECT FORM (popup) — edit every field of a project
+//  Saves with PATCH /api/project/update/:id
+// ═════════════════════════════════════════════════════════════
+const PROJECT_CACHE_KEY = 'local_project_data_cache'
+
+const TYPES = [
+  { value: 'hourly', label: '⏱ Hourly' },
+  { value: 'daily', label: '☀️ Daily' },
+  { value: 'monthly', label: '📅 Monthly' },
+]
+const INTL_CURRENCIES = ['USD', 'EUR', 'GBP', 'AED', 'SGD']
+
+// Saved date → "YYYY-MM-DD" for a date input
+const toInputDate = (d) => {
+  if (!d) return ''
+  const dt = new Date(d)
+  return isNaN(dt) ? '' : dt.toISOString().slice(0, 10)
+}
+// "09:00" + 30 → "09:30"
+const addMinutes = (hhmm, mins) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''))
+  if (!m) return ''
+  const t = Math.min(24 * 60 - 1, Number(m[1]) * 60 + Number(m[2]) + Number(mins || 0))
+  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`
+}
+const staffName = (s) => `${s.firstName || ''} ${s.lastName || ''}`.trim() || s.employeeId || 'Staff'
+const numStr = (v) => (v === undefined || v === null ? '' : String(Math.round(Number(v) * 100) / 100))
+
+// Project → form values (all strings, staff as an id array)
+const projectToForm = (p) => ({
+  projectName: p.projectName || '',
+  projectScope: p.projectScope || 'domestic',
+  currency: p.currency || 'INR',
+  projectType: p.projectType || 'monthly',
+  startDate: toInputDate(p.startDate),
+  endDate: toInputDate(p.endDate),
+  daysCycle: numStr(p.daysCycle ?? 30),
+  expectedAmount: numStr(p.expectedAmount ?? 0),
+  defaultHourlyRate: numStr(p.defaultHourlyRate ?? 0),
+  defaultDailyRate: numStr(p.defaultDailyRate ?? 0),
+  loginTime: p.loginTime || '',
+  lateWindowMinutes: numStr(p.lateWindowMinutes ?? 30),
+  assignedStaff: (p.assignedStaff || []).map(String),
+})
+
+const NUMBER_FIELDS = ['daysCycle', 'expectedAmount', 'defaultHourlyRate', 'defaultDailyRate', 'lateWindowMinutes']
+const sameValue = (a, b) => (Array.isArray(a) ? JSON.stringify(a) === JSON.stringify(b) : (a ?? '') === (b ?? ''))
+
+const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved }) => {
+  const initial = useMemo(() => projectToForm(project), [project])
+  const [form, setForm] = useState(initial)
+  const [errors, setErrors] = useState({})
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
+  const [staffList, setStaffList] = useState(staffFromParent || [])
+  const [staffSearch, setStaffSearch] = useState('')
+
+  // Load staff if the page didn't pass them in
+  useEffect(() => {
+    if (staffFromParent && staffFromParent.length) { setStaffList(staffFromParent); return }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`${API_BASE}/staff/all`)
+        if (!res.ok) return
+        const data = await res.json()
+        if (!cancelled) setStaffList(Array.isArray(data) ? data : [])
+      } catch (e) { /* staff list stays empty */ }
+    })()
+    return () => { cancelled = true }
+  }, [staffFromParent])
+
+  const changedKeys = Object.keys(form).filter(k => !sameValue(form[k], initial[k]))
+  const isDirty = changedKeys.length > 0
+
+  const close = () => {
+    if (saving) return
+    if (isDirty && !window.confirm('Discard your changes?')) return
+    onClose()
+  }
+
+  // Esc closes; stop the page behind from scrolling
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === 'Escape') close() }
+    document.addEventListener('keydown', onKey)
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => { document.removeEventListener('keydown', onKey); document.body.style.overflow = prev }
+  })
+
+  const set = (key, value) => {
+    setForm(f => ({ ...f, [key]: value }))
+    if (errors[key]) setErrors(e => ({ ...e, [key]: undefined }))
+  }
+
+  const setScope = (scope) => {
+    setForm(f => ({
+      ...f,
+      projectScope: scope,
+      currency: scope === 'international' ? (f.currency !== 'INR' ? f.currency : 'USD') : 'INR',
+    }))
+  }
+
+  const toggleStaff = (id) => {
+    setForm(f => ({
+      ...f,
+      assignedStaff: f.assignedStaff.includes(id) ? f.assignedStaff.filter(x => x !== id) : [...f.assignedStaff, id],
+    }))
+    if (errors.loginTime) setErrors(e => ({ ...e, loginTime: undefined }))
+  }
+
+  const validate = () => {
+    const e = {}
+    if (!form.projectName.trim()) e.projectName = 'Project name is required'
+    if (!form.startDate) e.startDate = 'Start date is required'
+    if (!form.endDate) e.endDate = 'End date is required'
+    if (form.startDate && form.endDate && form.endDate < form.startDate) e.endDate = 'End date must be after start date'
+    if (!form.daysCycle || Number(form.daysCycle) <= 0) e.daysCycle = 'Enter a valid days cycle'
+    if (form.projectType === 'monthly' && !(Number(form.expectedAmount) > 0)) e.expectedAmount = 'Expected amount is required'
+    if (form.projectType === 'hourly' && !(Number(form.defaultHourlyRate) > 0)) e.defaultHourlyRate = 'Hourly rate is required'
+    if (form.projectType === 'daily' && !(Number(form.defaultDailyRate) > 0)) e.defaultDailyRate = 'Daily rate is required'
+    if (form.assignedStaff.length > 0 && !form.loginTime) e.loginTime = 'Set a login time for the assigned staff'
+    const lw = Number(form.lateWindowMinutes)
+    if (form.lateWindowMinutes !== '' && (!Number.isFinite(lw) || lw < 0 || lw > 240)) e.lateWindowMinutes = 'Enter 0 to 240 minutes'
+    return e
+  }
+
+  const handleSave = async (ev) => {
+    ev.preventDefault()
+    if (!isDirty) { onClose(); return }
+    const errs = validate()
+    if (Object.keys(errs).length) { setErrors(errs); return }
+
+    // Send only what changed
+    const payload = {}
+    changedKeys.forEach(k => {
+      const v = form[k]
+      if (NUMBER_FIELDS.includes(k)) payload[k] = v === '' ? (k === 'lateWindowMinutes' ? 30 : 0) : Number(v)
+      else if (typeof v === 'string') payload[k] = v.trim()
+      else payload[k] = v
+    })
+
+    setSaving(true)
+    setSaveError('')
+    try {
+      const res = await fetch(`${API_BASE}/project/update/${project._id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.message || 'Failed to update project')
+      // The Project Tracker caches projects in this tab — make it reload fresh data
+      try { sessionStorage.removeItem(PROJECT_CACHE_KEY) } catch (e) { /* ignore */ }
+      onSaved(data)
+    } catch (err) {
+      setSaveError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const amountField = form.projectType === 'monthly' ? 'expectedAmount'
+    : form.projectType === 'hourly' ? 'defaultHourlyRate' : 'defaultDailyRate'
+  const amountLabel = form.projectType === 'monthly' ? 'Expected Amount / month'
+    : form.projectType === 'hourly' ? 'Default Hourly Rate' : 'Default Daily Rate'
+
+  const q = staffSearch.trim().toLowerCase()
+  const shownStaff = staffList.filter(s =>
+    !q || `${staffName(s)} ${s.employeeId || ''} ${s.designation || ''}`.toLowerCase().includes(q))
+  const cls = (key) => `epm-input${errors[key] ? ' err' : ''}${changedKeys.includes(key) ? ' changed' : ''}`
+
+  return (
+    <div className="epm-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget) close() }}>
+      <style>{`
+        .epm-overlay { position: fixed; inset: 0; background: rgba(17,24,39,0.45); backdrop-filter: blur(4px); display: flex; align-items: center; justify-content: center; padding: 24px 16px; z-index: 1000; font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }
+        .epm-box { background: #fff; border-radius: 18px; width: 100%; max-width: 620px; max-height: calc(100vh - 48px); display: flex; flex-direction: column; box-shadow: 0 24px 60px rgba(16,24,40,0.22); border: 1px solid #ececec; overflow: hidden; }
+        .epm-head { padding: 20px 24px 14px; border-bottom: 1px solid #f4f4f5; display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-shrink: 0; }
+        .epm-title { font-size: 16px; font-weight: 600; color: #18181b; letter-spacing: -0.2px; }
+        .epm-sub { font-size: 12px; color: #6b7280; margin-top: 3px; }
+        .epm-x { border: none; background: transparent; font-size: 22px; line-height: 1; color: #9ca3af; cursor: pointer; padding: 2px 6px; border-radius: 6px; }
+        .epm-x:hover { background: #f4f4f5; color: #18181b; }
+        .epm-body { padding: 4px 24px 18px; overflow-y: auto; flex: 1; min-height: 0; }
+        .epm-section { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; color: #6b7280; margin: 18px 0 10px; }
+        .epm-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 14px; }
+        .epm-field { display: flex; flex-direction: column; min-width: 0; }
+        .epm-field.wide { grid-column: 1 / -1; }
+        .epm-field label { font-size: 12px; font-weight: 500; color: #4b5563; margin-bottom: 5px; }
+        .epm-req { color: #dc2626; }
+        .epm-input { font-family: inherit; font-size: 13.5px; color: #18181b; border: 1px solid #e5e7eb; border-radius: 9px; padding: 8px 10px; background: #fff; outline: none; width: 100%; box-sizing: border-box; transition: border-color 0.13s, box-shadow 0.13s; }
+        .epm-input:focus { border-color: #18181b; box-shadow: 0 0 0 3px rgba(24,24,27,0.07); }
+        .epm-input.changed { border-color: #f59e0b; background: #fffbeb; }
+        .epm-input.err { border-color: #dc2626; background: #fef2f2; }
+        .epm-err { font-size: 11.5px; color: #dc2626; margin-top: 4px; }
+        .epm-pills { display: flex; gap: 8px; flex-wrap: wrap; }
+        .epm-pill { padding: 8px 13px; border-radius: 9px; border: 1px solid #e5e7eb; background: #fafafa; color: #6b7280; font: inherit; font-size: 12.5px; font-weight: 500; cursor: pointer; }
+        .epm-pill:hover { border-color: #d1d5db; color: #18181b; }
+        .epm-pill.active { border-color: #18181b; background: #f3f4f6; color: #18181b; }
+        .epm-pill.changed { box-shadow: 0 0 0 2px #fde68a; }
+        .epm-prefix { position: relative; }
+        .epm-prefix span { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: #9ca3af; font-size: 13.5px; pointer-events: none; }
+        .epm-prefix .epm-input { padding-left: 26px; }
+        .epm-note { font-size: 11.5px; color: #6b7280; background: #fafafa; border: 1px dashed #d1d5db; border-radius: 9px; padding: 8px 11px; line-height: 1.55; margin-top: 10px; }
+        .epm-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+        .epm-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px 4px 10px; border-radius: 999px; background: #eef2ff; border: 1px solid #e0e7ff; color: #3730a3; font-size: 12px; font-weight: 500; }
+        .epm-chip button { border: none; background: transparent; color: #6366f1; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+        .epm-list { border: 1px solid #ececec; border-radius: 10px; max-height: 190px; overflow-y: auto; }
+        .epm-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #f4f4f5; font-size: 12.5px; color: #18181b; }
+        .epm-item:last-child { border-bottom: none; }
+        .epm-item:hover { background: #fafafa; }
+        .epm-item input { width: 15px; height: 15px; accent-color: #18181b; cursor: pointer; flex-shrink: 0; }
+        .epm-meta { font-size: 10.5px; color: #9ca3af; }
+        .epm-empty { padding: 12px; font-size: 12px; color: #9ca3af; text-align: center; }
+        .epm-save-err { margin-top: 14px; padding: 9px 12px; border-radius: 9px; background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; font-size: 12.5px; }
+        .epm-foot { padding: 14px 24px; border-top: 1px solid #f4f4f5; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; background: #fff; }
+        .epm-changes { font-size: 12px; color: #6b7280; }
+        .epm-changes b { color: #b45309; }
+        .epm-btn { font-family: inherit; font-size: 13px; font-weight: 600; border-radius: 10px; padding: 9px 16px; cursor: pointer; }
+        .epm-btn.ghost { background: #fff; border: 1px solid #e5e7eb; color: #374151; }
+        .epm-btn.ghost:hover { background: #f4f4f5; }
+        .epm-btn.primary { background: #18181b; border: 1px solid #18181b; color: #fff; }
+        .epm-btn.primary:hover { background: #000; }
+        .epm-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+        @media (max-width: 560px) {
+          .epm-grid { grid-template-columns: 1fr; }
+          .epm-foot { flex-direction: column; align-items: stretch; }
+          .epm-foot > div:last-child { display: flex; gap: 8px; }
+          .epm-foot .epm-btn { flex: 1; }
+        }
+      `}</style>
+
+      <form className="epm-box" onSubmit={handleSave} role="dialog" aria-modal="true" aria-labelledby="epm-title">
+        <div className="epm-head">
+          <div>
+            <div className="epm-title" id="epm-title">Edit Project</div>
+            <div className="epm-sub">{project.projectName}</div>
+          </div>
+          <button type="button" className="epm-x" aria-label="Close" onClick={close}>×</button>
+        </div>
+
+        <div className="epm-body">
+          <div className="epm-section">Project</div>
+          <div className="epm-grid">
+            <div className="epm-field wide">
+              <label htmlFor="epm-name">Project Name <span className="epm-req">*</span></label>
+              <input id="epm-name" className={cls('projectName')} value={form.projectName} onChange={e => set('projectName', e.target.value)} disabled={saving} />
+              {errors.projectName && <div className="epm-err">{errors.projectName}</div>}
+            </div>
+            <div className="epm-field wide">
+              <label>Scope</label>
+              <div className="epm-pills">
+                {[['domestic', '🏠 Domestic'], ['international', '🌍 International']].map(([v, l]) => (
+                  <button key={v} type="button" disabled={saving}
+                    className={`epm-pill${form.projectScope === v ? ' active' : ''}${form.projectScope === v && changedKeys.includes('projectScope') ? ' changed' : ''}`}
+                    onClick={() => setScope(v)}>{l}</button>
+                ))}
+              </div>
+            </div>
+            <div className="epm-field">
+              <label htmlFor="epm-start">Start Date <span className="epm-req">*</span></label>
+              <input id="epm-start" type="date" className={cls('startDate')} value={form.startDate} onChange={e => set('startDate', e.target.value)} disabled={saving} />
+              {errors.startDate && <div className="epm-err">{errors.startDate}</div>}
+            </div>
+            <div className="epm-field">
+              <label htmlFor="epm-end">End Date <span className="epm-req">*</span></label>
+              <input id="epm-end" type="date" min={form.startDate} className={cls('endDate')} value={form.endDate} onChange={e => set('endDate', e.target.value)} disabled={saving} />
+              {errors.endDate && <div className="epm-err">{errors.endDate}</div>}
+            </div>
+            <div className="epm-field">
+              <label htmlFor="epm-cycle">Payment Days Cycle <span className="epm-req">*</span></label>
+              <input id="epm-cycle" type="number" min="1" className={cls('daysCycle')} value={form.daysCycle} onChange={e => set('daysCycle', e.target.value)} disabled={saving} />
+              {errors.daysCycle && <div className="epm-err">{errors.daysCycle}</div>}
+            </div>
+            {form.projectScope === 'international' && (
+              <div className="epm-field">
+                <label htmlFor="epm-cur">Billing Currency</label>
+                <select id="epm-cur" className={cls('currency')} value={form.currency} onChange={e => set('currency', e.target.value)} disabled={saving}>
+                  {INTL_CURRENCIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+            )}
+          </div>
+
+          <div className="epm-section">Billing</div>
+          <div className="epm-grid">
+            <div className="epm-field wide">
+              <label>Billing Type</label>
+              <div className="epm-pills">
+                {TYPES.map(t => (
+                  <button key={t.value} type="button" disabled={saving}
+                    className={`epm-pill${form.projectType === t.value ? ' active' : ''}${form.projectType === t.value && changedKeys.includes('projectType') ? ' changed' : ''}`}
+                    onClick={() => set('projectType', t.value)}>{t.label}</button>
+                ))}
+              </div>
+            </div>
+            <div className="epm-field">
+              <label htmlFor="epm-amt">{amountLabel} (₹) <span className="epm-req">*</span></label>
+              <div className="epm-prefix">
+                <span>₹</span>
+                <input id="epm-amt" type="number" min="0" step="any" className={cls(amountField)} value={form[amountField]} onChange={e => set(amountField, e.target.value)} disabled={saving} />
+              </div>
+              {errors[amountField] && <div className="epm-err">{errors[amountField]}</div>}
+            </div>
+          </div>
+          <div className="epm-note">
+            Amounts are saved in ₹{form.projectScope === 'international' ? ' (converted when the project was added)' : ''}.
+            Months you've already configured or marked as received in the Project Tracker keep their saved values.
+            {changedKeys.includes('projectType') && <> Changing the billing type only affects months you haven't configured yet.</>}
+          </div>
+
+          <div className="epm-section">Team &amp; Attendance</div>
+          <div className="epm-grid">
+            <div className="epm-field">
+              <label htmlFor="epm-login">Daily Login Time {form.assignedStaff.length > 0 && <span className="epm-req">*</span>}</label>
+              <input id="epm-login" type="time" className={cls('loginTime')} value={form.loginTime} onChange={e => set('loginTime', e.target.value)} disabled={saving} />
+              {errors.loginTime && <div className="epm-err">{errors.loginTime}</div>}
+            </div>
+            <div className="epm-field">
+              <label htmlFor="epm-late">Late Window (minutes, 0 = no late)</label>
+              <input id="epm-late" type="number" min="0" max="240" className={cls('lateWindowMinutes')} value={form.lateWindowMinutes} onChange={e => set('lateWindowMinutes', e.target.value)} disabled={saving} />
+              {errors.lateWindowMinutes && <div className="epm-err">{errors.lateWindowMinutes}</div>}
+            </div>
+          </div>
+          {form.loginTime && form.lateWindowMinutes !== '' && Number(form.lateWindowMinutes) === 0 ? (
+            <div className="epm-note">
+              Late window is <b>0</b> → <b>no late marking</b>. Staff can log in <b>any time</b> during the day and are marked Present.
+            </div>
+          ) : form.loginTime && (
+            <div className="epm-note">
+              Up to <b>{fmtTime12(form.loginTime)}</b> = Present · after that = Late · closed after <b>{fmtTime12(addMinutes(form.loginTime, form.lateWindowMinutes === '' ? 30 : (Number(form.lateWindowMinutes) || 0)))}</b>
+            </div>
+          )}
+
+          <div className="epm-field" style={{ marginTop: 12 }}>
+            <label>Assigned Staff ({form.assignedStaff.length})</label>
+            {form.assignedStaff.length > 0 && (
+              <div className="epm-chips">
+                {form.assignedStaff.map(id => {
+                  const s = staffList.find(x => String(x._id) === id) || { firstName: 'Staff' }
+                  return (
+                    <span key={id} className="epm-chip">
+                      {staffName(s)}
+                      <button type="button" aria-label={`Remove ${staffName(s)}`} onClick={() => toggleStaff(id)} disabled={saving}>×</button>
+                    </span>
+                  )
+                })}
+              </div>
+            )}
+            {staffList.length > 5 && (
+              <input className="epm-input" placeholder="Search staff…" value={staffSearch} onChange={e => setStaffSearch(e.target.value)} style={{ marginBottom: 8 }} />
+            )}
+            <div className="epm-list">
+              {staffList.length === 0 ? (
+                <div className="epm-empty">No staff found.</div>
+              ) : shownStaff.length === 0 ? (
+                <div className="epm-empty">No match.</div>
+              ) : shownStaff.map(s => {
+                const id = String(s._id)
+                return (
+                  <label key={id} className="epm-item">
+                    <input type="checkbox" checked={form.assignedStaff.includes(id)} onChange={() => toggleStaff(id)} disabled={saving} />
+                    <div style={{ minWidth: 0 }}>
+                      <div>{staffName(s)}</div>
+                      <div className="epm-meta">{[s.employeeId, s.designation].filter(Boolean).join(' · ')}</div>
+                    </div>
+                  </label>
+                )
+              })}
+            </div>
+          </div>
+
+          {saveError && <div className="epm-save-err">{saveError}</div>}
+        </div>
+
+        <div className="epm-foot">
+          <div className="epm-changes">
+            {isDirty ? <><b>{changedKeys.length}</b> field{changedKeys.length !== 1 ? 's' : ''} changed</> : 'No changes yet'}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className="epm-btn ghost" onClick={close} disabled={saving}>Cancel</button>
+            <button type="submit" className="epm-btn primary" disabled={saving || !isDirty}>{saving ? 'Saving…' : 'Save Changes'}</button>
+          </div>
+        </div>
+      </form>
+    </div>
+  )
+}
+
 const Projectmaster = () => {
   const [projects, setProjects]   = useState([])
   const [loading, setLoading]     = useState(true)
@@ -44,6 +450,16 @@ const Projectmaster = () => {
   const [half, setHalf]           = useState('all')
   // New: single-month filter. null = no single month selected.
   const [month, setMonth]         = useState(null) // 0-11 calendar index
+  const [editProject, setEditProject] = useState(null) // project being edited
+  const [toast, setToast]         = useState('')
+
+  // After editing: show the updated project straight away
+  const handleProjectSaved = (updated) => {
+    setProjects(prev => prev.map(p => (p._id === updated._id ? { ...p, ...updated } : p)))
+    setEditProject(null)
+    setToast(`${updated.projectName} updated`)
+    setTimeout(() => setToast(''), 2500)
+  }
 
   useEffect(() => {
     fetch(`${API_BASE}/project/all`)
@@ -194,6 +610,26 @@ const Projectmaster = () => {
         .status-pill.active   .status-dot { background: #22c55e; }
         .status-pill.inactive .status-dot { background: #9ca3af; }
 
+        .pj-type {
+          display: inline-block; margin-top: 3px; background: #eef2ff; border: 1px solid #e0e7ff;
+          color: #4338ca; border-radius: 4px; padding: 1px 5px; font-size: 9px; font-weight: 600; text-transform: uppercase;
+        }
+        .pj-billing { font-size: 13px; color: #18181b; white-space: nowrap; font-variant-numeric: tabular-nums; }
+        .pj-team { font-size: 12.5px; color: #374151; white-space: nowrap; }
+        .pj-team-sub { display: block; font-size: 11px; color: #9ca3af; margin-top: 2px; }
+        .pj-edit-btn {
+          display: inline-flex; align-items: center; gap: 6px;
+          border: 1px solid #e5e7eb; background: #fff; color: #374151;
+          border-radius: 8px; padding: 6px 11px; font-size: 12px; font-weight: 500;
+          cursor: pointer; font-family: inherit; transition: all 0.13s; white-space: nowrap;
+        }
+        .pj-edit-btn:hover { background: #f4f4f5; border-color: #d4d4d8; color: #18181b; }
+        .pm-toast {
+          position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+          background: #18181b; color: #fff; font-size: 13px; font-weight: 500;
+          padding: 10px 16px; border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); z-index: 1100;
+        }
+
         .amt-neg { color: #dc2626; }
         .amt-pos { color: #16834a; }
 
@@ -325,25 +761,45 @@ const Projectmaster = () => {
                 <th>Project Name</th>
                 <th>Start Date</th>
                 <th>End Date</th>
+                <th>Billing</th>
+                <th>Team</th>
                 <th className="center">Status</th>
+                <th></th>
               </tr>
             </thead>
             <tbody>
               {projects.length === 0 && (
-                <tr><td colSpan={4} style={{ textAlign: 'center', color: '#c5c5c9' }}>No projects</td></tr>
+                <tr><td colSpan={7} style={{ textAlign: 'center', color: '#c5c5c9' }}>No projects</td></tr>
               )}
               {projects.map(p => {
                 const active = isProjectActive(p)
                 return (
                   <tr key={p._id}>
-                    <td className="pj-name">{p.projectName}</td>
+                    <td className="pj-name">
+                      {p.projectName}
+                      <div><span className="pj-type">{p.projectType || 'monthly'}</span></div>
+                    </td>
                     <td className="pj-date">{fmtDate(p.startDate)}</td>
                     <td className="pj-date">{p.endDate ? fmtDate(p.endDate) : 'Ongoing'}</td>
+                    <td className="pj-billing">{billingText(p)}</td>
+                    <td className="pj-team">
+                      {(p.assignedStaff || []).length > 0
+                        ? <>👥 {p.assignedStaff.length} staff<span className="pj-team-sub">{!p.loginTime ? 'No login time' : Number(p.lateWindowMinutes) === 0 ? 'Login any time' : `Login ${fmtTime12(p.loginTime)}`}</span></>
+                        : <span style={{ color: '#c5c5c9' }}>—</span>}
+                    </td>
                     <td style={{ textAlign: 'center' }}>
                       <span className={`status-pill ${active ? 'active' : 'inactive'}`}>
                         <span className="status-dot" />
                         {active ? 'Active' : 'Inactive'}
                       </span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button type="button" className="pj-edit-btn" onClick={() => setEditProject(p)}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                        </svg>
+                        Edit
+                      </button>
                     </td>
                   </tr>
                 )
@@ -352,6 +808,15 @@ const Projectmaster = () => {
           </table>
         </div>
       </div>
+
+      {editProject && (
+        <EditProjectForm
+          project={editProject}
+          onClose={() => setEditProject(null)}
+          onSaved={handleProjectSaved}
+        />
+      )}
+      {toast && <div className="pm-toast">{toast}</div>}
     </>
   )
 }

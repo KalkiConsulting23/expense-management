@@ -129,6 +129,22 @@ function buildProjectTimeline(project, fyStartYear, localizedOverrides = {}) {
   return result;
 }
 
+// "09:00" → "9:00 AM"
+const fmtTime12 = (hhmm) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''));
+  if (!m) return '';
+  const h = Number(m[1]);
+  return `${((h + 11) % 12) + 1}:${m[2]} ${h < 12 ? 'AM' : 'PM'}`;
+};
+// "09:00" + 30 → "09:30"
+const addMinutes = (hhmm, mins) => {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(hhmm || ''));
+  if (!m) return '';
+  const t = Math.min(24 * 60 - 1, Number(m[1]) * 60 + Number(m[2]) + Number(mins || 0));
+  return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+};
+const staffName = (s) => `${s.firstName || ''} ${s.lastName || ''}`.trim() || s.employeeId || 'Staff';
+
 function ProjectAvatar({ name = '' }) {
   const palette = ['#4f46e5','#0891b2','#7c3aed','#0d9488','#2563eb','#db2777','#ea580c','#059669'];
   const color   = palette[name.charCodeAt(0) % palette.length];
@@ -185,6 +201,16 @@ const ProjectTable = () => {
   // ─── DELETE STATE ───
   const [deleteConfirm, setDeleteConfirm] = useState(null); // { project }
   const [deleting, setDeleting] = useState(false);
+
+  // ─── TEAM STATE (⋯ button: assigned staff + login time) ───
+  const [staffList, setStaffList] = useState([]);
+  const [teamProject, setTeamProject] = useState(null);   // project whose team popup is open
+  const [teamLoginTime, setTeamLoginTime] = useState('');
+  const [teamLateWindow, setTeamLateWindow] = useState('30');
+  const [teamSelected, setTeamSelected] = useState([]);   // staff ids
+  const [teamSearch, setTeamSearch] = useState('');
+  const [teamSaving, setTeamSaving] = useState(false);
+  const [teamError, setTeamError] = useState('');
 
   const rebuildMatrix = useCallback((allProjs, overrides) => {
     const matrix = {};
@@ -257,6 +283,77 @@ const ProjectTable = () => {
     };
     fetchProjects();
   }, [parseServerData]);
+
+  // Staff list for the team popup and the "assigned" badges
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/staff/all`);
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!cancelled) setStaffList(Array.isArray(data) ? data : []);
+      } catch (e) { /* the badges just won't show names */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // ─── TEAM POPUP ───
+  const openTeam = (project) => {
+    setTeamProject(project);
+    setTeamLoginTime(project.loginTime || '');
+    setTeamLateWindow(String(project.lateWindowMinutes ?? 30));
+    setTeamSelected((project.assignedStaff || []).map(String));
+    setTeamSearch('');
+    setTeamError('');
+  };
+
+  const toggleTeamStaff = (id) => {
+    setTeamSelected(sel => (sel.includes(id) ? sel.filter(x => x !== id) : [...sel, id]));
+  };
+
+  const saveTeam = async () => {
+    if (!teamProject) return;
+    if (teamSelected.length > 0 && !teamLoginTime) {
+      setTeamError('Set a login time before assigning staff.');
+      return;
+    }
+    setTeamSaving(true);
+    setTeamError('');
+    try {
+      const res = await fetch(`${API_BASE}/project/team/${teamProject._id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          loginTime: teamLoginTime,
+          lateWindowMinutes: teamLateWindow === '' ? 30 : Number(teamLateWindow) || 0,
+          assignedStaff: teamSelected,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || 'Failed to save team');
+      setProjects(prev => {
+        const next = prev.map(p => (p._id === teamProject._id
+          ? { ...p, loginTime: data.loginTime, lateWindowMinutes: data.lateWindowMinutes, assignedStaff: data.assignedStaff }
+          : p));
+        sessionStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(next));
+        return next;
+      });
+      setTeamProject(null);
+    } catch (err) {
+      setTeamError(err.message);
+    } finally {
+      setTeamSaving(false);
+    }
+  };
+
+  // Close the team popup with Esc
+  useEffect(() => {
+    if (!teamProject) return;
+    const onKey = (e) => { if (e.key === 'Escape' && !teamSaving) setTeamProject(null); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [teamProject, teamSaving]);
 
   // ─── DELETE HANDLER ───
   const confirmDelete = async () => {
@@ -599,6 +696,57 @@ const ProjectTable = () => {
           background: #fef2f2; border-color: #fecaca; color: #dc2626;
         }
 
+        .team-proj-btn {
+          width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+          border: 1px solid transparent; background: transparent;
+          display: flex; align-items: center; justify-content: center;
+          cursor: pointer; color: #9ca3af; padding: 0;
+          transition: background 0.15s, border-color 0.15s, color 0.15s;
+        }
+        .team-proj-btn:hover { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
+        .team-badge {
+          display: inline-flex; align-items: center; gap: 4px; margin-left: 6px;
+          background: #f0fdf4; border: 1px solid #bbf7d0; color: #15803d;
+          border-radius: 4px; padding: 1px 5px; font-size: 9px; font-weight: 600;
+          cursor: pointer;
+        }
+        .team-modal-box {
+          background: #ffffff; border-radius: 18px; width: 440px; max-width: calc(100vw - 32px);
+          max-height: calc(100vh - 48px); display: flex; flex-direction: column;
+          box-shadow: 0 24px 60px rgba(16,24,40,0.22); border: 1px solid #ececec;
+          font-family: 'Inter', sans-serif;
+        }
+        .team-modal-head { padding: 22px 24px 14px; border-bottom: 1px solid #f4f4f5; }
+        .team-modal-body { padding: 16px 24px; overflow-y: auto; flex: 1; min-height: 0; }
+        .team-modal-foot { padding: 14px 24px; border-top: 1px solid #f4f4f5; display: flex; justify-content: flex-end; gap: 8px; }
+        .team-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .team-rule {
+          background: #fafafa; border: 1px solid #ececec; border-radius: 10px;
+          padding: 9px 12px; font-size: 11.5px; color: #4b5563; margin: 4px 0 16px; line-height: 1.6;
+        }
+        .team-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+        .team-chip {
+          display: inline-flex; align-items: center; gap: 6px; padding: 4px 6px 4px 10px;
+          border-radius: 999px; background: #eef2ff; border: 1px solid #e0e7ff; color: #3730a3;
+          font-size: 12px; font-weight: 500;
+        }
+        .team-chip button { border: none; background: transparent; color: #6366f1; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+        .team-search {
+          width: 100%; padding: 8px 11px; border: 1px solid #ececec; border-radius: 9px;
+          font-size: 12.5px; outline: none; margin-bottom: 8px; font-family: inherit;
+        }
+        .team-search:focus { border-color: #18181b; }
+        .team-list { border: 1px solid #ececec; border-radius: 10px; max-height: 230px; overflow-y: auto; }
+        .team-item {
+          display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer;
+          border-bottom: 1px solid #f4f4f5; font-size: 12.5px; color: #18181b;
+        }
+        .team-item:last-child { border-bottom: none; }
+        .team-item:hover { background: #fafafa; }
+        .team-item input { width: 15px; height: 15px; accent-color: #18181b; cursor: pointer; }
+        .team-item .meta { font-size: 10.5px; color: #9ca3af; }
+        .team-err { margin-top: 12px; padding: 9px 12px; border-radius: 9px; background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; font-size: 12px; }
+
         .delete-modal-box {
           background: #ffffff; padding: 28px 26px; border-radius: 18px; width: 380px;
           box-shadow: 0 24px 60px rgba(16,24,40,0.22);
@@ -868,8 +1016,28 @@ const ProjectTable = () => {
                                   }}>
                                     {project.projectType || 'monthly'}
                                   </span>
+                                  {(project.assignedStaff || []).length > 0 && (
+                                    <span
+                                      className="team-badge"
+                                      title="Assigned staff — click to manage"
+                                      onClick={(e) => { e.stopPropagation(); openTeam(project); }}
+                                    >
+                                      👥 {project.assignedStaff.length}
+                                      {project.loginTime ? (Number(project.lateWindowMinutes) === 0 ? ' · Any time' : ` · ${fmtTime12(project.loginTime)}`) : ''}
+                                    </span>
+                                  )}
                                 </div>
                               </div>
+                              {/* Team button (⋯) */}
+                              <button
+                                className="team-proj-btn"
+                                title="Team & login time"
+                                onClick={(e) => { e.stopPropagation(); openTeam(project); }}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
+                                  <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
+                                </svg>
+                              </button>
                               {/* Delete button */}
                               <button
                                 className="delete-proj-btn"
@@ -1111,6 +1279,118 @@ const ProjectTable = () => {
           </div>
         </div>
       )}
+
+      {/* ─── TEAM MODAL (⋯) ─── */}
+      {teamProject && (() => {
+        const selectedStaff = teamSelected
+          .map(id => staffList.find(s => String(s._id) === id) || { _id: id, firstName: 'Removed staff' });
+        const q = teamSearch.trim().toLowerCase();
+        const shown = staffList.filter(s =>
+          !q || `${staffName(s)} ${s.employeeId || ''} ${s.designation || ''}`.toLowerCase().includes(q));
+        const lateMins = teamLateWindow === '' ? 30 : (Number(teamLateWindow) || 0);
+        return (
+          <div className="proj-modal-overlay" onClick={() => !teamSaving && setTeamProject(null)}>
+            <div className="team-modal-box" onClick={e => e.stopPropagation()} role="dialog" aria-modal="true">
+              <div className="team-modal-head">
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <ProjectAvatar name={teamProject.projectName || '?'} />
+                  <div>
+                    <div style={{ fontSize: 15, fontWeight: 600, color: '#18181b' }}>{teamProject.projectName} · Team</div>
+                    <div style={{ fontSize: 11.5, color: '#6b7280', marginTop: 2 }}>
+                      {teamSelected.length} staff assigned
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="team-modal-body">
+                <div className="team-row2">
+                  <div className="proj-modal-field" style={{ marginBottom: 8 }}>
+                    <label>Daily login time</label>
+                    <input type="time" value={teamLoginTime} onChange={e => setTeamLoginTime(e.target.value)} disabled={teamSaving} />
+                  </div>
+                  <div className="proj-modal-field" style={{ marginBottom: 8 }}>
+                    <label>Late window (minutes, 0 = no late)</label>
+                    <input type="number" min="0" max="240" value={teamLateWindow} onChange={e => setTeamLateWindow(e.target.value)} disabled={teamSaving} />
+                  </div>
+                </div>
+                {teamLoginTime && teamLateWindow !== '' && Number(teamLateWindow) === 0 ? (
+                  <div className="team-rule">
+                    Late window is <b>0</b> → <b>no late marking</b>. Staff can log in <b>any time</b> during the day and are marked <span style={{ color: '#16a34a', fontWeight: 600 }}>Present</span>.
+                  </div>
+                ) : teamLoginTime ? (
+                  <div className="team-rule">
+                    Login opens <b>1 hour before</b> · up to <b>{fmtTime12(teamLoginTime)}</b> = <span style={{ color: '#16a34a', fontWeight: 600 }}>Present</span>
+                    {' '}· after that = <span style={{ color: '#ea580c', fontWeight: 600 }}>Late</span>
+                    {' '}· closed after <b>{fmtTime12(addMinutes(teamLoginTime, lateMins))}</b>
+                  </div>
+                ) : (
+                  <div className="team-rule">Set a login time so assigned staff can log in to this project each day.</div>
+                )}
+
+                <div style={{ fontSize: 12, fontWeight: 500, color: '#4b5563', marginBottom: 8 }}>
+                  Assigned staff ({teamSelected.length})
+                </div>
+                {selectedStaff.length > 0 ? (
+                  <div className="team-chips">
+                    {selectedStaff.map(s => (
+                      <span key={s._id} className="team-chip">
+                        {staffName(s)}
+                        <button type="button" aria-label={`Remove ${staffName(s)}`} onClick={() => toggleTeamStaff(String(s._id))} disabled={teamSaving}>×</button>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12 }}>No one assigned yet. Pick staff below.</div>
+                )}
+
+                <input
+                  className="team-search"
+                  placeholder="Search staff…"
+                  value={teamSearch}
+                  onChange={e => setTeamSearch(e.target.value)}
+                />
+                <div className="team-list">
+                  {staffList.length === 0 ? (
+                    <div style={{ padding: 14, fontSize: 12, color: '#9ca3af', textAlign: 'center' }}>No staff added yet.</div>
+                  ) : shown.length === 0 ? (
+                    <div style={{ padding: 14, fontSize: 12, color: '#9ca3af', textAlign: 'center' }}>No match.</div>
+                  ) : shown.map(s => {
+                    const id = String(s._id);
+                    return (
+                      <label key={id} className="team-item">
+                        <input type="checkbox" checked={teamSelected.includes(id)} onChange={() => toggleTeamStaff(id)} disabled={teamSaving} />
+                        <div style={{ minWidth: 0 }}>
+                          <div>{staffName(s)}</div>
+                          <div className="meta">{[s.employeeId, s.designation].filter(Boolean).join(' · ')}</div>
+                        </div>
+                      </label>
+                    );
+                  })}
+                </div>
+                {teamError && <div className="team-err">{teamError}</div>}
+              </div>
+
+              <div className="team-modal-foot">
+                <button
+                  onClick={() => setTeamProject(null)}
+                  disabled={teamSaving}
+                  style={{ padding: '9px 16px', background: '#fff', border: '1px solid #ececec', borderRadius: 10, fontSize: 12, cursor: 'pointer', fontWeight: 500, color: '#4b5563', fontFamily: "'Inter', sans-serif" }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={saveTeam}
+                  disabled={teamSaving}
+                  style={{ padding: '9px 18px', background: '#18181b', border: 'none', borderRadius: 10, fontSize: 12, cursor: teamSaving ? 'not-allowed' : 'pointer', fontWeight: 500, color: '#fff', fontFamily: "'Inter', sans-serif", opacity: teamSaving ? 0.6 : 1 }}
+                >
+                  {teamSaving ? 'Saving…' : 'Save Team'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* ─── DELETE CONFIRMATION MODAL ─── */}
       {deleteConfirm && (

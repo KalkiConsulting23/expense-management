@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const Staff = require('../models/staff');
+const Project = require('../models/project');
+const ProjectAttendance = require('../models/projectAttendance');
 const { getAuth } = require('@clerk/express');
 
 const isValidId = (id) => /^[0-9a-fA-F]{24}$/.test(id);
@@ -160,6 +162,12 @@ router.delete('/delete/:id', async (req, res) => {
 
     const deleted = await Staff.findOneAndDelete({ _id: id, userId });
     if (!deleted) return res.status(404).json({ message: 'Staff not found.' });
+
+    // Take them off every project and remove their project attendance
+    await Promise.all([
+      Project.updateMany({ userId, assignedStaff: deleted._id }, { $pull: { assignedStaff: deleted._id } }),
+      ProjectAttendance.deleteMany({ userId, staffId: deleted._id }),
+    ]);
 
     res.status(200).json({ message: 'Staff deleted successfully.', id });
   } catch (err) {

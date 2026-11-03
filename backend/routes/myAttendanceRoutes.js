@@ -3,6 +3,9 @@ const router = express.Router()
 const Attendance = require('../models/attendance')
 const Holiday = require('../models/holiday')
 const { normalizeStatus } = require('../models/attendance')
+const Project = require('../models/project')
+const ProjectAttendance = require('../models/projectAttendance')
+const { loginWindow, projectDaysToObject } = require('../models/projectAttendance')
 const { resolveRole } = require('../middleware/role')
 
 // ─── Rules for employees ───
@@ -26,6 +29,26 @@ const todayParts = () => {
   const get = (type) => Number(parts.find(p => p.type === type).value)
   return { year: get('year'), month: get('month') - 1, day: get('day') } // month: 0 = Jan
 }
+
+// Current time in India: date parts, "YYYY-MM-DD" and minutes after midnight
+const nowInIndia = () => {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: TIME_ZONE, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(new Date())
+  const get = (type) => parts.find(p => p.type === type).value
+  const year = Number(get('year')), month = Number(get('month')) - 1, day = Number(get('day'))
+  const hour = Number(get('hour')) % 24, minute = Number(get('minute'))
+  return {
+    year, month, day,
+    dateStr: `${get('year')}-${get('month')}-${get('day')}`,
+    minutes: hour * 60 + minute,
+    time: `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`,
+  }
+}
+
+// Project dates are saved as calendar dates (UTC midnight) → "YYYY-MM-DD"
+const dateOnly = (d) => (d ? new Date(d).toISOString().slice(0, 10) : '')
 
 const isWeekend = (year, month, day) => {
   const wd = new Date(Date.UTC(year, month, day)).getUTCDay()
@@ -144,6 +167,132 @@ router.patch('/my-attendance/mark', resolveRole, employeeOnly, async (req, res) 
     const saved = await record.save()
     res.json({ year, month, day, status: next, days: daysToObject(saved.days) })
   } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+})
+
+// ─────────────────────────────────────────────────────────────
+//  PROJECT LOGINS
+//  A staff member on a project logs in once a day for that project.
+//  Up to the project's login time → Present. Within the late window after it → Late.
+//  After that the login is closed for the day (the admin can still mark it).
+// ─────────────────────────────────────────────────────────────
+
+// The staff member's projects running today, with today's login state for each
+const projectsToday = async (staff, now) => {
+  const ownerId = staff.userId
+  const projects = await Project.find({ userId: ownerId, assignedStaff: staff._id })
+    .select('projectName loginTime lateWindowMinutes startDate endDate')
+  const running = projects.filter(p =>
+    (!p.startDate || dateOnly(p.startDate) <= now.dateStr) &&
+    (!p.endDate || dateOnly(p.endDate) >= now.dateStr)
+  )
+  if (running.length === 0) return []
+
+  const sheets = await ProjectAttendance.find({
+    userId: ownerId, staffId: staff._id, year: now.year, month: now.month,
+    projectId: { $in: running.map(p => p._id) },
+  })
+  const todayByProject = {}
+  sheets.forEach(sh => {
+    todayByProject[String(sh.projectId)] = projectDaysToObject(sh.days)[String(now.day)] || null
+  })
+
+  return running
+    .map(p => ({
+      projectId: p._id,
+      projectName: p.projectName,
+      window: loginWindow(p, now.minutes),
+      today: todayByProject[String(p._id)] || null, // { status, at, by } or null
+    }))
+    .sort((a, b) => String(a.window.loginTime || '99').localeCompare(String(b.window.loginTime || '99')))
+}
+
+// Why the staff member can't log in to projects today (or null if they can)
+const dayBlockReason = async (staff, now) => {
+  if (isWeekend(now.year, now.month, now.day)) return 'Today is a weekend.'
+  const ownerId = staff.userId
+  const [isHoliday, office] = await Promise.all([
+    Holiday.exists({ userId: ownerId, year: now.year, month: now.month, day: now.day }),
+    Attendance.findOne({ userId: ownerId, staffId: staff._id, year: now.year, month: now.month }),
+  ])
+  if (isHoliday) return 'Today is a company holiday.'
+  const officeToday = office ? daysToObject(office.days)[String(now.day)] : null
+  if (ADMIN_LOCKED_STATUSES.includes(officeToday)) {
+    return `Your admin has marked you as ${officeToday === 'leave' ? 'on Leave' : 'Absent'} today.`
+  }
+  return null
+}
+
+// ─── GET /my-projects/today — projects to log in to today ───
+router.get('/my-projects/today', resolveRole, employeeOnly, async (req, res) => {
+  try {
+    const now = nowInIndia()
+    const [projects, blocked] = await Promise.all([
+      projectsToday(req.staff, now),
+      dayBlockReason(req.staff, now),
+    ])
+    res.json({
+      now: { year: now.year, month: now.month, day: now.day, time: now.time, minutes: now.minutes },
+      blocked, // a message, or null
+      projects,
+    })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ─── PATCH /my-projects/login — log in to a project for today ───
+// Body: { projectId }. The server decides Present or Late from the current India time.
+router.patch('/my-projects/login', resolveRole, employeeOnly, async (req, res) => {
+  try {
+    const { projectId } = req.body
+    if (!/^[0-9a-fA-F]{24}$/.test(String(projectId || ''))) {
+      return res.status(400).json({ error: 'Invalid project' })
+    }
+    const now = nowInIndia()
+    const staff = req.staff
+    const ownerId = staff.userId
+
+    const project = await Project.findOne({ _id: projectId, userId: ownerId, assignedStaff: staff._id })
+    if (!project) return res.status(403).json({ error: 'You are not assigned to this project' })
+    if ((project.startDate && dateOnly(project.startDate) > now.dateStr) ||
+        (project.endDate && dateOnly(project.endDate) < now.dateStr)) {
+      return res.status(400).json({ error: 'This project is not running today' })
+    }
+
+    const blocked = await dayBlockReason(staff, now)
+    if (blocked) return res.status(400).json({ error: blocked })
+
+    const win = loginWindow(project, now.minutes)
+    if (win.state === 'noTime') return res.status(400).json({ error: 'This project has no login time set. Contact your admin.' })
+    if (win.state === 'notOpen') return res.status(403).json({ error: `Login opens at ${win.opensAt}` })
+    if (win.state === 'closed') {
+      return res.status(403).json({ error: `Login closed at ${win.closesAt}. Contact your admin.` })
+    }
+    const status = win.state === 'onTime' ? 'present' : 'late'
+
+    const filter = { userId: ownerId, staffId: staff._id, projectId: project._id, year: now.year, month: now.month }
+    const path = `days.${now.day}`
+    const existing = await ProjectAttendance.findOne(filter)
+    if (existing && existing.days && existing.days.get(String(now.day))) {
+      return res.status(409).json({ error: 'You have already been marked for this project today' })
+    }
+
+    const saved = await ProjectAttendance.findOneAndUpdate(
+      filter,
+      { $set: { [path]: { status, at: new Date(), by: 'employee' } } },
+      { new: true, upsert: true, setDefaultsOnInsert: true, runValidators: true }
+    )
+    res.json({
+      projectId: project._id,
+      today: projectDaysToObject(saved.days)[String(now.day)],
+      status,
+    })
+  } catch (err) {
+    if (err && err.code === 11000) {
+      return res.status(409).json({ error: 'You have already been marked for this project today' })
+    }
     res.status(400).json({ error: err.message })
   }
 })
