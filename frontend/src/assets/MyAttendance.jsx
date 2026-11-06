@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react'
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useAuth, useClerk } from '@clerk/clerk-react'
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:5000/api'
@@ -45,14 +45,13 @@ const fmtClock = (iso) => {
   const d = new Date(iso)
   return isNaN(d) ? '' : d.toLocaleTimeString('en-US', { timeZone: 'Asia/Kolkata', hour: 'numeric', minute: '2-digit' })
 }
-// Same rule as the server: notOpen → onTime (Present) → late → closed
+// Same rule as the server: notOpen → onTime (Present, login time to login time + window) → closed
 const windowState = (win, nowMin) => {
   if (!win || win.state === 'noTime') return 'noTime'
   if (win.anyTime) return 'onTime' // no late marking: any time today counts as Present
-  const opens = toMinutes(win.opensAt), start = toMinutes(win.loginTime), closes = toMinutes(win.closesAt)
+  const opens = toMinutes(win.opensAt), closes = toMinutes(win.closesAt)
   if (nowMin < opens) return 'notOpen'
-  if (nowMin <= start) return 'onTime'
-  if (nowMin <= closes) return 'late'
+  if (nowMin <= closes) return 'onTime'
   return 'closed'
 }
 
@@ -116,8 +115,9 @@ const MyAttendance = ({ me }) => {
     setTimeout(() => setToast(null), 2600)
   }
 
-  const load = useCallback(async (year, month) => {
-    setLoading(true)
+  // silent: reload without the spinner · todayOnly: refresh only the "Today" card
+  const load = useCallback(async (year, month, { silent = false, todayOnly = false } = {}) => {
+    if (!silent) setLoading(true)
     setError('')
     try {
       const token = await getToken()
@@ -126,12 +126,12 @@ const MyAttendance = ({ me }) => {
       })
       const body = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(body.error || `Could not load attendance (${res.status})`)
-      setData(body)
+      if (!todayOnly) setData(body)
       if (year === today.year && month === today.month) setCurrent(body)
     } catch (err) {
-      setError(err.message)
+      if (!silent) setError(err.message)
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [getToken, today.year, today.month])
 
@@ -201,7 +201,7 @@ const MyAttendance = ({ me }) => {
     const c = { present: 0, absent: 0, wfh: 0, leave: 0, halfday: 0 }
     Object.keys(days).forEach(dStr => {
       const d = Number(dStr)
-      if (isWeekend(view.year, view.month, d) || holidaySet.has(d)) return
+      if (isWeekend(view.year, view.month, d)) return // a holiday counts only if the admin marked you as working
       if (c[days[dStr]] !== undefined) c[days[dStr]] += 1
     })
     return c
@@ -361,9 +361,8 @@ const MyAttendance = ({ me }) => {
           <div className="ma-card">
             <h3>My projects today</h3>
             <p className="ma-hint">
-              Log in to each project once a day. Up to the login time you're <b style={{ color: '#16a34a' }}>Present</b>,
-              after it you're <b style={{ color: '#ea580c' }}>Late</b>, and after the late window it closes for the day.
-              Projects marked “any time” have no late marking.
+              Log in to each project once a day during its login window to be marked <b style={{ color: '#16a34a' }}>Present</b>.
+              After the window closes, contact your admin.
             </p>
             {proj.blocked ? (
               <div className="ma-note info">{proj.blocked} No project login needed.</div>
@@ -401,8 +400,8 @@ const MyAttendance = ({ me }) => {
                           {!win.loginTime
                             ? 'No login time set'
                             : win.anyTime
-                              ? <>Log in <b>any time today</b> · no late marking</>
-                              : <>Login <b>{fmtTime12(win.loginTime)}</b> · late until {fmtTime12(win.closesAt)}</>}
+                              ? <>Log in <b>any time today</b></>
+                              : <>Login <b>{fmtTime12(win.opensAt)} – {fmtTime12(win.closesAt)}</b></>}
                         </div>
                       </div>
                       {right}
@@ -444,10 +443,12 @@ const MyAttendance = ({ me }) => {
                     <div
                       key={day}
                       className={`ma-day${wknd ? ' weekend' : ''}${hol ? ' holiday' : ''}${isToday ? ' today' : ''}`}
-                      title={meta ? meta.name : hol ? 'Holiday' : wknd ? 'Weekend' : 'Not marked'}
+                      title={hol ? (meta ? `Holiday · worked (${meta.name})` : 'Holiday') : meta ? meta.name : wknd ? 'Weekend' : 'Not marked'}
                     >
                       <span>{day}</span>
-                      {hol ? (
+                      {hol && meta ? (
+                        <span className="ma-chip" title={`Worked on the holiday: ${meta.name}`} style={{ background: meta.bg, color: meta.color, borderColor: meta.border }}>{meta.label}</span>
+                      ) : hol ? (
                         <span className="ma-tag">★</span>
                       ) : meta && !wknd ? (
                         <span className="ma-chip" style={{ background: meta.bg, color: meta.color, borderColor: meta.border }}>{meta.label}</span>

@@ -39,6 +39,31 @@ const readTeamFields = (body) => {
   return { values };
 };
 
+// Check and tidy the tax and currency fields (GST / TDS apply to domestic AND international).
+// Returns { error } or { values } with only the fields that were sent.
+const readTaxFields = (body) => {
+  const values = {};
+  if (body.gstApplicable !== undefined) values.gstApplicable = Boolean(body.gstApplicable);
+  // International projects added from now on keep amounts in their own currency
+  if (body.amountsInForeignCurrency !== undefined) values.amountsInForeignCurrency = Boolean(body.amountsInForeignCurrency);
+  // Starting exchange rate (₹ for 1 unit), pre-fills each month in the Project Tracker
+  if (body.defaultFxRate !== undefined) {
+    if (body.defaultFxRate === '' || body.defaultFxRate === null) {
+      values.defaultFxRate = null;
+    } else {
+      const r = Number(body.defaultFxRate);
+      if (!Number.isFinite(r) || r <= 0) return { error: 'Exchange rate must be more than 0' };
+      values.defaultFxRate = Math.round(r * 10000) / 10000;
+    }
+  }
+  if (body.tdsPercent !== undefined) {
+    const n = body.tdsPercent === '' || body.tdsPercent === null ? 0 : Number(body.tdsPercent);
+    if (!Number.isFinite(n) || n < 0 || n > 100) return { error: 'TDS must be between 0 and 100%' };
+    values.tdsPercent = Math.round(n * 100) / 100;
+  }
+  return { values };
+};
+
 // ─── ADD PROJECT ───
 // Optional team fields: loginTime ("09:00"), lateWindowMinutes (30), assignedStaff ([staffId])
 router.post('/add', async (req, res) => {
@@ -60,6 +85,8 @@ router.post('/add', async (req, res) => {
 
     const team = readTeamFields(req.body);
     if (team.error) return res.status(400).json({ message: team.error });
+    const tax = readTaxFields(req.body);
+    if (tax.error) return res.status(400).json({ message: tax.error });
 
     const newProject = new Project({
       userId,
@@ -76,6 +103,7 @@ router.post('/add', async (req, res) => {
         ? Number(daysCycle)
         : 30,
       ...team.values,
+      ...tax.values,
       assignedStaff: await cleanStaffIds(userId, assignedStaff),
       monthlyBreakdowns: []
     });
@@ -101,8 +129,10 @@ router.get('/all', async (req, res) => {
 // ─── UPDATE PROJECT (edit any field) ───
 // Body: send only the fields that changed, any of:
 //   projectName, projectType, projectScope, currency, startDate, endDate, daysCycle,
-//   expectedAmount, defaultHourlyRate, defaultDailyRate   (amounts in INR)
+//   expectedAmount, defaultHourlyRate, defaultDailyRate
+//     (₹ for domestic; the project's currency for new international projects)
 //   loginTime, lateWindowMinutes, assignedStaff
+//   gstApplicable, tdsPercent, amountsInForeignCurrency, defaultFxRate
 // Monthly breakdowns (amounts already entered / received) are kept as they are.
 const PROJECT_TYPES = ['hourly', 'daily', 'monthly'];
 const PROJECT_SCOPES = ['domestic', 'international'];
@@ -168,6 +198,11 @@ const updateProject = async (req, res) => {
         setFields[field] = n;
       }
     }
+
+    // GST / TDS / currency
+    const tax = readTaxFields(body);
+    if (tax.error) return res.status(400).json({ message: tax.error });
+    Object.assign(setFields, tax.values);
 
     // Login time / late window / staff (same rules as the team popup)
     const team = readTeamFields(body);

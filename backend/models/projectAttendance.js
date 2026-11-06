@@ -11,8 +11,8 @@ const mongoose = require('mongoose')
 //   'halfday' = half day
 const PROJECT_STATUSES = ['present', 'late', 'absent', 'leave', 'halfday']
 
-// Staff can log in from this many minutes BEFORE the project's login time
-const EARLY_OPEN_MINUTES = 60
+// Login opens AT the project's login time (no early login)
+const EARLY_OPEN_MINUTES = 0
 
 // One project day: the status and, when the staff member logged in themselves, the time
 const projectDaySchema = new mongoose.Schema(
@@ -58,11 +58,13 @@ const minutesToTime = (mins) => {
 }
 
 // Where are we in today's login window for a project?
-//   'notOpen' → too early          'onTime' → up to the login time (Present)
-//   'late'    → within the window (Late)    'closed' → too late to log in
+//   'notOpen' → before the login time
+//   'onTime'  → from the login time until login time + window (Present)
+//   'closed'  → after the window (only the admin can mark it now)
 //   'noTime'  → the project has no login time set
-// A late window of 0 means "no late marking": staff can log in any time
-// that day and are always marked Present (anyTime: true).
+// Example: login time 13:00 with a 30-minute window → open 13:00–13:30.
+// A window of 0 means staff can log in any time that day (anyTime: true).
+// Staff are never marked Late automatically; the admin can still set Late.
 const loginWindow = (project, nowMinutes) => {
   const start = timeToMinutes(project.loginTime)
   if (start === null) return { state: 'noTime' }
@@ -79,11 +81,10 @@ const loginWindow = (project, nowMinutes) => {
     }
   }
   const opens = Math.max(0, start - EARLY_OPEN_MINUTES)
-  const closes = start + lateWindow
+  const closes = Math.min(24 * 60 - 1, start + lateWindow)
   let state
   if (nowMinutes < opens) state = 'notOpen'
-  else if (nowMinutes <= start) state = 'onTime'
-  else if (nowMinutes <= closes) state = 'late'
+  else if (nowMinutes <= closes) state = 'onTime'
   else state = 'closed'
   return {
     state,

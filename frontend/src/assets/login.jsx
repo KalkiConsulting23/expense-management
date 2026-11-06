@@ -1,10 +1,16 @@
 import React from 'react'
 import { SignIn } from '@clerk/clerk-react'
 
-const AMBER = '#f0b45f'
-const AMBER_DARK = '#e6a545'
-const CREAM = '#f5f1e8'
-const INK = '#1a1a1a'
+/* ---- Black & white palette ---- */
+const ACCENT = '#111111'
+const ACCENT_DARK = '#000000'
+const BG = '#f4f4f4'
+const INK = '#111111'
+const BORDER = '#e5e5e5'
+const BORDER_DARK = '#cfcfcf'
+const MUTED = '#6b7280'
+const DOODLE = '#bdbdbd'
+const DOODLE_FILL = '#d9d9d9'
 
 const clerkAppearance = {
   layout: {
@@ -12,9 +18,9 @@ const clerkAppearance = {
     socialButtonsVariant: 'blockButton',
   },
   variables: {
-    colorPrimary: AMBER,
+    colorPrimary: ACCENT,
     colorText: INK,
-    colorTextSecondary: '#6b7280',
+    colorTextSecondary: MUTED,
     colorBackground: '#ffffff',
     colorInputBackground: '#ffffff',
     colorInputText: INK,
@@ -36,51 +42,51 @@ const clerkAppearance = {
     formFieldLabel: {
       fontSize: '13px',
       fontWeight: 600,
-      color: '#6b7280',
+      color: MUTED,
       marginBottom: '6px',
     },
     formFieldInput: {
       background: '#ffffff',
-      border: '1.5px solid #e7e2d6',
+      border: `1.5px solid ${BORDER}`,
       borderRadius: '10px',
       fontSize: '14px',
       padding: '12px 14px',
       color: INK,
       fontWeight: 500,
       '&:focus': {
-        borderColor: AMBER,
-        boxShadow: '0 0 0 4px rgba(240, 180, 95, 0.18)',
+        borderColor: ACCENT,
+        boxShadow: '0 0 0 4px rgba(17, 17, 17, 0.10)',
       },
     },
     formButtonPrimary: {
-      background: AMBER,
+      background: ACCENT,
       borderRadius: '10px',
       fontSize: '15px',
       fontWeight: 700,
       textTransform: 'none',
       padding: '12px 24px',
-      color: INK,
+      color: '#ffffff',
       boxShadow: 'none',
-      '&:hover': { background: AMBER_DARK },
+      '&:hover': { background: '#333333' },
     },
     socialButtonsBlockButton: {
-      border: '1.5px solid #e7e2d6',
+      border: `1.5px solid ${BORDER}`,
       background: '#ffffff',
       borderRadius: '10px',
       fontSize: '13px',
       fontWeight: 600,
       color: INK,
       height: '44px',
-      '&:hover': { background: '#faf8f2', borderColor: '#d8d2c2' },
+      '&:hover': { background: '#fafafa', borderColor: BORDER_DARK },
     },
     socialButtonsBlockButtonText: { fontWeight: 600, color: INK },
     badge: { display: 'none' },
-    dividerLine: { background: '#e7e2d6' },
+    dividerLine: { background: BORDER },
     dividerText: { color: '#9ca3af', fontSize: '12px', fontWeight: 500 },
     footer: { background: '#ffffff', borderTop: 'none' },
-    footerActionText: { color: '#6b7280', fontSize: '13px' },
-    footerActionLink: { color: AMBER_DARK, fontWeight: 700, fontSize: '13px' },
-    formFieldAction: { color: '#6b7280', fontWeight: 600, fontSize: '13px' },
+    footerActionText: { color: MUTED, fontSize: '13px' },
+    footerActionLink: { color: ACCENT_DARK, fontWeight: 700, fontSize: '13px' },
+    formFieldAction: { color: MUTED, fontWeight: 600, fontSize: '13px' },
     logoBox: { display: 'none' },
     footerPages: { display: 'none' },
   },
@@ -125,7 +131,7 @@ const Login = () => {
         .kalki-root {
           min-height: 100vh;
           width: 100%;
-          background: ${CREAM};
+          background: ${BG};
           font-family: 'Inter', system-ui, -apple-system, sans-serif;
           display: flex;
           align-items: center;
@@ -138,7 +144,7 @@ const Login = () => {
           width: 100%;
           max-width: 1080px;
           min-height: 620px;
-          background: ${CREAM};
+          background: ${BG};
           border-radius: 20px;
           overflow: hidden;
           display: flex;
@@ -171,7 +177,7 @@ const Login = () => {
           background: #ffffff;
           border-radius: 20px;
           padding: 34px 32px 26px;
-          box-shadow: 0 24px 60px rgba(26, 26, 26, 0.10);
+          box-shadow: 0 24px 60px rgba(0, 0, 0, 0.12);
           box-sizing: border-box;
         }
         .kalki-card-head { text-align: center; margin-bottom: 20px; }
@@ -218,7 +224,7 @@ const Login = () => {
           position: absolute;
           bottom: 16px; left: 0; right: 0;
           text-align: center;
-          font-size: 11px; color: #b3ac9c; font-weight: 500;
+          font-size: 11px; color: #9a9a9a; font-weight: 500;
           z-index: 3;
         }
 
@@ -241,12 +247,12 @@ const Login = () => {
 const Doodles = () => (
   <>
     <svg className="kalki-doodle" style={{ top: '60px', left: '70px' }}
-      width="90" height="30" viewBox="0 0 90 30" fill="none" stroke="#c9c2b0" strokeWidth="2" strokeLinecap="round">
+      width="90" height="30" viewBox="0 0 90 30" fill="none" stroke={DOODLE} strokeWidth="2" strokeLinecap="round">
       <path d="M2 15 Q12 2 22 15 T42 15 T62 15 T82 15" />
     </svg>
     <svg className="kalki-doodle" style={{ bottom: '70px', left: '90px' }}
       width="70" height="110" viewBox="0 0 70 110">
-      <rect width="70" height="110" rx="6" fill={AMBER} opacity="0.55" />
+      <rect width="70" height="110" rx="6" fill={DOODLE_FILL} />
       {Array.from({ length: 6 }).map((_, r) =>
         Array.from({ length: 4 }).map((_, c) => (
           <circle key={r + '-' + c} cx={12 + c * 15} cy={14 + r * 16} r="2.4" fill={INK} opacity="0.55" />
@@ -254,27 +260,27 @@ const Doodles = () => (
       )}
     </svg>
     <svg className="kalki-doodle" style={{ bottom: '78px', left: '175px' }}
-      width="80" height="90" viewBox="0 0 80 90" fill="none" stroke="#b8b1a0" strokeWidth="2">
+      width="80" height="90" viewBox="0 0 80 90" fill="none" stroke={DOODLE} strokeWidth="2">
       <rect x="2" y="2" width="76" height="86" rx="4" fill="#ffffff" />
       <path d="M24 60 L40 30 L56 46" strokeLinecap="round" strokeLinejoin="round" />
       <path d="M48 30 L56 30 L56 38" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
     <svg className="kalki-doodle" style={{ top: '150px', left: '150px' }}
-      width="72" height="56" viewBox="0 0 72 56" fill="none" stroke="#c9c2b0" strokeWidth="2">
+      width="72" height="56" viewBox="0 0 72 56" fill="none" stroke={DOODLE} strokeWidth="2">
       <rect x="2" y="2" width="68" height="44" rx="4" />
       <path d="M20 52 L28 46" strokeLinecap="round" />
       <line x1="14" y1="18" x2="46" y2="18" strokeLinecap="round" />
       <line x1="14" y1="28" x2="38" y2="28" strokeLinecap="round" />
     </svg>
     <svg className="kalki-doodle" style={{ top: '120px', right: '120px' }}
-      width="72" height="56" viewBox="0 0 72 56" fill="none" stroke="#c9c2b0" strokeWidth="2">
+      width="72" height="56" viewBox="0 0 72 56" fill="none" stroke={DOODLE} strokeWidth="2">
       <rect x="2" y="2" width="68" height="44" rx="4" />
       <line x1="14" y1="18" x2="46" y2="18" strokeLinecap="round" />
       <line x1="14" y1="28" x2="38" y2="28" strokeLinecap="round" />
     </svg>
     <svg className="kalki-doodle" style={{ bottom: '70px', right: '95px' }}
       width="60" height="95" viewBox="0 0 60 95">
-      <rect width="60" height="95" rx="6" fill={AMBER} opacity="0.55" />
+      <rect width="60" height="95" rx="6" fill={DOODLE_FILL} />
       {Array.from({ length: 5 }).map((_, r) =>
         Array.from({ length: 3 }).map((_, c) => (
           <circle key={r + '-' + c} cx={12 + c * 18} cy={14 + r * 17} r="2.4" fill={INK} opacity="0.55" />
@@ -282,7 +288,7 @@ const Doodles = () => (
       )}
     </svg>
     <svg className="kalki-doodle" style={{ top: '175px', right: '175px' }}
-      width="70" height="24" viewBox="0 0 70 24" fill="none" stroke="#c9c2b0" strokeWidth="2" strokeLinecap="round">
+      width="70" height="24" viewBox="0 0 70 24" fill="none" stroke={DOODLE} strokeWidth="2" strokeLinecap="round">
       <path d="M2 12 Q10 2 18 12 T34 12 T50 12 T66 12" />
     </svg>
   </>

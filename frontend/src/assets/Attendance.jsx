@@ -63,7 +63,7 @@ const isWeekend = (year, month, day) => {
 }
 
 const MENU_WIDTH = 168
-const MENU_HEIGHT = 236
+const MENU_HEIGHT = 262
 
 const Attendance = () => {
   const navigate = useNavigate()
@@ -207,8 +207,9 @@ const Attendance = () => {
   }, [menu])
 
   // ── Open the status dropdown under the clicked cell ──
+  // Holidays can be clicked too — to mark someone who worked on the holiday
   const openMenu = (e, staffId, day, projectId = null) => {
-    if (isWeekend(year, month, day) || holidaySet.has(day)) return
+    if (isWeekend(year, month, day)) return
     const rect = e.currentTarget.getBoundingClientRect()
     const left = Math.min(
       Math.max(8, rect.left + rect.width / 2 - MENU_WIDTH / 2),
@@ -347,7 +348,7 @@ const Attendance = () => {
     const days = attMap[staffId] || {}
     Object.keys(days).forEach(dStr => {
       const d = Number(dStr)
-      if (isWeekend(year, month, d) || holidaySet.has(d)) return
+      if (isWeekend(year, month, d)) return // holiday days only count if someone was marked (worked)
       if (counts[days[dStr]] !== undefined) counts[days[dStr]] += 1
     })
     return counts
@@ -359,7 +360,7 @@ const Attendance = () => {
     const days = projMap[`${staffId}_${projectId}`] || {}
     Object.keys(days).forEach(dStr => {
       const d = Number(dStr)
-      if (isWeekend(year, month, d) || holidaySet.has(d)) return
+      if (isWeekend(year, month, d)) return // holiday days only count if someone was marked (worked)
       const st = days[dStr]?.status
       if (counts[st] !== undefined) counts[st] += 1
     })
@@ -467,6 +468,15 @@ const Attendance = () => {
         }
         .att-cell.weekend { background: #f3f4f6; color: #c5c5c9; }
         .att-cell.holiday { background: #eef2ff; color: #a5b4fc; }
+        /* Holiday cells are clickable: ★ = holiday (nobody marked), chip with a ★ corner = worked on the holiday */
+        .att-cell .box.hol-box { background: transparent; border: 1px dashed #c7d2fe; color: #a5b4fc; position: relative; }
+        .att-cell .box.hol-box:hover { background: #e0e7ff; color: #4338ca; }
+        .att-cell .box.hol-box.worked { border-style: solid; }
+        .att-cell .box.hol-box.worked::after {
+          content: '★'; position: absolute; top: -6px; right: -6px; font-size: 8px; line-height: 1;
+          color: #4338ca; background: #eef2ff; border-radius: 50%; padding: 1px;
+        }
+        .att-menu-hol { font-size: 10.5px; color: #4338ca; background: #eef2ff; border-radius: 6px; padding: 5px 8px; margin: 0 2px 4px; }
         .att-cell .box {
           width: 24px; height: 24px; border-radius: 7px; display: inline-flex;
           align-items: center; justify-content: center; border: 1px solid transparent;
@@ -544,7 +554,7 @@ const Attendance = () => {
           <div className="att-eyebrow">Attendance</div>
           <h2 className="att-title">Staff Attendance</h2>
           <p className="att-sub">
-            Click a day to choose Present, Absent, WFH, Leave or Half Day · <b>—</b> weekend · <b style={{ color: '#4338ca' }}>★</b> holiday (click "+ Hol" on a date)
+            Click a day to choose Present, Absent, WFH, Leave or Half Day · <b>—</b> weekend · <b style={{ color: '#4338ca' }}>★</b> holiday (click "+ Hol" on a date; click a ★ cell to mark someone who worked that holiday)
             {projects.length > 0 && <> · <b style={{ color: '#4338ca' }}>↳</b> project rows (<b style={{ color: '#ea580c' }}>LT</b> = late)</>}
           </p>
         </div>
@@ -646,22 +656,23 @@ const Attendance = () => {
                             const hol = holidaySet.has(day)
                             const key = `${s._id}-${day}`
                             if (wknd) return <td key={day} className="att-cell weekend">—</td>
-                            if (hol)  return <td key={day} className="att-cell holiday">★</td>
                             const status = days[String(day)]
                             const meta = status ? STATUS_META[status] : null
                             const isOpen = menu && !menu.projectId && menu.staffId === s._id && menu.day === day
                             return (
-                              <td key={day} className={`att-cell${savingKey === key ? ' saving' : ''}`}>
+                              <td key={day} className={`att-cell${hol ? ' holiday' : ''}${savingKey === key ? ' saving' : ''}`}>
                                 <button
                                   type="button"
-                                  className={`box${isOpen ? ' open' : ''}`}
+                                  className={`box${isOpen ? ' open' : ''}${hol ? ' hol-box' : ''}${hol && meta ? ' worked' : ''}`}
                                   onClick={(e) => (isOpen ? setMenu(null) : openMenu(e, s._id, day))}
-                                  title={meta ? `${meta.name} — click to change` : 'Not marked — click to choose'}
+                                  title={hol
+                                    ? (meta ? `Holiday — worked: ${meta.name} — click to change` : 'Holiday — click to mark if they worked')
+                                    : (meta ? `${meta.name} — click to change` : 'Not marked — click to choose')}
                                   aria-haspopup="menu"
                                   aria-expanded={Boolean(isOpen)}
-                                  style={meta ? { background: meta.bg, color: meta.color, borderColor: meta.border } : { background: '#fff', color: '#d1d5db', borderColor: '#ececec' }}
+                                  style={meta ? { background: meta.bg, color: meta.color, borderColor: meta.border } : hol ? undefined : { background: '#fff', color: '#d1d5db', borderColor: '#ececec' }}
                                 >
-                                  {meta ? meta.label : ''}
+                                  {meta ? meta.label : hol ? '★' : ''}
                                 </button>
                               </td>
                             )
@@ -702,7 +713,6 @@ const Attendance = () => {
                               const hol = holidaySet.has(day)
                               const key = `${s._id}-${p._id}-${day}`
                               if (wknd) return <td key={day} className="att-cell weekend">—</td>
-                              if (hol)  return <td key={day} className="att-cell holiday">★</td>
                               const dstr = ymd(year, month, day)
                               const entry = pdays[String(day)]
                               if (((start && dstr < start) || (end && dstr > end)) && !entry) {
@@ -713,17 +723,19 @@ const Attendance = () => {
                               const loggedAt = entry?.at ? ` · logged in ${fmtClock(entry.at)}` : ''
                               const byWho = entry ? (entry.by === 'employee' ? ' (self)' : ' (admin)') : ''
                               return (
-                                <td key={day} className={`att-cell${savingKey === key ? ' saving' : ''}`}>
+                                <td key={day} className={`att-cell${hol ? ' holiday' : ''}${savingKey === key ? ' saving' : ''}`}>
                                   <button
                                     type="button"
-                                    className={`box${isOpen ? ' open' : ''}`}
+                                    className={`box${isOpen ? ' open' : ''}${hol ? ' hol-box' : ''}${hol && meta ? ' worked' : ''}`}
                                     onClick={(e) => (isOpen ? setMenu(null) : openMenu(e, s._id, day, p._id))}
-                                    title={meta ? `${p.projectName}: ${meta.name}${loggedAt}${byWho} — click to change` : `${p.projectName}: not marked — click to choose`}
+                                    title={hol
+                                      ? (meta ? `Holiday — ${p.projectName}: worked (${meta.name})${loggedAt} — click to change` : `Holiday — ${p.projectName}: click to mark if they worked`)
+                                      : (meta ? `${p.projectName}: ${meta.name}${loggedAt}${byWho} — click to change` : `${p.projectName}: not marked — click to choose`)}
                                     aria-haspopup="menu"
                                     aria-expanded={Boolean(isOpen)}
-                                    style={meta ? { background: meta.bg, color: meta.color, borderColor: meta.border, fontSize: meta.label.length > 1 ? 9 : undefined } : { background: '#fff', color: '#d1d5db', borderColor: '#ececec' }}
+                                    style={meta ? { background: meta.bg, color: meta.color, borderColor: meta.border, fontSize: meta.label.length > 1 ? 9 : undefined } : hol ? undefined : { background: '#fff', color: '#d1d5db', borderColor: '#ececec' }}
                                   >
-                                    {meta ? meta.label : ''}
+                                    {meta ? meta.label : hol ? '★' : ''}
                                   </button>
                                 </td>
                               )
@@ -764,6 +776,9 @@ const Attendance = () => {
             {menuStaff ? `${menuStaff.firstName} ${menuStaff.lastName}` : 'Staff'}
             {menuProject ? ` · ${menuProject.projectName}` : ''} · {menu.day} {MONTH_FULL[month].slice(0, 3)}
           </div>
+          {holidaySet.has(menu.day) && (
+            <div className="att-menu-hol">★ Holiday — mark only if they worked</div>
+          )}
           {menuOrder.map(key => {
             const meta = menuMeta[key]
             const active = menuCurrent === key

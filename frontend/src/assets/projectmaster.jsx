@@ -26,11 +26,18 @@ const fmtTime12 = (hhmm) => {
 }
 
 // Billing shown in the projects table, e.g. "₹1,00,000 / month"
+// International projects added with the new form keep amounts in their own currency
+const CUR_SYMBOL = { INR: '₹', USD: '$', EUR: '€', GBP: '£', AED: 'AED ', SGD: 'S$' }
+const isForeign = (p) => (p.projectScope || 'domestic') === 'international' && Boolean(p.amountsInForeignCurrency)
+const money = (n, p) => (isForeign(p)
+  ? (CUR_SYMBOL[p.currency] || `${p.currency} `) + (Math.round((Number(n) || 0) * 100) / 100).toLocaleString('en-US')
+  : fmt(n))
+
 function billingText(p) {
   const type = (p.projectType || 'monthly').toLowerCase()
-  if (type === 'hourly') return `${fmt(p.defaultHourlyRate)} / hr`
-  if (type === 'daily') return `${fmt(p.defaultDailyRate)} / day`
-  return `${fmt(p.expectedAmount)} / month`
+  if (type === 'hourly') return `${money(p.defaultHourlyRate, p)} / hr`
+  if (type === 'daily') return `${money(p.defaultDailyRate, p)} / day`
+  return `${money(p.expectedAmount, p)} / month`
 }
 
 function fmtDate(dateStr) {
@@ -94,10 +101,16 @@ const projectToForm = (p) => ({
   defaultDailyRate: numStr(p.defaultDailyRate ?? 0),
   loginTime: p.loginTime || '',
   lateWindowMinutes: numStr(p.lateWindowMinutes ?? 30),
+  gstApplicable: Boolean(p.gstApplicable),
+  tdsPercent: numStr(p.tdsPercent ?? 0),
+  amountsInForeignCurrency: Boolean(p.amountsInForeignCurrency),
+  defaultFxRate: p.defaultFxRate ? numStr(p.defaultFxRate) : '',
   assignedStaff: (p.assignedStaff || []).map(String),
 })
 
-const NUMBER_FIELDS = ['daysCycle', 'expectedAmount', 'defaultHourlyRate', 'defaultDailyRate', 'lateWindowMinutes']
+const NUMBER_FIELDS = ['daysCycle', 'expectedAmount', 'defaultHourlyRate', 'defaultDailyRate', 'lateWindowMinutes', 'tdsPercent']
+// Number fields that may be left empty (sent as null = not set)
+const OPTIONAL_NUMBER_FIELDS = ['defaultFxRate']
 const sameValue = (a, b) => (Array.isArray(a) ? JSON.stringify(a) === JSON.stringify(b) : (a ?? '') === (b ?? ''))
 
 const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved }) => {
@@ -152,6 +165,8 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
       ...f,
       projectScope: scope,
       currency: scope === 'international' ? (f.currency !== 'INR' ? f.currency : 'USD') : 'INR',
+      // Domestic amounts are always in ₹
+      amountsInForeignCurrency: scope === 'international' ? f.amountsInForeignCurrency : false,
     }))
   }
 
@@ -174,6 +189,10 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
     if (form.projectType === 'hourly' && !(Number(form.defaultHourlyRate) > 0)) e.defaultHourlyRate = 'Hourly rate is required'
     if (form.projectType === 'daily' && !(Number(form.defaultDailyRate) > 0)) e.defaultDailyRate = 'Daily rate is required'
     if (form.assignedStaff.length > 0 && !form.loginTime) e.loginTime = 'Set a login time for the assigned staff'
+    if (form.projectScope === 'international' && form.amountsInForeignCurrency &&
+        form.defaultFxRate !== '' && !(Number(form.defaultFxRate) > 0)) e.defaultFxRate = 'Enter a rate above 0'
+    const tdsN = Number(form.tdsPercent)
+    if (form.tdsPercent !== '' && (!Number.isFinite(tdsN) || tdsN < 0 || tdsN > 100)) e.tdsPercent = 'Enter 0 to 100%'
     const lw = Number(form.lateWindowMinutes)
     if (form.lateWindowMinutes !== '' && (!Number.isFinite(lw) || lw < 0 || lw > 240)) e.lateWindowMinutes = 'Enter 0 to 240 minutes'
     return e
@@ -189,7 +208,8 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
     const payload = {}
     changedKeys.forEach(k => {
       const v = form[k]
-      if (NUMBER_FIELDS.includes(k)) payload[k] = v === '' ? (k === 'lateWindowMinutes' ? 30 : 0) : Number(v)
+      if (OPTIONAL_NUMBER_FIELDS.includes(k)) payload[k] = v === '' ? null : Number(v)
+      else if (NUMBER_FIELDS.includes(k)) payload[k] = v === '' ? (k === 'lateWindowMinutes' ? 30 : 0) : Number(v)
       else if (typeof v === 'string') payload[k] = v.trim()
       else payload[k] = v
     })
@@ -216,6 +236,10 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
 
   const amountField = form.projectType === 'monthly' ? 'expectedAmount'
     : form.projectType === 'hourly' ? 'defaultHourlyRate' : 'defaultDailyRate'
+  // Currency the amount is entered in
+  const foreignForm = form.projectScope === 'international' && form.amountsInForeignCurrency
+  const amtCur = foreignForm ? form.currency : '₹'
+  const amtSym = foreignForm ? (CUR_SYMBOL[form.currency] || `${form.currency} `).trim() : '₹'
   const amountLabel = form.projectType === 'monthly' ? 'Expected Amount / month'
     : form.projectType === 'hourly' ? 'Default Hourly Rate' : 'Default Daily Rate'
 
@@ -347,19 +371,71 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
                 ))}
               </div>
             </div>
+            {form.projectScope === 'international' && (
+              <div className="epm-field wide">
+                <label>Amounts are in</label>
+                <div className="epm-pills">
+                  {[[true, `${form.currency} (rate set each month)`], [false, '₹ (already converted)']].map(([v, l]) => (
+                    <button key={String(v)} type="button" disabled={saving}
+                      className={`epm-pill${form.amountsInForeignCurrency === v ? ' active' : ''}${form.amountsInForeignCurrency === v && changedKeys.includes('amountsInForeignCurrency') ? ' changed' : ''}`}
+                      onClick={() => set('amountsInForeignCurrency', v)}>{l}</button>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="epm-field">
-              <label htmlFor="epm-amt">{amountLabel} (₹) <span className="epm-req">*</span></label>
+              <label htmlFor="epm-amt">{amountLabel} ({amtCur}, before GST) <span className="epm-req">*</span></label>
               <div className="epm-prefix">
-                <span>₹</span>
-                <input id="epm-amt" type="number" min="0" step="any" className={cls(amountField)} value={form[amountField]} onChange={e => set(amountField, e.target.value)} disabled={saving} />
+                <span>{amtSym}</span>
+                <input id="epm-amt" type="number" min="0" step="any" className={cls(amountField)} value={form[amountField]} onChange={e => set(amountField, e.target.value)} disabled={saving} style={amtSym.length > 1 ? { paddingLeft: 40 } : undefined} />
               </div>
               {errors[amountField] && <div className="epm-err">{errors[amountField]}</div>}
             </div>
+            {foreignForm && (
+              <div className="epm-field">
+                <label htmlFor="epm-fx">Starting exchange rate (₹ for 1 {form.currency})</label>
+                <input id="epm-fx" type="number" min="0" step="any" placeholder="e.g. 83.50" className={cls('defaultFxRate')} value={form.defaultFxRate} onChange={e => set('defaultFxRate', e.target.value)} disabled={saving} />
+                {errors.defaultFxRate && <div className="epm-err">{errors.defaultFxRate}</div>}
+              </div>
+            )}
+            <div className="epm-field">
+              <label htmlFor="epm-tds">TDS % (deducted by client)</label>
+              <input id="epm-tds" type="number" min="0" max="100" step="any" className={cls('tdsPercent')} value={form.tdsPercent} onChange={e => set('tdsPercent', e.target.value)} disabled={saving} />
+              {errors.tdsPercent && <div className="epm-err">{errors.tdsPercent}</div>}
+            </div>
+            <div className="epm-field wide">
+              <label>GST</label>
+              <div className="epm-pills">
+                {[[true, 'Add 18% GST on invoice'], [false, 'No GST']].map(([v, l]) => (
+                  <button key={String(v)} type="button" disabled={saving}
+                    className={`epm-pill${form.gstApplicable === v ? ' active' : ''}${form.gstApplicable === v && changedKeys.includes('gstApplicable') ? ' changed' : ''}`}
+                    onClick={() => set('gstApplicable', v)}>{l}</button>
+                ))}
+              </div>
+            </div>
           </div>
+          {Number(form[amountField]) > 0 && (form.gstApplicable || Number(form.tdsPercent) > 0) && (() => {
+            const fx = foreignForm ? Number(form.defaultFxRate) || 0 : 1
+            if (foreignForm && !fx) {
+              return <div className="epm-note">GST and TDS are worked out in ₹ using each month's exchange rate in the Project Tracker.</div>
+            }
+            const b = (Number(form[amountField]) || 0) * fx
+            const g = form.gstApplicable ? b * 0.18 : 0
+            const t = b * (Number(form.tdsPercent) || 0) / 100
+            const r = (n) => '₹' + (Math.round(n * 100) / 100).toLocaleString('en-IN')
+            return (
+              <div className="epm-note">
+                For {r(b)}{foreignForm && <> ({amtSym}{Number(form[amountField])} × ₹{fx})</>}: {form.gstApplicable && <>+ GST {r(g)} </>}= Invoice <b>{r(b + g)}</b>
+                {t > 0 && <> · − TDS {form.tdsPercent}% {r(t)}</>} → To be received <b>{r(b + g - t)}</b>
+              </div>
+            )
+          })()}
           <div className="epm-note">
-            Amounts are saved in ₹{form.projectScope === 'international' ? ' (converted when the project was added)' : ''}.
+            {foreignForm
+              ? <>Amounts are in {form.currency}; each month's exchange rate is set in the Project Tracker (the starting rate fills new months).</>
+              : <>Amounts are saved in ₹{form.projectScope === 'international' ? ' (converted when the project was added)' : ''}.</>}
             Months you've already configured or marked as received in the Project Tracker keep their saved values.
-            {changedKeys.includes('projectType') && <> Changing the billing type only affects months you haven't configured yet.</>}
+            {(changedKeys.includes('projectType') || changedKeys.includes('gstApplicable') || changedKeys.includes('tdsPercent')) && <> Changing the billing type, GST or TDS only affects months you haven't configured yet (or configure them again).</>}
           </div>
 
           <div className="epm-section">Team &amp; Attendance</div>
@@ -370,18 +446,18 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
               {errors.loginTime && <div className="epm-err">{errors.loginTime}</div>}
             </div>
             <div className="epm-field">
-              <label htmlFor="epm-late">Late Window (minutes, 0 = no late)</label>
+              <label htmlFor="epm-late">Login Window (minutes, 0 = all day)</label>
               <input id="epm-late" type="number" min="0" max="240" className={cls('lateWindowMinutes')} value={form.lateWindowMinutes} onChange={e => set('lateWindowMinutes', e.target.value)} disabled={saving} />
               {errors.lateWindowMinutes && <div className="epm-err">{errors.lateWindowMinutes}</div>}
             </div>
           </div>
           {form.loginTime && form.lateWindowMinutes !== '' && Number(form.lateWindowMinutes) === 0 ? (
             <div className="epm-note">
-              Late window is <b>0</b> → <b>no late marking</b>. Staff can log in <b>any time</b> during the day and are marked Present.
+              Window is <b>0</b> → staff can log in <b>any time</b> during the day and are marked Present.
             </div>
           ) : form.loginTime && (
             <div className="epm-note">
-              Up to <b>{fmtTime12(form.loginTime)}</b> = Present · after that = Late · closed after <b>{fmtTime12(addMinutes(form.loginTime, form.lateWindowMinutes === '' ? 30 : (Number(form.lateWindowMinutes) || 0)))}</b>
+              Staff can log in from <b>{fmtTime12(form.loginTime)}</b> to <b>{fmtTime12(addMinutes(form.loginTime, form.lateWindowMinutes === '' ? 30 : (Number(form.lateWindowMinutes) || 0)))}</b> = Present · closed after that
             </div>
           )}
 

@@ -1,16 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 
-// Fallback FX rates to INR — used only if the live API is unreachable
-const FALLBACK_FX = {
-  INR: 1,
-  USD: 83.5,
-  EUR: 90.2,
-  GBP: 106.4,
-  AED: 22.7,
-  SGD: 62.1,
-};
-
 const CURRENCY_SYMBOLS = {
   INR: "₹", USD: "$", EUR: "€", GBP: "£", AED: "د.إ", SGD: "S$",
 };
@@ -27,7 +17,6 @@ const INTL_CURRENCIES = [
 const API_BASE = import.meta.env.VITE_API_BASE;
 const GST_RATE = 0.18;
 const PROJECT_CACHE_KEY = 'local_project_data_cache';
-const FX_API = "https://open.er-api.com/v6/latest/INR"; // free, no key
 
 const typeConfig = {
   hourly:  { icon: "⏱", label: "Hourly" },
@@ -42,7 +31,12 @@ const BLANK_FORM = {
   startDate: "", endDate: "", expectedAmount: "",
   defaultHourlyRate: "", defaultDailyRate: "",
   daysCycle: "30",
-  includeGst: false,
+  // Tax (domestic only): amount entered is before GST
+  gstApplicable: true,
+  tdsPercent: "",
+  // International: ₹ per 1 unit of the currency — the starting rate for each month
+  // (you can change it for every month in the Project Tracker)
+  defaultFxRate: "",
   // Team & project attendance (optional)
   loginTime: "",
   lateWindowMinutes: "30",
@@ -85,11 +79,6 @@ const AddProject = () => {
     setTimeout(() => setToast(null), 3500);
   };
 
-  // Live FX state — starts on fallback, replaced by API result
-  const [fxRates, setFxRates]   = useState(FALLBACK_FX);
-  const [fxStatus, setFxStatus] = useState("loading"); // loading | live | fallback
-  const [fxUpdated, setFxUpdated] = useState(null);
-
   const isIntl = formData.projectScope === "international";
 
   // Staff list for the "Assign Staff" picker
@@ -124,32 +113,6 @@ const AddProject = () => {
     if (errors.loginTime) setErrors((p) => ({ ...p, loginTime: undefined }));
   };
 
-  // Fetch live rates once on mount
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch(FX_API);
-        if (!res.ok) throw new Error("bad status");
-        const data = await res.json();
-        // API gives 1 INR -> X foreign. We need foreign -> INR, so invert.
-        const r = data.rates || {};
-        const toINR = { INR: 1 };
-        ["USD", "EUR", "GBP", "AED", "SGD"].forEach((c) => {
-          if (r[c]) toINR[c] = 1 / r[c];
-        });
-        if (!cancelled) {
-          setFxRates({ ...FALLBACK_FX, ...toINR });
-          setFxStatus("live");
-          setFxUpdated(data.time_last_update_utc || null);
-        }
-      } catch (err) {
-        if (!cancelled) setFxStatus("fallback");
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((p) => ({ ...p, [name]: value }));
@@ -162,7 +125,9 @@ const AddProject = () => {
       ...p,
       projectScope: scope,
       currency: scope === "international" ? "USD" : "INR",
-      includeGst: false,
+      gstApplicable: scope !== "international",
+      tdsPercent: "",
+      defaultFxRate: "",
       expectedAmount: "",
       defaultHourlyRate: "",
       defaultDailyRate: "",
@@ -177,7 +142,6 @@ const AddProject = () => {
       defaultHourlyRate: "",
       defaultDailyRate: "",
       currency: isIntl ? (p.currency || "USD") : "INR",
-      includeGst: false,
     }));
     setErrors((p) => ({ ...p, projectType: undefined }));
   };
@@ -193,6 +157,13 @@ const AddProject = () => {
     }
     if (!formData.daysCycle || Number(formData.daysCycle) <= 0) {
       e.daysCycle = "Enter a valid days cycle";
+    }
+    if (isIntl && formData.defaultFxRate !== "" && !(Number(formData.defaultFxRate) > 0)) {
+      e.defaultFxRate = "Enter a rate above 0";
+    }
+    if (formData.tdsPercent !== "" &&
+        (Number(formData.tdsPercent) < 0 || Number(formData.tdsPercent) > 100)) {
+      e.tdsPercent = "Enter 0 to 100%";
     }
     if (formData.assignedStaff.length > 0 && !formData.loginTime) {
       e.loginTime = "Set a login time for the assigned staff";
@@ -227,32 +198,31 @@ const AddProject = () => {
       return;
     }
 
-    const fx = fxRates[formData.currency] || 1;
-    // GST is already folded into the field value when the toggle is on,
-    // so we only apply the currency conversion here.
-    let finalAmountINR = 0;
-    let hourlyINR = 0;
-    let dailyINR = 0;
-
-    if (formData.projectType === "monthly") {
-      finalAmountINR = Number(formData.expectedAmount) * fx;
-    } else if (formData.projectType === "hourly") {
-      hourlyINR = Number(formData.defaultHourlyRate) * fx;
-    } else if (formData.projectType === "daily") {
-      dailyINR = Number(formData.defaultDailyRate) * fx;
-    }
+    // Amounts are saved as entered, BEFORE GST:
+    //   domestic → in ₹ · international → in the project's currency (e.g. USD).
+    // For international projects the exchange rate is set for each month in the Project Tracker.
+    const amt = (v) => Number(v) || 0;
+    const finalAmount = formData.projectType === "monthly" ? amt(formData.expectedAmount) : 0;
+    const hourlyRateVal = formData.projectType === "hourly" ? amt(formData.defaultHourlyRate) : 0;
+    const dailyRateVal = formData.projectType === "daily" ? amt(formData.defaultDailyRate) : 0;
 
     const payload = {
       projectScope:      formData.projectScope,
       projectName:       formData.projectName.trim(),
       projectType:       formData.projectType,
-      expectedAmount:    finalAmountINR,
-      defaultHourlyRate: hourlyINR,
-      defaultDailyRate:  dailyINR,
+      expectedAmount:    finalAmount,
+      defaultHourlyRate: hourlyRateVal,
+      defaultDailyRate:  dailyRateVal,
       currency:          formData.currency,
       startDate:         formData.startDate,
       endDate:           formData.endDate,
       daysCycle:         Number(formData.daysCycle),
+      // Tax (domestic and international)
+      gstApplicable:     formData.gstApplicable,
+      tdsPercent:        Number(formData.tdsPercent) || 0,
+      // International: amounts are in the project's currency; starting monthly rate
+      amountsInForeignCurrency: isIntl,
+      defaultFxRate:     isIntl && formData.defaultFxRate !== "" ? Number(formData.defaultFxRate) : null,
       // Team & project attendance
       loginTime:         formData.loginTime,
       lateWindowMinutes: formData.lateWindowMinutes === "" ? 30 : Number(formData.lateWindowMinutes),
@@ -311,61 +281,78 @@ const AddProject = () => {
   const unit = formData.projectType === "hourly" ? " / hr" : formData.projectType === "daily" ? " / day" : "";
   const gstTotal = Number(baseVal) * (1 + GST_RATE);
   const fmt = (n) => n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
-  const inrFmt = (n) => n.toLocaleString("en-IN", { maximumFractionDigits: 0 });
 
-  const curRate = fxRates[formData.currency] || 1;
+  // International preview uses the starting rate you typed (if any)
+  const startRate = isIntl ? Number(formData.defaultFxRate) || 0 : 1;
 
   const fwd = monthsForwardPreview(formData.daysCycle);
 
-  // ─── Domestic: GST toggle ───
-  // Ticking GST folds 18% INTO the visible field value; unticking removes it.
-  const handleGstToggle = (checked) => {
-    setFormData((p) => {
-      const field =
-        p.projectType === "monthly" ? "expectedAmount"
-        : p.projectType === "hourly" ? "defaultHourlyRate"
-        : "defaultDailyRate";
-      const current = Number(p[field]);
-      if (!current || current <= 0) return { ...p, includeGst: checked };
-      const next = checked ? current * (1 + GST_RATE) : current / (1 + GST_RATE);
-      // round to 2dp, trim trailing zeros
-      const rounded = Math.round(next * 100) / 100;
-      return { ...p, includeGst: checked, [field]: String(rounded) };
-    });
-  };
+  // ─── GST & TDS (domestic and international) ───
+  // The rate / amount entered is BEFORE GST. International amounts are turned into ₹ with the month's rate.
+  //   Invoice = amount + 18% GST    ·   TDS = amount × TDS%    ·   To be received = Invoice − TDS
+  const taxBase = (Number(baseVal) || 0) * (isIntl ? startRate : 1);
+  const taxGst = formData.gstApplicable ? taxBase * GST_RATE : 0;
+  const taxTds = taxBase * (Number(formData.tdsPercent) || 0) / 100;
+  const taxInvoice = taxBase + taxGst;
+  const taxReceivable = taxInvoice - taxTds;
 
-  const GstToggle = () =>
-    Number(baseVal) > 0 ? (
-      <div className="ap-gst-wrap">
-        <label className="ap-gst-row">
+  const taxBlock = (
+    <div className="ap-gst-wrap">
+      <label className="ap-gst-row">
+        <input
+          type="checkbox"
+          name="gstApplicable"
+          checked={formData.gstApplicable}
+          onChange={(e) => setFormData((p) => ({ ...p, gstApplicable: e.target.checked }))}
+          style={{ display: "none" }}
+        />
+        <span className={`ap-gst-box${formData.gstApplicable ? " checked" : ""}`}>
+          {formData.gstApplicable && "✓"}
+        </span>
+        <span className="ap-gst-label">Add GST (18%) on the invoice</span>
+      </label>
+
+      <div className="ap-field" style={{ maxWidth: 220 }}>
+        <div className="ap-label">TDS <span style={{ color: "#9ca3af", fontWeight: 400 }}>(deducted by client)</span></div>
+        <div className="ap-prefix-wrap">
           <input
-            type="checkbox"
-            name="includeGst"
-            checked={formData.includeGst}
-            onChange={(e) => handleGstToggle(e.target.checked)}
-            style={{ display: "none" }}
+            className={`ap-input${errors.tdsPercent ? " err" : ""}`}
+            name="tdsPercent"
+            type="number"
+            min="0"
+            max="100"
+            step="any"
+            value={formData.tdsPercent}
+            onChange={handleChange}
+            placeholder="e.g. 2 or 10"
+            style={{ paddingRight: 34 }}
           />
-          <span className={`ap-gst-box${formData.includeGst ? " checked" : ""}`}>
-            {formData.includeGst && "✓"}
-          </span>
-          <span className="ap-gst-label">Include GST (18%)</span>
-        </label>
-        {formData.includeGst && (
-          <div className="ap-gst-hint">
-            ✓ 18% GST included — <strong>₹{fmt(Number(baseVal))}{unit}</strong> is GST-inclusive
-          </div>
-        )}
+          <span className="ap-suffix">%</span>
+        </div>
+        {errors.tdsPercent && <div className="ap-err">⚠ {errors.tdsPercent}</div>}
       </div>
-    ) : null;
 
-  // ─── International: currency picker with live FX ───
-  const CurrencyPicker = () => (
+      {isIntl && Number(baseVal) > 0 && !(startRate > 0) && (formData.gstApplicable || Number(formData.tdsPercent) > 0) && (
+        <div className="ap-gst-hint">GST and TDS are worked out in ₹ once you set the month's exchange rate.</div>
+      )}
+      {taxBase > 0 && (formData.gstApplicable || Number(formData.tdsPercent) > 0) && (
+        <div className="ap-gst-hint">
+          For <strong>₹{fmt(taxBase)}{unit}</strong>
+          {isIntl && <> ({sym}{fmt(Number(baseVal))} × ₹{fmt(startRate)})</>}:
+          {formData.gstApplicable && <> + GST ₹{fmt(taxGst)}</>}
+          {" "}= Invoice <strong>₹{fmt(taxInvoice)}</strong>
+          {Number(formData.tdsPercent) > 0 && <> · − TDS {formData.tdsPercent}% ₹{fmt(taxTds)}</>}
+          {" "}→ To be received <strong>₹{fmt(taxReceivable)}</strong>
+        </div>
+      )}
+    </div>
+  );
+
+  // ─── International: currency + your own exchange rate ───
+  const currencyPicker = (
     <div className="ap-field">
       <div className="ap-label">
         Billing Currency <span className="ap-required">*</span>
-        <span className={`ap-fx-badge ap-fx-${fxStatus}`}>
-          {fxStatus === "live" ? "● Live rates" : fxStatus === "loading" ? "○ Loading rates…" : "○ Offline rates"}
-        </span>
       </div>
       <div className="ap-cur-group">
         {INTL_CURRENCIES.map((c) => (
@@ -379,12 +366,32 @@ const AddProject = () => {
           </button>
         ))}
       </div>
-      {Number(baseVal) > 0 && (
-        <div className="ap-usd-hint">
-          {sym}{fmt(Number(baseVal))} → ≈ ₹{inrFmt(Number(baseVal) * curRate)} will be saved{unit}
-          <span className="ap-fx-note"> (1 {formData.currency} = ₹{curRate.toFixed(2)})</span>
+
+      <div className="ap-field" style={{ maxWidth: 260, marginTop: 14 }}>
+        <div className="ap-label">
+          Exchange Rate <span style={{ color: "#9ca3af", fontWeight: 400 }}>(₹ for 1 {formData.currency})</span>
         </div>
-      )}
+        <div className="ap-prefix-wrap">
+          <span className="ap-prefix">₹</span>
+          <input
+            className={`ap-input has-prefix${errors.defaultFxRate ? " err" : ""}`}
+            name="defaultFxRate"
+            type="number"
+            min="0"
+            step="any"
+            value={formData.defaultFxRate}
+            onChange={handleChange}
+            placeholder="e.g. 83.50"
+          />
+        </div>
+        {errors.defaultFxRate && <div className="ap-err">⚠ {errors.defaultFxRate}</div>}
+      </div>
+      <div className="ap-usd-hint">
+        Starting rate for each month — you can change the rate for every month in the Project Tracker.
+        {Number(baseVal) > 0 && startRate > 0 && (
+          <> Now: {sym}{fmt(Number(baseVal))}{unit} × ₹{fmt(startRate)} = <strong>₹{fmt(Number(baseVal) * startRate)}</strong>{unit}</>
+        )}
+      </div>
     </div>
   );
 
@@ -673,16 +680,16 @@ const AddProject = () => {
             {formData.projectType === "monthly" && (
               <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
                 <div className="ap-section-label">Monthly Base Settings</div>
-                {isIntl && <CurrencyPicker />}
+                {isIntl && currencyPicker}
                 <div className="ap-field">
-                  <div className="ap-label">Expected Amount ({formData.currency}) <span className="ap-required">*</span></div>
+                  <div className="ap-label">Expected Amount ({formData.currency})<span style={{ color: "#9ca3af", fontWeight: 400 }}>before GST</span> <span className="ap-required">*</span></div>
                   <div className="ap-prefix-wrap">
                     <span className="ap-prefix">{sym}</span>
                     <input className={`ap-input has-prefix${errors.expectedAmount ? " err" : ""}`} name="expectedAmount" value={formData.expectedAmount} onChange={handleChange} placeholder="0.00" type="number" min="0" />
                   </div>
                   {errors.expectedAmount && <div className="ap-err">⚠ {errors.expectedAmount}</div>}
                 </div>
-                {!isIntl && <GstToggle />}
+                {taxBlock}
               </div>
             )}
 
@@ -691,10 +698,10 @@ const AddProject = () => {
                 <div className="ap-section-label">
                   {formData.projectType === "hourly" ? "Hourly Rate Settings" : "Daily Rate Settings"}
                 </div>
-                {isIntl && <CurrencyPicker />}
+                {isIntl && currencyPicker}
                 <div className="ap-field">
                   <div className="ap-label">
-                    {rateLabel} ({formData.currency}) <span className="ap-required">*</span>
+                    {rateLabel} ({formData.currency})<span style={{ color: "#9ca3af", fontWeight: 400 }}>before GST</span> <span className="ap-required">*</span>
                   </div>
                   <div className="ap-prefix-wrap">
                     <span className="ap-prefix">{sym}</span>
@@ -710,7 +717,7 @@ const AddProject = () => {
                   </div>
                   {errors[rateField] && <div className="ap-err">⚠ {errors[rateField]}</div>}
                 </div>
-                {!isIntl && <GstToggle />}
+                {taxBlock}
                 <div className="ap-info-box">
                   ℹ️ This is the default rate. Hours/days worked are entered per-month inside the dashboard, where you can also override the rate for any single month.
                 </div>
@@ -736,7 +743,7 @@ const AddProject = () => {
                   {errors.loginTime && <div className="ap-err">⚠ {errors.loginTime}</div>}
                 </div>
                 <div className="ap-field">
-                  <div className="ap-label">Late Window <span style={{ color: "#9ca3af", fontWeight: 400 }}>(0 = no late)</span></div>
+                  <div className="ap-label">Login Window <span style={{ color: "#9ca3af", fontWeight: 400 }}>(0 = all day)</span></div>
                   <div className="ap-prefix-wrap">
                     <input
                       className={`ap-input${errors.lateWindowMinutes ? " err" : ""}`}
@@ -757,11 +764,11 @@ const AddProject = () => {
 
               <div className="ap-cycle-hint" style={{ marginTop: 0 }}>
                 {formData.loginTime && formData.lateWindowMinutes !== "" && Number(formData.lateWindowMinutes) === 0 ? (
-                  <>Late window is <strong>0</strong> → <strong>no late marking</strong>. Staff can log in <strong>any time</strong> during the day and are marked Present.</>
+                  <>Window is <strong>0</strong> → staff can log in <strong>any time</strong> during the day and are marked Present.</>
                 ) : formData.loginTime ? (
                   <>
-                    Staff can log in from 1 hour before · up to <strong>{fmtTime12(formData.loginTime)}</strong> = Present ·
-                    after that = Late · closed after <strong>{fmtTime12(addMinutes(formData.loginTime, formData.lateWindowMinutes === "" ? 30 : (Number(formData.lateWindowMinutes) || 0)))}</strong>
+                    Staff can log in from <strong>{fmtTime12(formData.loginTime)}</strong> to <strong>{fmtTime12(addMinutes(formData.loginTime, formData.lateWindowMinutes === "" ? 30 : (Number(formData.lateWindowMinutes) || 0)))}</strong> = Present ·
+                    closed after that
                   </>
                 ) : (
                   <>Set a login time if staff on this project should log in to it each day. Leave it empty if not needed.</>
