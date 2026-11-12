@@ -64,6 +64,8 @@ const isWeekend = (year, month, day) => {
 
 const MENU_WIDTH = 168
 const MENU_HEIGHT = 262
+const BULK_MENU_WIDTH = 230
+const BULK_MENU_HEIGHT = 170
 
 const Attendance = () => {
   const navigate = useNavigate()
@@ -78,6 +80,7 @@ const Attendance = () => {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [savingKey, setSavingKey] = useState(null) // `${staffId}-${day}`
+  const [bulkSaving, setBulkSaving] = useState(null) // staffId whose whole month is being saved
   const [toast, setToast] = useState(null)
   const [menu, setMenu] = useState(null) // { staffId, projectId?, day, top, left } — the open status dropdown
   const [projects, setProjects] = useState([])         // projects running this month
@@ -136,6 +139,35 @@ const Attendance = () => {
     return s
   }, [holidays])
 
+  // Working days of the month = not a weekend and not a holiday
+  const workingDays = useMemo(
+    () => dayList.filter(d => !isWeekend(year, month, d) && !holidaySet.has(d)),
+    [dayList, year, month, holidaySet]
+  )
+
+  // True when every working day of the month is marked Present
+  const isFullMonthPresent = (staffId) => {
+    const days = attMap[staffId] || {}
+    return workingDays.length > 0 && workingDays.every(d => days[String(d)] === 'present')
+  }
+
+  // Working days for a project row = office working days that fall inside the project's dates
+  const projectWorkingDays = (p) => {
+    const start = dateOnly(p.startDate)
+    const end = dateOnly(p.endDate)
+    return workingDays.filter(d => {
+      const dstr = ymd(year, month, d)
+      return (!start || dstr >= start) && (!end || dstr <= end)
+    })
+  }
+
+  // True when every project working day is Present or Late (a late login still counts as attended)
+  const isProjectFullMonth = (staffId, p) => {
+    const days = projMap[`${staffId}_${p._id}`] || {}
+    const wd = projectWorkingDays(p)
+    return wd.length > 0 && wd.every(d => ['present', 'late'].includes(days[String(d)]?.status))
+  }
+
   const fetchStaff = useCallback(async () => {
     const token = await getToken()
     const res = await fetch(`${API_BASE}/staff/all`, {
@@ -190,6 +222,7 @@ const Attendance = () => {
   useEffect(() => {
     if (!menu) return
     const onMouseDown = (e) => {
+      if (e.target.closest?.('[data-bulk-trigger]')) return // the ⋯ button toggles itself
       if (menuRef.current && !menuRef.current.contains(e.target)) setMenu(null)
     }
     const onKey = (e) => { if (e.key === 'Escape') setMenu(null) }
@@ -210,6 +243,7 @@ const Attendance = () => {
   // Holidays can be clicked too — to mark someone who worked on the holiday
   const openMenu = (e, staffId, day, projectId = null) => {
     if (isWeekend(year, month, day)) return
+    if (bulkSaving === staffId || (projectId && bulkSaving === `${staffId}_${projectId}`)) return
     const rect = e.currentTarget.getBoundingClientRect()
     const left = Math.min(
       Math.max(8, rect.left + rect.width / 2 - MENU_WIDTH / 2),
@@ -218,6 +252,15 @@ const Attendance = () => {
     const fitsBelow = rect.bottom + 6 + MENU_HEIGHT < window.innerHeight
     const top = fitsBelow ? rect.bottom + 6 : Math.max(8, rect.top - 6 - MENU_HEIGHT)
     setMenu({ staffId, projectId, day, top, left })
+  }
+
+  // ── Open the ⋯ menu on a project row ──
+  const openBulkMenu = (e, staffId, projectId) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const left = Math.min(Math.max(8, rect.left), window.innerWidth - BULK_MENU_WIDTH - 8)
+    const fitsBelow = rect.bottom + 6 + BULK_MENU_HEIGHT < window.innerHeight
+    const top = fitsBelow ? rect.bottom + 6 : Math.max(8, rect.top - 6 - BULK_MENU_HEIGHT)
+    setMenu({ kind: 'bulk', staffId, projectId, top, left })
   }
 
   // ── Save one day's status (status = null clears the day) ──
@@ -265,6 +308,172 @@ const Attendance = () => {
       showToast('error', err.message || 'Something went wrong')
     } finally {
       setSavingKey(null)
+    }
+  }
+
+  // ── Mark (or clear) Present for every working day of the month ──
+  // checked = true  → every working day becomes Present
+  // checked = false → every Present working day is cleared
+  const markWholeMonth = async (staffId, checked) => {
+    if (bulkSaving) return
+    const days = attMap[staffId] || {}
+    const s = staff.find(x => x._id === staffId)
+    const name = s ? `${s.firstName} ${s.lastName}` : 'this staff member'
+    const monthName = `${MONTH_FULL[month]} ${year}`
+
+    let targets
+    let next
+    if (checked) {
+      next = 'present'
+      targets = workingDays.filter(d => days[String(d)] !== 'present')
+      if (!targets.length) return
+      const others = targets.filter(d => days[String(d)]).length
+      if (others > 0 && !window.confirm(
+        `${others} day(s) for ${name} already have another status (Absent, Leave, WFH or Half Day).\n\nOverwrite them with Present for all of ${monthName}?`
+      )) return
+    } else {
+      next = null
+      targets = workingDays.filter(d => days[String(d)] === 'present')
+      if (!targets.length) return
+      if (!window.confirm(`Clear Present from all ${targets.length} working days for ${name} in ${monthName}?`)) return
+    }
+
+    setMenu(null)
+    setBulkSaving(staffId)
+
+    // optimistic update
+    setAttendance(recs => {
+      const idx = recs.findIndex(r => r.staffId === staffId)
+      const base = idx > -1 ? recs[idx] : { staffId, year, month, days: {} }
+      const nextDays = { ...(base.days || {}) }
+      targets.forEach(d => {
+        if (next === null) delete nextDays[String(d)]
+        else nextDays[String(d)] = next
+      })
+      const updated = { ...base, days: nextDays }
+      if (idx > -1) { const copy = [...recs]; copy[idx] = updated; return copy }
+      return [...recs, updated]
+    })
+
+    let failed = 0
+    try {
+      const token = await getToken()
+      // One day at a time so the server never gets two writes to the same record at once
+      for (const day of targets) {
+        try {
+          const res = await fetch(`${API_BASE}/attendance/mark`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ staffId, year, month, day, status: next }),
+          })
+          if (!res.ok) failed += 1
+        } catch {
+          failed += 1
+        }
+      }
+    } catch {
+      failed = targets.length
+    }
+
+    // Reload the month so the grid shows exactly what was saved
+    try {
+      const monthData = await fetchMonth(year, month)
+      setAttendance(monthData.attendance || [])
+    } catch { /* keep the optimistic view if the reload fails */ }
+
+    setBulkSaving(null)
+    if (failed > 0) {
+      showToast('error', `${failed} of ${targets.length} days could not be saved — please try again`)
+    } else {
+      showToast('success', checked
+        ? `${name} marked Present for all of ${monthName}`
+        : `Cleared Present for ${name} in ${monthName}`)
+    }
+  }
+
+  // ── Mark (or clear) Present on a project for every working day of the month ──
+  // checked = true  → every project working day without Present/Late becomes Present
+  // checked = false → every Present day is cleared (Late logins are kept)
+  const markProjectMonth = async (staffId, project, checked) => {
+    if (bulkSaving) return
+    const projectId = project._id
+    const bulkKey = `${staffId}_${projectId}`
+    const days = projMap[bulkKey] || {}
+    const s = staff.find(x => x._id === staffId)
+    const name = s ? `${s.firstName} ${s.lastName}` : 'this staff member'
+    const monthName = `${MONTH_FULL[month]} ${year}`
+    const statusOf = (d) => days[String(d)]?.status
+    const pDays = projectWorkingDays(project)
+
+    let targets
+    let next
+    if (checked) {
+      next = 'present'
+      targets = pDays.filter(d => !['present', 'late'].includes(statusOf(d)))
+      if (!targets.length) { setMenu(null); return }
+      const others = targets.filter(d => statusOf(d)).length
+      if (others > 0 && !window.confirm(
+        `${others} day(s) for ${name} on ${project.projectName} already have another status (Absent, Leave or Half Day).\n\nOverwrite them with Present for ${monthName}?`
+      )) return
+    } else {
+      next = null
+      targets = pDays.filter(d => statusOf(d) === 'present')
+      if (!targets.length) { setMenu(null); return }
+      if (!window.confirm(
+        `Clear Present from ${targets.length} day(s) for ${name} on ${project.projectName} in ${monthName}?\n\nLate logins are kept.`
+      )) return
+    }
+
+    setMenu(null)
+    setBulkSaving(bulkKey)
+
+    // optimistic update
+    setProjectAtt(recs => {
+      const idx = recs.findIndex(r => String(r.staffId) === String(staffId) && String(r.projectId) === String(projectId))
+      const base = idx > -1 ? recs[idx] : { staffId, projectId, year, month, days: {} }
+      const nextDays = { ...(base.days || {}) }
+      targets.forEach(d => {
+        if (next === null) delete nextDays[String(d)]
+        else nextDays[String(d)] = { ...(nextDays[String(d)] || {}), status: next, by: 'admin' }
+      })
+      const updated = { ...base, days: nextDays }
+      if (idx > -1) { const copy = [...recs]; copy[idx] = updated; return copy }
+      return [...recs, updated]
+    })
+
+    let failed = 0
+    try {
+      const token = await getToken()
+      // One day at a time so the server never gets two writes to the same record at once
+      for (const day of targets) {
+        try {
+          const res = await fetch(`${API_BASE}/attendance/project-mark`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({ staffId, projectId, year, month, day, status: next }),
+          })
+          if (!res.ok) failed += 1
+        } catch {
+          failed += 1
+        }
+      }
+    } catch {
+      failed = targets.length
+    }
+
+    // Reload so the grid shows exactly what was saved
+    try {
+      const monthData = await fetchMonth(year, month)
+      setProjectAtt(monthData.projectAttendance || [])
+    } catch { /* keep the optimistic view if the reload fails */ }
+
+    setBulkSaving(null)
+    if (failed > 0) {
+      showToast('error', `${failed} of ${targets.length} days could not be saved — please try again`)
+    } else {
+      showToast('success', checked
+        ? `${name} marked Present on ${project.projectName} for ${monthName}`
+        : `Cleared Present for ${name} on ${project.projectName}`)
     }
   }
 
@@ -375,8 +584,8 @@ const Attendance = () => {
     maxWidth: TOTAL_COL_WIDTH,
   })
 
-  const goPrev = () => { if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) }
-  const goNext = () => { if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1) }
+  const goPrev = () => { if (bulkSaving) return; if (month === 0) { setMonth(11); setYear(y => y - 1) } else setMonth(m => m - 1) }
+  const goNext = () => { if (bulkSaving) return; if (month === 11) { setMonth(0); setYear(y => y + 1) } else setMonth(m => m + 1) }
 
   const menuProject = menu?.projectId ? projects.find(p => String(p._id) === String(menu.projectId)) : null
   const menuCurrent = menu
@@ -421,6 +630,7 @@ const Attendance = () => {
           display: inline-flex; align-items: center; justify-content: center; transition: all 0.15s;
         }
         .att-nav-btn:hover { background: #f4f4f5; }
+        .att-nav-btn:disabled { opacity: 0.4; cursor: not-allowed; }
         .att-month-label {
           font-size: 14px; font-weight: 600; color: #18181b; min-width: 150px; text-align: center;
         }
@@ -445,6 +655,18 @@ const Attendance = () => {
         .name-cell.head { background: #fafafa; z-index: 4; font-size: 12px; }
         .name-main { font-size: 13px; font-weight: 600; color: #18181b; overflow: hidden; text-overflow: ellipsis; }
         .name-meta { font-size: 10.5px; color: #9ca3af; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; }
+
+        /* "Full month present" checkbox under the staff name */
+        .month-toggle {
+          display: inline-flex; align-items: center; gap: 5px; margin-top: 5px;
+          font-size: 10.5px; font-weight: 600; color: #6b7280; cursor: pointer;
+          padding: 2px 6px 2px 3px; border-radius: 6px; user-select: none; transition: background 0.12s;
+        }
+        .month-toggle:hover { background: #f0fdf4; color: #16a34a; }
+        .month-toggle.on { color: #16a34a; }
+        .month-toggle.busy { color: #9ca3af; cursor: progress; }
+        .month-toggle.disabled { cursor: not-allowed; opacity: 0.5; }
+        .month-toggle input { width: 13px; height: 13px; margin: 0; accent-color: #16a34a; cursor: inherit; }
 
         /* Compact date columns so the five totals fit on screen */
         .day-head {
@@ -508,6 +730,22 @@ const Attendance = () => {
         tr.has-proj > td { border-bottom-color: transparent; }
         .att-cell.outside { background: #fafafa; color: #e4e4e7; }
         .late-note { color: #ea580c; font-weight: 600; }
+
+        /* ⋯ button on project rows */
+        tr.proj-row .name-cell { padding-right: 36px; }
+        .proj-more {
+          position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+          width: 26px; height: 26px; border-radius: 7px; border: 1px solid transparent;
+          background: transparent; color: #6b7280; font-size: 16px; line-height: 1; font-weight: 700;
+          cursor: pointer; display: inline-flex; align-items: center; justify-content: center; transition: all 0.12s;
+        }
+        .proj-more:hover, .proj-more.open { background: #eef2ff; border-color: #c7d2fe; color: #4338ca; }
+        .proj-more:disabled { opacity: 0.35; cursor: not-allowed; }
+        .proj-full { font-size: 10px; font-weight: 600; color: #16a34a; margin-top: 3px; }
+        .proj-full.busy { color: #9ca3af; }
+
+        .att-menu-item:disabled { opacity: 0.45; cursor: not-allowed; background: transparent; }
+        .att-menu-note { font-size: 10.5px; color: #9ca3af; padding: 6px 8px 2px; line-height: 1.45; white-space: normal; }
         .att-view {
           height: 34px; border-radius: 9px; border: 1px solid #ececec; background: #fff;
           font: inherit; font-size: 12.5px; color: #374151; padding: 0 10px; cursor: pointer; max-width: 220px;
@@ -554,8 +792,8 @@ const Attendance = () => {
           <div className="att-eyebrow">Attendance</div>
           <h2 className="att-title">Staff Attendance</h2>
           <p className="att-sub">
-            Click a day to choose Present, Absent, WFH, Leave or Half Day · <b>—</b> weekend · <b style={{ color: '#4338ca' }}>★</b> holiday (click "+ Hol" on a date; click a ★ cell to mark someone who worked that holiday)
-            {projects.length > 0 && <> · <b style={{ color: '#4338ca' }}>↳</b> project rows (<b style={{ color: '#ea580c' }}>LT</b> = late)</>}
+            Click a day to choose Present, Absent, WFH, Leave or Half Day · tick <b style={{ color: '#16a34a' }}>Full month present</b> to mark every working day at once · <b>—</b> weekend · <b style={{ color: '#4338ca' }}>★</b> holiday (click "+ Hol" on a date; click a ★ cell to mark someone who worked that holiday)
+            {projects.length > 0 && <> · <b style={{ color: '#4338ca' }}>↳</b> project rows (<b style={{ color: '#ea580c' }}>LT</b> = late · <b>⋯</b> for full-month options)</>}
           </p>
         </div>
 
@@ -569,9 +807,9 @@ const Attendance = () => {
               ))}
             </select>
           )}
-          <button className="att-nav-btn" onClick={goPrev} aria-label="Previous month">‹</button>
+          <button className="att-nav-btn" onClick={goPrev} disabled={Boolean(bulkSaving)} aria-label="Previous month">‹</button>
           <div className="att-month-label">{MONTH_FULL[month]} {year}</div>
-          <button className="att-nav-btn" onClick={goNext} aria-label="Next month">›</button>
+          <button className="att-nav-btn" onClick={goNext} disabled={Boolean(bulkSaving)} aria-label="Next month">›</button>
         </div>
       </div>
 
@@ -640,6 +878,9 @@ const Attendance = () => {
                     ? []
                     : (projectsByStaff[s._id] || []).filter(p => !viewProject || String(p._id) === view)
                   const showOffice = !viewProject
+                  const fullMonth = isFullMonthPresent(s._id)
+                  const isBulk = bulkSaving === s._id
+                  const toggleDisabled = Boolean(bulkSaving) || workingDays.length === 0
                   return (
                     <React.Fragment key={s._id}>
                       {showOffice && (
@@ -650,6 +891,20 @@ const Attendance = () => {
                               {s.employeeId}{s.designation ? ` · ${s.designation}` : ''}
                               {staffProjects.length > 0 ? ' · Office' : ''}
                             </div>
+                            <label
+                              className={`month-toggle${fullMonth ? ' on' : ''}${isBulk ? ' busy' : ''}${toggleDisabled && !isBulk ? ' disabled' : ''}`}
+                              title={fullMonth
+                                ? `Untick to clear Present from every working day in ${MONTH_FULL[month]}`
+                                : `Mark Present on every working day in ${MONTH_FULL[month]} (weekends and holidays skipped)`}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={fullMonth}
+                                disabled={toggleDisabled}
+                                onChange={(e) => markWholeMonth(s._id, e.target.checked)}
+                              />
+                              {isBulk ? 'Saving…' : 'Full month present'}
+                            </label>
                           </td>
                           {dayList.map(day => {
                             const wknd = isWeekend(year, month, day)
@@ -660,11 +915,12 @@ const Attendance = () => {
                             const meta = status ? STATUS_META[status] : null
                             const isOpen = menu && !menu.projectId && menu.staffId === s._id && menu.day === day
                             return (
-                              <td key={day} className={`att-cell${hol ? ' holiday' : ''}${savingKey === key ? ' saving' : ''}`}>
+                              <td key={day} className={`att-cell${hol ? ' holiday' : ''}${savingKey === key || isBulk ? ' saving' : ''}`}>
                                 <button
                                   type="button"
                                   className={`box${isOpen ? ' open' : ''}${hol ? ' hol-box' : ''}${hol && meta ? ' worked' : ''}`}
                                   onClick={(e) => (isOpen ? setMenu(null) : openMenu(e, s._id, day))}
+                                  disabled={isBulk}
                                   title={hol
                                     ? (meta ? `Holiday — worked: ${meta.name} — click to change` : 'Holiday — click to mark if they worked')
                                     : (meta ? `${meta.name} — click to change` : 'Not marked — click to choose')}
@@ -696,6 +952,9 @@ const Attendance = () => {
                         const end = dateOnly(p.endDate)
                         const presentTotal = pc.present + pc.late
                         const totals = { present: presentTotal, absent: pc.absent, wfh: null, leave: pc.leave, halfday: pc.halfday }
+                        const isPBulk = bulkSaving === `${s._id}_${p._id}`
+                        const pFull = isProjectFullMonth(s._id, p)
+                        const bulkOpen = menu?.kind === 'bulk' && menu.staffId === s._id && String(menu.projectId) === String(p._id)
                         return (
                           <tr key={`${s._id}-${p._id}`} className="proj-row">
                             <td className="name-cell">
@@ -707,6 +966,23 @@ const Attendance = () => {
                                 {!p.loginTime ? 'No login time' : Number(p.lateWindowMinutes) === 0 ? 'Login any time' : `Login ${fmtTime12(p.loginTime)}`}
                                 {pc.late > 0 && <span className="late-note"> · {pc.late} late</span>}
                               </div>
+                              {(pFull || isPBulk) && (
+                                <div className={`proj-full${isPBulk ? ' busy' : ''}`}>
+                                  {isPBulk ? 'Saving…' : '✓ Full month present'}
+                                </div>
+                              )}
+                              <button
+                                type="button"
+                                data-bulk-trigger
+                                className={`proj-more${bulkOpen ? ' open' : ''}`}
+                                onClick={(e) => (bulkOpen ? setMenu(null) : openBulkMenu(e, s._id, p._id))}
+                                disabled={Boolean(bulkSaving)}
+                                title="More options"
+                                aria-haspopup="menu"
+                                aria-expanded={bulkOpen}
+                              >
+                                ⋯
+                              </button>
                             </td>
                             {dayList.map(day => {
                               const wknd = isWeekend(year, month, day)
@@ -723,11 +999,12 @@ const Attendance = () => {
                               const loggedAt = entry?.at ? ` · logged in ${fmtClock(entry.at)}` : ''
                               const byWho = entry ? (entry.by === 'employee' ? ' (self)' : ' (admin)') : ''
                               return (
-                                <td key={day} className={`att-cell${hol ? ' holiday' : ''}${savingKey === key ? ' saving' : ''}`}>
+                                <td key={day} className={`att-cell${hol ? ' holiday' : ''}${savingKey === key || isPBulk ? ' saving' : ''}`}>
                                   <button
                                     type="button"
                                     className={`box${isOpen ? ' open' : ''}${hol ? ' hol-box' : ''}${hol && meta ? ' worked' : ''}`}
                                     onClick={(e) => (isOpen ? setMenu(null) : openMenu(e, s._id, day, p._id))}
+                                    disabled={isPBulk}
                                     title={hol
                                       ? (meta ? `Holiday — ${p.projectName}: worked (${meta.name})${loggedAt} — click to change` : `Holiday — ${p.projectName}: click to mark if they worked`)
                                       : (meta ? `${p.projectName}: ${meta.name}${loggedAt}${byWho} — click to change` : `${p.projectName}: not marked — click to choose`)}
@@ -765,7 +1042,7 @@ const Attendance = () => {
       )}
 
       {/* Status dropdown for the clicked day */}
-      {menu && (
+      {menu && menu.kind !== 'bulk' && (
         <div
           ref={menuRef}
           className="att-menu"
@@ -809,6 +1086,55 @@ const Attendance = () => {
           )}
         </div>
       )}
+
+      {/* ⋯ menu for a project row */}
+      {menu?.kind === 'bulk' && (() => {
+        const bp = projects.find(p => String(p._id) === String(menu.projectId))
+        if (!bp) return null
+        const bs = staff.find(x => x._id === menu.staffId)
+        const pDays = projectWorkingDays(bp)
+        const bdays = projMap[`${menu.staffId}_${bp._id}`] || {}
+        const full = isProjectFullMonth(menu.staffId, bp)
+        const presentCount = pDays.filter(d => bdays[String(d)]?.status === 'present').length
+        const pm = PROJECT_META.present
+        return (
+          <div
+            ref={menuRef}
+            className="att-menu"
+            role="menu"
+            style={{ top: menu.top, left: menu.left, width: BULK_MENU_WIDTH }}
+          >
+            <div className="att-menu-title">
+              {bs ? `${bs.firstName} ${bs.lastName}` : 'Staff'} · {bp.projectName} · {MONTH_FULL[month].slice(0, 3)}
+            </div>
+            <button
+              type="button"
+              role="menuitem"
+              className="att-menu-item"
+              disabled={full || pDays.length === 0}
+              onClick={() => markProjectMonth(menu.staffId, bp, true)}
+            >
+              <span className="att-chip" style={{ background: pm.bg, color: pm.color, borderColor: pm.border }}>{pm.label}</span>
+              Mark present for full month
+              {full && <span className="att-menu-check">✓</span>}
+            </button>
+            {presentCount > 0 && (
+              <button
+                type="button"
+                role="menuitem"
+                className="att-menu-item att-menu-clear"
+                onClick={() => markProjectMonth(menu.staffId, bp, false)}
+              >
+                <span className="att-chip" style={{ background: '#fff', color: '#9ca3af', borderColor: '#e4e4e7' }}>✕</span>
+                Clear full month
+              </button>
+            )}
+            <div className="att-menu-note">
+              {pDays.length} working day{pDays.length === 1 ? '' : 's'} · weekends, holidays and days outside the project are skipped. Late logins are kept.
+            </div>
+          </div>
+        )
+      })()}
 
       {toast && (
         <div className={`att-toast ${toast.type}`}>

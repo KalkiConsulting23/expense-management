@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
 const MONTH_FULL = ['January','February','March','April','May','June','July','August','September','October','November','December']
@@ -517,6 +518,7 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
 }
 
 const Projectmaster = () => {
+  const navigate = useNavigate()
   const [projects, setProjects]   = useState([])
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState(null)
@@ -700,6 +702,15 @@ const Projectmaster = () => {
           cursor: pointer; font-family: inherit; transition: all 0.13s; white-space: nowrap;
         }
         .pj-edit-btn:hover { background: #f4f4f5; border-color: #d4d4d8; color: #18181b; }
+        .pm-add-btn {
+          display: inline-flex; align-items: center; gap: 7px;
+          font-family: inherit; font-size: 13px; font-weight: 600;
+          padding: 8px 14px; border-radius: 9px; border: 1px solid #18181b;
+          background: #18181b; color: #fff; cursor: pointer; white-space: nowrap;
+          transition: background 0.15s, box-shadow 0.15s;
+        }
+        .pm-add-btn:hover { background: #000; box-shadow: 0 4px 12px rgba(16,24,40,0.15); }
+        .pm-add-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(24,24,27,0.2); }
         .pm-toast {
           position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
           background: #18181b; color: #fff; font-size: 13px; font-weight: 500;
@@ -766,6 +777,13 @@ const Projectmaster = () => {
                 </button>
               ))}
             </div>
+
+            <button type="button" className="pm-add-btn" onClick={() => navigate('/project')}>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 5v14"/><path d="M5 12h14"/>
+              </svg>
+              Add Project
+            </button>
           </div>
         </div>
 
