@@ -41,6 +41,8 @@ const BLANK_FORM = {
   loginTime: "",
   lateWindowMinutes: "30",
   assignedStaff: [],
+  // Each assigned person's rate (per month / day / hour) → { staffId: "100" }
+  staffRates: {},
 };
 
 // "09:00" → "9:00 AM"
@@ -81,6 +83,11 @@ const AddProject = () => {
 
   const isIntl = formData.projectScope === "international";
 
+  // Project amount = total of the assigned staff's rates
+  const teamTotal = Math.round(
+    formData.assignedStaff.reduce((s, id) => s + (Number(formData.staffRates[id]) || 0), 0) * 100
+  ) / 100;
+
   // Staff list for the "Assign Staff" picker
   const [staffList, setStaffList] = useState([]);
   const [staffLoading, setStaffLoading] = useState(true);
@@ -110,7 +117,12 @@ const AddProject = () => {
         ? p.assignedStaff.filter((x) => x !== id)
         : [...p.assignedStaff, id],
     }));
-    if (errors.loginTime) setErrors((p) => ({ ...p, loginTime: undefined }));
+    setErrors((p) => ({ ...p, loginTime: undefined, assignedStaff: undefined, staffRates: undefined }));
+  };
+
+  const setStaffRate = (id, value) => {
+    setFormData((p) => ({ ...p, staffRates: { ...p.staffRates, [id]: value } }));
+    if (errors.staffRates) setErrors((p) => ({ ...p, staffRates: undefined }));
   };
 
   const handleChange = (e) => {
@@ -172,19 +184,12 @@ const AddProject = () => {
         (Number(formData.lateWindowMinutes) < 0 || Number(formData.lateWindowMinutes) > 240)) {
       e.lateWindowMinutes = "Enter 0 to 240 minutes";
     }
-    if (formData.projectType === "monthly") {
-      if (!formData.expectedAmount || Number(formData.expectedAmount) <= 0) {
-        e.expectedAmount = "Expected amount is required";
-      }
-    }
-    if (formData.projectType === "hourly") {
-      if (!formData.defaultHourlyRate || Number(formData.defaultHourlyRate) <= 0) {
-        e.defaultHourlyRate = "Hourly rate is required";
-      }
-    }
-    if (formData.projectType === "daily") {
-      if (!formData.defaultDailyRate || Number(formData.defaultDailyRate) <= 0) {
-        e.defaultDailyRate = "Daily rate is required";
+    // The project amount comes from the staff rates
+    if (formData.projectType) {
+      if (formData.assignedStaff.length === 0) {
+        e.assignedStaff = "Add at least one staff member — the project amount comes from their rates";
+      } else if (formData.assignedStaff.some((id) => !(Number(formData.staffRates[id]) > 0))) {
+        e.staffRates = "Enter a rate above 0 for every staff member";
       }
     }
     return e;
@@ -201,10 +206,14 @@ const AddProject = () => {
     // Amounts are saved as entered, BEFORE GST:
     //   domestic → in ₹ · international → in the project's currency (e.g. USD).
     // For international projects the exchange rate is set for each month in the Project Tracker.
-    const amt = (v) => Number(v) || 0;
-    const finalAmount = formData.projectType === "monthly" ? amt(formData.expectedAmount) : 0;
-    const hourlyRateVal = formData.projectType === "hourly" ? amt(formData.defaultHourlyRate) : 0;
-    const dailyRateVal = formData.projectType === "daily" ? amt(formData.defaultDailyRate) : 0;
+    // The project amount is the total of the team's rates (the server works it out the same way)
+    const staffRatesList = formData.assignedStaff.map((id) => ({
+      staffId: id,
+      rate: Number(formData.staffRates[id]) || 0,
+    }));
+    const finalAmount = formData.projectType === "monthly" ? teamTotal : 0;
+    const hourlyRateVal = formData.projectType === "hourly" ? teamTotal : 0;
+    const dailyRateVal = formData.projectType === "daily" ? teamTotal : 0;
 
     const payload = {
       projectScope:      formData.projectScope,
@@ -227,6 +236,7 @@ const AddProject = () => {
       loginTime:         formData.loginTime,
       lateWindowMinutes: formData.lateWindowMinutes === "" ? 30 : Number(formData.lateWindowMinutes),
       assignedStaff:     formData.assignedStaff,
+      staffRates:        staffRatesList,
     };
 
     setLoading(true);
@@ -270,15 +280,10 @@ const AddProject = () => {
 
   const sym = CURRENCY_SYMBOLS[formData.currency] || "₹";
 
-  // Active rate field key/value for hourly & daily
-  const rateField = formData.projectType === "hourly" ? "defaultHourlyRate" : "defaultDailyRate";
-  const rateValue = formData.projectType === "hourly" ? formData.defaultHourlyRate : formData.defaultDailyRate;
-  const rateLabel = formData.projectType === "hourly" ? "Default Hourly Rate" : "Default Daily Rate";
-
-  // Base value for the currently active money field
-  const baseVal =
-    formData.projectType === "monthly" ? formData.expectedAmount : rateValue;
-  const unit = formData.projectType === "hourly" ? " / hr" : formData.projectType === "daily" ? " / day" : "";
+  // Base value for the previews = the team total
+  const baseVal = teamTotal;
+  const unit = formData.projectType === "hourly" ? " / hr" : formData.projectType === "daily" ? " / day" : " / month";
+  const rateWord = formData.projectType === "hourly" ? "Hourly" : formData.projectType === "daily" ? "Daily" : "Monthly";
   const gstTotal = Number(baseVal) * (1 + GST_RATE);
   const fmt = (n) => n.toLocaleString("en-IN", { maximumFractionDigits: 2 });
 
@@ -345,6 +350,101 @@ const AddProject = () => {
           {" "}→ To be received <strong>₹{fmt(taxReceivable)}</strong>
         </div>
       )}
+    </div>
+  );
+
+  // ─── Team & rates: pick staff and give each person a rate ───
+  const staffQuery = staffSearch.trim().toLowerCase();
+  const shownStaff = staffList.filter((s) =>
+    !staffQuery || `${staffName(s)} ${s.employeeId || ""} ${s.designation || ""}`.toLowerCase().includes(staffQuery));
+
+  const teamBlock = (
+    <div className="ap-field">
+      <div className="ap-label">
+        Team &amp; {rateWord} Rates ({formData.currency}, before GST) <span className="ap-required">*</span>
+      </div>
+
+      {formData.assignedStaff.length > 0 && (
+        <div className="ap-rate-list">
+          {formData.assignedStaff.map((id) => {
+            const s = staffList.find((x) => String(x._id) === id) || { firstName: "Staff" };
+            const missing = errors.staffRates && !(Number(formData.staffRates[id]) > 0);
+            return (
+              <div key={id} className="ap-rate-row">
+                <div className="ap-rate-name">
+                  <div>{staffName(s)}</div>
+                  {(s.employeeId || s.designation) && (
+                    <div className="ap-staff-meta">{[s.employeeId, s.designation].filter(Boolean).join(" · ")}</div>
+                  )}
+                </div>
+                <div className="ap-prefix-wrap ap-rate-input">
+                  <span className="ap-prefix">{sym}</span>
+                  <input
+                    className={`ap-input has-prefix${missing ? " err" : ""}`}
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={formData.staffRates[id] ?? ""}
+                    onChange={(e) => setStaffRate(id, e.target.value)}
+                    placeholder="0"
+                    aria-label={`${rateWord} rate for ${staffName(s)}`}
+                    style={{ paddingRight: 54 }}
+                  />
+                  <span className="ap-suffix">{unit.replace(" / ", "/")}</span>
+                </div>
+                <button type="button" className="ap-rate-remove" aria-label={`Remove ${staffName(s)}`} onClick={() => toggleStaff(id)}>×</button>
+              </div>
+            );
+          })}
+          <div className="ap-rate-total">
+            <span>
+              {formData.projectType === "monthly" ? "Expected amount" : `Team ${rateWord.toLowerCase()} rate`}
+              {" "}({formData.assignedStaff.length} staff)
+            </span>
+            <strong>{sym}{fmt(teamTotal)}{unit}</strong>
+          </div>
+        </div>
+      )}
+      {errors.staffRates && <div className="ap-err">⚠ {errors.staffRates}</div>}
+      {errors.assignedStaff && <div className="ap-err">⚠ {errors.assignedStaff}</div>}
+
+      <div className="ap-label" style={{ marginTop: 12 }}>Add staff</div>
+      {staffList.length > 5 && (
+        <input
+          className="ap-input"
+          placeholder="Search staff…"
+          value={staffSearch}
+          onChange={(e) => setStaffSearch(e.target.value)}
+          style={{ marginBottom: 8, padding: "9px 13px", fontSize: 13 }}
+        />
+      )}
+      <div className="ap-staff-list">
+        {staffLoading ? (
+          <div className="ap-staff-empty">Loading staff…</div>
+        ) : staffList.length === 0 ? (
+          <div className="ap-staff-empty">No staff added yet. Add staff first — the project amount comes from their rates.</div>
+        ) : shownStaff.length === 0 ? (
+          <div className="ap-staff-empty">No match.</div>
+        ) : shownStaff.map((s) => {
+          const id = String(s._id);
+          return (
+            <label key={id} className="ap-staff-item">
+              <input type="checkbox" checked={formData.assignedStaff.includes(id)} onChange={() => toggleStaff(id)} />
+              <div style={{ minWidth: 0 }}>
+                <div>{staffName(s)}</div>
+                <div className="ap-staff-meta">{[s.employeeId, s.designation].filter(Boolean).join(" · ")}</div>
+              </div>
+            </label>
+          );
+        })}
+      </div>
+
+      <div className="ap-cycle-hint">
+        {formData.projectType === "monthly" && <>Each month: every person's rate × the days they worked ÷ working days, added up. Full attendance = the expected amount.</>}
+        {formData.projectType === "daily" && <>Each month: every person's daily rate × the days they worked, added up.</>}
+        {formData.projectType === "hourly" && <>Each month: every person's hourly rate × 8 hours × the days they worked, added up.</>}
+        {" "}Days worked come from the Attendance Tracker.
+      </div>
     </div>
   );
 
@@ -464,6 +564,15 @@ const AddProject = () => {
         .ap-staff-item input { width: 15px; height: 15px; accent-color: #18181b; cursor: pointer; flex-shrink: 0; }
         .ap-staff-meta { font-size: 11px; color: #9ca3af; margin-top: 1px; }
         .ap-staff-empty { padding: 14px; font-size: 12.5px; color: #9ca3af; text-align: center; }
+        .ap-rate-list { border: 1px solid #ececec; border-radius: 12px; overflow: hidden; margin-bottom: 4px; background: #fff; }
+        .ap-rate-row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-bottom: 1px solid #f4f4f5; }
+        .ap-rate-name { flex: 1; min-width: 0; font-size: 13px; color: #18181b; font-weight: 500; overflow: hidden; text-overflow: ellipsis; }
+        .ap-rate-input { width: 168px; flex-shrink: 0; }
+        .ap-rate-input .ap-input { padding-top: 8px; padding-bottom: 8px; font-size: 13.5px; }
+        .ap-rate-remove { border: none; background: transparent; color: #9ca3af; font-size: 18px; line-height: 1; cursor: pointer; padding: 2px 4px; border-radius: 6px; }
+        .ap-rate-remove:hover { color: #dc2626; background: #fef2f2; }
+        .ap-rate-total { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; background: #fafafa; font-size: 12.5px; color: #6b7280; }
+        .ap-rate-total strong { font-size: 14px; color: #18181b; font-variant-numeric: tabular-nums; }
         .ap-optional { font-size: 10.5px; font-weight: 500; color: #9ca3af; background: #f3f4f6; padding: 2px 7px; border-radius: 20px; }
         @keyframes slideDown { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
         .ap-usd-hint { font-size: 11.5px; color: #6b7280; font-weight: 500; margin-top: 7px; line-height: 1.5; }
@@ -586,7 +695,7 @@ const AddProject = () => {
         .ap-ov-dot { width: 5px; height: 5px; border-radius: 50%; background: #22c55e; animation: pulse 1s ease-in-out infinite; }
         @keyframes pulse { 0%,100% { opacity: 0.3; } 50% { opacity: 1; } }
 
-        @media (max-width: 520px) { .ap-card { padding: 24px 18px; } .ap-date-row, .ap-time-row { grid-template-columns: 1fr; } .ap-type-group { flex-direction: column; } .ap-toast { left: 16px; right: 16px; bottom: 16px; max-width: none; } }
+        @media (max-width: 520px) { .ap-card { padding: 24px 18px; } .ap-date-row, .ap-time-row { grid-template-columns: 1fr; } .ap-rate-input { width: 132px; } .ap-type-group { flex-direction: column; } .ap-toast { left: 16px; right: 16px; bottom: 16px; max-width: none; } }
       `}</style>
 
       <div className="ap-page">
@@ -681,14 +790,7 @@ const AddProject = () => {
               <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
                 <div className="ap-section-label">Monthly Base Settings</div>
                 {isIntl && currencyPicker}
-                <div className="ap-field">
-                  <div className="ap-label">Expected Amount ({formData.currency})<span style={{ color: "#9ca3af", fontWeight: 400 }}>before GST</span> <span className="ap-required">*</span></div>
-                  <div className="ap-prefix-wrap">
-                    <span className="ap-prefix">{sym}</span>
-                    <input className={`ap-input has-prefix${errors.expectedAmount ? " err" : ""}`} name="expectedAmount" value={formData.expectedAmount} onChange={handleChange} placeholder="0.00" type="number" min="0" />
-                  </div>
-                  {errors.expectedAmount && <div className="ap-err">⚠ {errors.expectedAmount}</div>}
-                </div>
+                {teamBlock}
                 {taxBlock}
               </div>
             )}
@@ -699,34 +801,14 @@ const AddProject = () => {
                   {formData.projectType === "hourly" ? "Hourly Rate Settings" : "Daily Rate Settings"}
                 </div>
                 {isIntl && currencyPicker}
-                <div className="ap-field">
-                  <div className="ap-label">
-                    {rateLabel} ({formData.currency})<span style={{ color: "#9ca3af", fontWeight: 400 }}>before GST</span> <span className="ap-required">*</span>
-                  </div>
-                  <div className="ap-prefix-wrap">
-                    <span className="ap-prefix">{sym}</span>
-                    <input
-                      className={`ap-input has-prefix${errors[rateField] ? " err" : ""}`}
-                      name={rateField}
-                      value={rateValue}
-                      onChange={handleChange}
-                      placeholder="0.00"
-                      type="number"
-                      min="0"
-                    />
-                  </div>
-                  {errors[rateField] && <div className="ap-err">⚠ {errors[rateField]}</div>}
-                </div>
+                {teamBlock}
                 {taxBlock}
-                <div className="ap-info-box">
-                  ℹ️ This is the default rate. Hours/days worked are entered per-month inside the dashboard, where you can also override the rate for any single month.
-                </div>
               </div>
             )}
 
-            {/* ─── Team & Attendance (optional) ─── */}
+            {/* ─── Attendance login for the assigned staff ─── */}
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <div className="ap-section-label">Team &amp; Attendance <span className="ap-optional">Optional</span></div>
+              <div className="ap-section-label">Attendance Login</div>
 
               <div className="ap-time-row">
                 <div className="ap-field">
@@ -771,58 +853,8 @@ const AddProject = () => {
                     closed after that
                   </>
                 ) : (
-                  <>Set a login time if staff on this project should log in to it each day. Leave it empty if not needed.</>
+                  <>Set the time the assigned staff log in to this project each day.</>
                 )}
-              </div>
-
-              <div className="ap-field">
-                <div className="ap-label">Assign Staff ({formData.assignedStaff.length})</div>
-                {formData.assignedStaff.length > 0 && (
-                  <div className="ap-chips" style={{ marginBottom: 10 }}>
-                    {formData.assignedStaff.map((id) => {
-                      const s = staffList.find((x) => String(x._id) === id) || { firstName: "Staff" };
-                      return (
-                        <span key={id} className="ap-chip">
-                          {staffName(s)}
-                          <button type="button" aria-label={`Remove ${staffName(s)}`} onClick={() => toggleStaff(id)}>×</button>
-                        </span>
-                      );
-                    })}
-                  </div>
-                )}
-                {staffList.length > 5 && (
-                  <input
-                    className="ap-input"
-                    placeholder="Search staff…"
-                    value={staffSearch}
-                    onChange={(e) => setStaffSearch(e.target.value)}
-                    style={{ marginBottom: 8, padding: "9px 13px", fontSize: 13 }}
-                  />
-                )}
-                <div className="ap-staff-list">
-                  {staffLoading ? (
-                    <div className="ap-staff-empty">Loading staff…</div>
-                  ) : staffList.length === 0 ? (
-                    <div className="ap-staff-empty">No staff added yet. You can assign staff later from the ⋯ button in the Project Tracker.</div>
-                  ) : (() => {
-                    const q = staffSearch.trim().toLowerCase();
-                    const shown = staffList.filter((s) =>
-                      !q || `${staffName(s)} ${s.employeeId || ""} ${s.designation || ""}`.toLowerCase().includes(q));
-                    if (shown.length === 0) return <div className="ap-staff-empty">No match.</div>;
-                    return shown.map((s) => {
-                      const id = String(s._id);
-                      return (
-                        <label key={id} className="ap-staff-item">
-                          <input type="checkbox" checked={formData.assignedStaff.includes(id)} onChange={() => toggleStaff(id)} />
-                          <div style={{ minWidth: 0 }}>
-                            <div>{staffName(s)}</div>
-                            <div className="ap-staff-meta">{[s.employeeId, s.designation].filter(Boolean).join(" · ")}</div>
-                          </div>
-                        </label>
-                      );
-                    });
-                  })()}
-                </div>
               </div>
             </div>
           </div>

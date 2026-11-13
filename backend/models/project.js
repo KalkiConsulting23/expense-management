@@ -50,8 +50,26 @@ const projectSchema = new mongoose.Schema({
   },
   lateWindowMinutes: { type: Number, default: 30, min: 0, max: 240 },
 
-  // Staff members working on this project
+  // Staff members working on this project (kept in step with the active staffRates below)
   assignedStaff: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Staff' }],
+
+  // ─── Each person's rate on this project ───
+  // In the project's currency, before GST:
+  //   monthly → per month · daily → per day · hourly → per hour (× 8 hours a day)
+  // The project's expectedAmount / defaultDailyRate / defaultHourlyRate is the total
+  // of the active team's rates. Each month is billed person by person from attendance:
+  //   monthly → rate × days worked ÷ working days
+  //   daily   → rate × days worked
+  //   hourly  → rate × 8 × days worked
+  // active = false keeps the rate of someone taken off the project, so months they
+  // already worked are still billed correctly.
+  // Older projects have no staffRates and keep using the single amount above.
+  staffRates: [{
+    _id: false,
+    staffId: { type: mongoose.Schema.Types.ObjectId, ref: 'Staff', required: true },
+    rate:    { type: Number, default: 0, min: 0 },
+    active:  { type: Boolean, default: true },
+  }],
 
   monthlyBreakdowns: [{
     month: { type: String, required: true },

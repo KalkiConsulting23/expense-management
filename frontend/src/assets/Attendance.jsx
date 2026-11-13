@@ -65,7 +65,7 @@ const isWeekend = (year, month, day) => {
 const MENU_WIDTH = 168
 const MENU_HEIGHT = 262
 const BULK_MENU_WIDTH = 230
-const BULK_MENU_HEIGHT = 170
+const BULK_MENU_HEIGHT = 230
 
 const Attendance = () => {
   const navigate = useNavigate()
@@ -145,10 +145,13 @@ const Attendance = () => {
     [dayList, year, month, holidaySet]
   )
 
-  // True when every working day of the month is marked Present
+  // True when every working day is Present on the office row AND on every project the person is on
   const isFullMonthPresent = (staffId) => {
     const days = attMap[staffId] || {}
-    return workingDays.length > 0 && workingDays.every(d => days[String(d)] === 'present')
+    const officeFull = workingDays.length > 0 && workingDays.every(d => days[String(d)] === 'present')
+    if (!officeFull) return false
+    return (projectsByStaff[String(staffId)] || []).every(p =>
+      projectWorkingDays(p).length === 0 || isProjectFullMonth(staffId, p))
   }
 
   // Working days for a project row = office working days that fall inside the project's dates
@@ -311,83 +314,162 @@ const Attendance = () => {
     }
   }
 
-  // ── Mark (or clear) Present for every working day of the month ──
-  // checked = true  → every working day becomes Present
-  // checked = false → every Present working day is cleared
+  // ── Mark (or clear) Present for the whole month: office row + every project the person is on ──
+  // checked = true  → every working day becomes Present (office and all assigned projects)
+  // checked = false → every Present day is cleared (office and all assigned projects; Late logins are kept)
   const markWholeMonth = async (staffId, checked) => {
     if (bulkSaving) return
     const days = attMap[staffId] || {}
     const s = staff.find(x => x._id === staffId)
     const name = s ? `${s.firstName} ${s.lastName}` : 'this staff member'
     const monthName = `${MONTH_FULL[month]} ${year}`
+    const next = checked ? 'present' : null
+    const staffProjects = projectsByStaff[String(staffId)] || []
 
-    let targets
-    let next
+    // What changes on the office row
+    const officeTargets = checked
+      ? workingDays.filter(d => days[String(d)] !== 'present')
+      : workingDays.filter(d => days[String(d)] === 'present')
+    const officeOthers = checked ? officeTargets.filter(d => days[String(d)]).length : 0
+
+    // What changes on each project row (only days the project is running)
+    let projectOthers = 0
+    const projectJobs = staffProjects.map(p => {
+      const pdays = projMap[`${staffId}_${p._id}`] || {}
+      const statusOf = (d) => pdays[String(d)]?.status
+      const pDays = projectWorkingDays(p)
+      const targets = checked
+        ? pDays.filter(d => !['present', 'late'].includes(statusOf(d)))
+        : pDays.filter(d => statusOf(d) === 'present')
+      if (checked) projectOthers += targets.filter(d => statusOf(d)).length
+      return { project: p, targets }
+    }).filter(j => j.targets.length > 0)
+
+    if (!officeTargets.length && !projectJobs.length) return
+
+    const projectNote = staffProjects.length
+      ? ` and ${staffProjects.length === 1 ? `the project ${staffProjects[0].projectName}` : `all ${staffProjects.length} assigned projects`}`
+      : ''
     if (checked) {
-      next = 'present'
-      targets = workingDays.filter(d => days[String(d)] !== 'present')
-      if (!targets.length) return
-      const others = targets.filter(d => days[String(d)]).length
+      const others = officeOthers + projectOthers
       if (others > 0 && !window.confirm(
-        `${others} day(s) for ${name} already have another status (Absent, Leave, WFH or Half Day).\n\nOverwrite them with Present for all of ${monthName}?`
+        `${others} day(s) for ${name} already have another status (Absent, Leave, WFH or Half Day).\n\nOverwrite them with Present for all of ${monthName} (office${projectNote})?`
       )) return
     } else {
-      next = null
-      targets = workingDays.filter(d => days[String(d)] === 'present')
-      if (!targets.length) return
-      if (!window.confirm(`Clear Present from all ${targets.length} working days for ${name} in ${monthName}?`)) return
+      if (!window.confirm(`Clear Present for ${name} in ${monthName} (office${projectNote})?\n\nLate logins on projects are kept.`)) return
     }
 
     setMenu(null)
     setBulkSaving(staffId)
 
-    // optimistic update
-    setAttendance(recs => {
-      const idx = recs.findIndex(r => r.staffId === staffId)
-      const base = idx > -1 ? recs[idx] : { staffId, year, month, days: {} }
-      const nextDays = { ...(base.days || {}) }
-      targets.forEach(d => {
-        if (next === null) delete nextDays[String(d)]
-        else nextDays[String(d)] = next
+    // optimistic update — office
+    if (officeTargets.length) {
+      setAttendance(recs => {
+        const idx = recs.findIndex(r => String(r.staffId) === String(staffId))
+        const base = idx > -1 ? recs[idx] : { staffId, year, month, days: {} }
+        const nextDays = { ...(base.days || {}) }
+        officeTargets.forEach(d => {
+          if (next === null) delete nextDays[String(d)]
+          else nextDays[String(d)] = next
+        })
+        const updated = { ...base, days: nextDays }
+        if (idx > -1) { const copy = [...recs]; copy[idx] = updated; return copy }
+        return [...recs, updated]
       })
-      const updated = { ...base, days: nextDays }
-      if (idx > -1) { const copy = [...recs]; copy[idx] = updated; return copy }
-      return [...recs, updated]
-    })
-
-    let failed = 0
-    try {
-      const token = await getToken()
-      // One day at a time so the server never gets two writes to the same record at once
-      for (const day of targets) {
-        try {
-          const res = await fetch(`${API_BASE}/attendance/mark`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ staffId, year, month, day, status: next }),
+    }
+    // optimistic update — projects
+    if (projectJobs.length) {
+      setProjectAtt(recs => {
+        let copy = [...recs]
+        projectJobs.forEach(({ project, targets }) => {
+          const idx = copy.findIndex(r => String(r.staffId) === String(staffId) && String(r.projectId) === String(project._id))
+          const base = idx > -1 ? copy[idx] : { staffId, projectId: project._id, year, month, days: {} }
+          const nextDays = { ...(base.days || {}) }
+          targets.forEach(d => {
+            if (next === null) delete nextDays[String(d)]
+            else nextDays[String(d)] = { ...(nextDays[String(d)] || {}), status: next, by: 'admin' }
           })
-          if (!res.ok) failed += 1
-        } catch {
-          failed += 1
-        }
-      }
-    } catch {
-      failed = targets.length
+          const updated = { ...base, days: nextDays }
+          if (idx > -1) copy[idx] = updated
+          else copy = [...copy, updated]
+        })
+        return copy
+      })
     }
 
-    // Reload the month so the grid shows exactly what was saved
-    try {
-      const monthData = await fetchMonth(year, month)
-      setAttendance(monthData.attendance || [])
-    } catch { /* keep the optimistic view if the reload fails */ }
+    const send = async (url, body, token) => {
+      const res = await fetch(`${API_BASE}${url}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(body),
+      })
+      const saved = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(saved.error || 'Failed to save')
+      return saved
+    }
 
-    setBulkSaving(null)
-    if (failed > 0) {
-      showToast('error', `${failed} of ${targets.length} days could not be saved — please try again`)
-    } else {
-      showToast('success', checked
-        ? `${name} marked Present for all of ${monthName}`
-        : `Cleared Present for ${name} in ${monthName}`)
+    try {
+      const token = await getToken()
+      // Office and every project are separate records, so they can save at the same time
+      const [officeResult, ...projectResults] = await Promise.allSettled([
+        officeTargets.length
+          ? send('/attendance/mark-month', { staffId, year, month, days: officeTargets, status: next }, token)
+          : Promise.resolve(null),
+        ...projectJobs.map(({ project, targets }) =>
+          send('/attendance/project-mark-month', { staffId, projectId: project._id, year, month, days: targets, status: next }, token)),
+      ])
+
+      const failedParts = []
+      if (officeResult.status === 'fulfilled' && officeResult.value) {
+        const saved = officeResult.value
+        setAttendance(recs => {
+          const idx = recs.findIndex(r => String(r.staffId) === String(staffId))
+          if (idx > -1) { const copy = [...recs]; copy[idx] = saved; return copy }
+          return [...recs, saved]
+        })
+      } else if (officeResult.status === 'rejected') {
+        failedParts.push('office')
+      }
+
+      const savedProjects = []
+      projectResults.forEach((r, i) => {
+        if (r.status === 'fulfilled') savedProjects.push(r.value)
+        else failedParts.push(projectJobs[i].project.projectName)
+      })
+      if (savedProjects.length) {
+        setProjectAtt(recs => {
+          let copy = [...recs]
+          savedProjects.forEach(saved => {
+            const idx = copy.findIndex(r => String(r.staffId) === String(saved.staffId) && String(r.projectId) === String(saved.projectId))
+            if (idx > -1) copy[idx] = saved
+            else copy = [...copy, saved]
+          })
+          return copy
+        })
+      }
+
+      if (failedParts.length) {
+        // Reload so the grid matches what the server actually saved
+        try {
+          const monthData = await fetchMonth(year, month)
+          setAttendance(monthData.attendance || [])
+          setProjectAtt(monthData.projectAttendance || [])
+        } catch { /* keep current view */ }
+        showToast('error', `Could not save: ${failedParts.join(', ')} — please try again`)
+      } else {
+        showToast('success', checked
+          ? `${name} marked Present for all of ${monthName}${projectJobs.length ? ' (office + projects)' : ''}`
+          : `Cleared Present for ${name} in ${monthName}`)
+      }
+    } catch (err) {
+      try {
+        const monthData = await fetchMonth(year, month)
+        setAttendance(monthData.attendance || [])
+        setProjectAtt(monthData.projectAttendance || [])
+      } catch { /* keep current view */ }
+      showToast('error', `${err.message || 'Could not save'} — please try again`)
+    } finally {
+      setBulkSaving(null)
     }
   }
 
@@ -441,39 +523,76 @@ const Attendance = () => {
       return [...recs, updated]
     })
 
-    let failed = 0
     try {
       const token = await getToken()
-      // One day at a time so the server never gets two writes to the same record at once
-      for (const day of targets) {
-        try {
-          const res = await fetch(`${API_BASE}/attendance/project-mark`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ staffId, projectId, year, month, day, status: next }),
-          })
-          if (!res.ok) failed += 1
-        } catch {
-          failed += 1
-        }
-      }
-    } catch {
-      failed = targets.length
-    }
-
-    // Reload so the grid shows exactly what was saved
-    try {
-      const monthData = await fetchMonth(year, month)
-      setProjectAtt(monthData.projectAttendance || [])
-    } catch { /* keep the optimistic view if the reload fails */ }
-
-    setBulkSaving(null)
-    if (failed > 0) {
-      showToast('error', `${failed} of ${targets.length} days could not be saved — please try again`)
-    } else {
+      // All days in one request
+      const res = await fetch(`${API_BASE}/attendance/project-mark-month`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ staffId, projectId, year, month, days: targets, status: next }),
+      })
+      const saved = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(saved.error || 'Failed to save')
+      setProjectAtt(recs => {
+        const idx = recs.findIndex(r => String(r.staffId) === String(staffId) && String(r.projectId) === String(projectId))
+        if (idx > -1) { const copy = [...recs]; copy[idx] = saved; return copy }
+        return [...recs, saved]
+      })
       showToast('success', checked
         ? `${name} marked Present on ${project.projectName} for ${monthName}`
         : `Cleared Present for ${name} on ${project.projectName}`)
+    } catch (err) {
+      // Nothing was saved — reload so the grid matches the server again
+      try {
+        const monthData = await fetchMonth(year, month)
+        setProjectAtt(monthData.projectAttendance || [])
+      } catch { /* keep current view */ }
+      showToast('error', `${err.message || 'Could not save'} — please try again`)
+    } finally {
+      setBulkSaving(null)
+    }
+  }
+
+  // ── Take a person off a project ──
+  // They leave the project's team, and their attendance on it from this month onward
+  // is deleted. Earlier months stay as they were (already billed).
+  const removeFromProject = async (staffId, project) => {
+    if (bulkSaving) return
+    const s = staff.find(x => x._id === staffId)
+    const name = s ? `${s.firstName} ${s.lastName}` : 'this staff member'
+    const monthName = `${MONTH_FULL[month]} ${year}`
+    if (!window.confirm(
+      `Remove ${name} from ${project.projectName}?\n\n` +
+      `• They will no longer be on this project's team.\n` +
+      `• Their attendance on ${project.projectName} from ${monthName} onward will be deleted.\n` +
+      `• Earlier months are kept as they are.`
+    )) return
+
+    const projectId = project._id
+    const bulkKey = `${staffId}_${projectId}`
+    setMenu(null)
+    setBulkSaving(bulkKey)
+    try {
+      const token = await getToken()
+      const res = await fetch(`${API_BASE}/project/remove-staff/${projectId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ staffId, fromYear: year, fromMonth: month }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.message || data.error || 'Could not remove from project')
+      const updated = data.project || {}
+      setProjects(list => list.map(p => (String(p._id) === String(projectId)
+        ? { ...p, assignedStaff: updated.assignedStaff || (p.assignedStaff || []).filter(id => String(id) !== String(staffId)) }
+        : p)))
+      setProjectAtt(recs => recs.filter(r => !(String(r.staffId) === String(staffId) && String(r.projectId) === String(projectId))))
+      // The Project Tracker caches projects in this tab — make it reload fresh data
+      try { sessionStorage.removeItem('local_project_data_cache') } catch { /* ignore */ }
+      showToast('success', `${name} removed from ${project.projectName}`)
+    } catch (err) {
+      showToast('error', err.message || 'Something went wrong')
+    } finally {
+      setBulkSaving(null)
     }
   }
 
@@ -773,6 +892,8 @@ const Attendance = () => {
         .att-menu-item.active { background: #eef2ff; font-weight: 600; }
         .att-menu-check { margin-left: auto; color: #4338ca; font-size: 12px; }
         .att-menu-clear { color: #6b7280; border-top: 1px solid #f4f4f5; margin-top: 4px; padding-top: 8px; border-radius: 0 0 8px 8px; }
+        .att-menu-danger { color: #dc2626; border-top: 1px solid #f4f4f5; margin-top: 6px; padding-top: 8px; border-radius: 0 0 8px 8px; }
+        .att-menu-danger:hover, .att-menu-danger:focus-visible { background: #fef2f2; }
 
         .att-toast {
           position: fixed; bottom: 28px; right: 28px; padding: 12px 18px; border-radius: 12px;
@@ -793,7 +914,7 @@ const Attendance = () => {
           <h2 className="att-title">Staff Attendance</h2>
           <p className="att-sub">
             Click a day to choose Present, Absent, WFH, Leave or Half Day · tick <b style={{ color: '#16a34a' }}>Full month present</b> to mark every working day at once · <b>—</b> weekend · <b style={{ color: '#4338ca' }}>★</b> holiday (click "+ Hol" on a date; click a ★ cell to mark someone who worked that holiday)
-            {projects.length > 0 && <> · <b style={{ color: '#4338ca' }}>↳</b> project rows (<b style={{ color: '#ea580c' }}>LT</b> = late · <b>⋯</b> for full-month options)</>}
+            {projects.length > 0 && <> · <b style={{ color: '#4338ca' }}>↳</b> project rows (<b style={{ color: '#ea580c' }}>LT</b> = late · <b>⋯</b> to fill the month or remove someone from a project)</>}
           </p>
         </div>
 
@@ -895,7 +1016,7 @@ const Attendance = () => {
                               className={`month-toggle${fullMonth ? ' on' : ''}${isBulk ? ' busy' : ''}${toggleDisabled && !isBulk ? ' disabled' : ''}`}
                               title={fullMonth
                                 ? `Untick to clear Present from every working day in ${MONTH_FULL[month]}`
-                                : `Mark Present on every working day in ${MONTH_FULL[month]} (weekends and holidays skipped)`}
+                                : `Mark Present on every working day in ${MONTH_FULL[month]} — office and all assigned projects (weekends and holidays skipped)`}
                             >
                               <input
                                 type="checkbox"
@@ -952,7 +1073,7 @@ const Attendance = () => {
                         const end = dateOnly(p.endDate)
                         const presentTotal = pc.present + pc.late
                         const totals = { present: presentTotal, absent: pc.absent, wfh: null, leave: pc.leave, halfday: pc.halfday }
-                        const isPBulk = bulkSaving === `${s._id}_${p._id}`
+                        const isPBulk = bulkSaving === `${s._id}_${p._id}` || bulkSaving === s._id
                         const pFull = isProjectFullMonth(s._id, p)
                         const bulkOpen = menu?.kind === 'bulk' && menu.staffId === s._id && String(menu.projectId) === String(p._id)
                         return (
@@ -1132,6 +1253,15 @@ const Attendance = () => {
             <div className="att-menu-note">
               {pDays.length} working day{pDays.length === 1 ? '' : 's'} · weekends, holidays and days outside the project are skipped. Late logins are kept.
             </div>
+            <button
+              type="button"
+              role="menuitem"
+              className="att-menu-item att-menu-danger"
+              onClick={() => removeFromProject(menu.staffId, bp)}
+            >
+              <span className="att-chip" style={{ background: '#fef2f2', color: '#dc2626', borderColor: '#fecaca' }}>−</span>
+              Remove from project
+            </button>
           </div>
         )
       })()}

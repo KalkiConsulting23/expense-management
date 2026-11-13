@@ -88,6 +88,26 @@ const addMinutes = (hhmm, mins) => {
 const staffName = (s) => `${s.firstName || ''} ${s.lastName || ''}`.trim() || s.employeeId || 'Staff'
 const numStr = (v) => (v === undefined || v === null ? '' : String(Math.round(Number(v) * 100) / 100))
 
+// A project's current team as { staffId: "rate" }.
+// Older projects without staff rates get their single amount split so the totals don't change:
+//   monthly → expected amount ÷ staff · daily / hourly → the old rate for each person
+const initialStaffRates = (p) => {
+  const list = p.staffRates || []
+  if (list.length > 0) {
+    const out = {}
+    list.filter(r => r.active !== false).forEach(r => { out[String(r.staffId)] = numStr(r.rate) })
+    return out
+  }
+  const ids = (p.assignedStaff || []).map(String)
+  const type = (p.projectType || 'monthly').toLowerCase()
+  const each = type === 'monthly'
+    ? (Number(p.expectedAmount) || 0) / (ids.length || 1)
+    : type === 'daily' ? Number(p.defaultDailyRate) || 0 : Number(p.defaultHourlyRate) || 0
+  const out = {}
+  ids.forEach(id => { out[id] = each > 0 ? numStr(each) : '' })
+  return out
+}
+
 // Project → form values (all strings, staff as an id array)
 const projectToForm = (p) => ({
   projectName: p.projectName || '',
@@ -107,12 +127,15 @@ const projectToForm = (p) => ({
   amountsInForeignCurrency: Boolean(p.amountsInForeignCurrency),
   defaultFxRate: p.defaultFxRate ? numStr(p.defaultFxRate) : '',
   assignedStaff: (p.assignedStaff || []).map(String),
+  staffRates: initialStaffRates(p),
 })
 
 const NUMBER_FIELDS = ['daysCycle', 'expectedAmount', 'defaultHourlyRate', 'defaultDailyRate', 'lateWindowMinutes', 'tdsPercent']
 // Number fields that may be left empty (sent as null = not set)
 const OPTIONAL_NUMBER_FIELDS = ['defaultFxRate']
-const sameValue = (a, b) => (Array.isArray(a) ? JSON.stringify(a) === JSON.stringify(b) : (a ?? '') === (b ?? ''))
+const sameValue = (a, b) => (a !== null && typeof a === 'object' ? JSON.stringify(a) === JSON.stringify(b) : (a ?? '') === (b ?? ''))
+// Changing any of these sends the whole team with its rates
+const TEAM_KEYS = ['assignedStaff', 'staffRates', 'projectType']
 
 const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved }) => {
   const initial = useMemo(() => projectToForm(project), [project])
@@ -138,7 +161,18 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
     return () => { cancelled = true }
   }, [staffFromParent])
 
-  const changedKeys = Object.keys(form).filter(k => !sameValue(form[k], initial[k]))
+  // Projects with staff are billed from each person's rate; the amount is their total
+  const staffMode = form.assignedStaff.length > 0
+  const teamTotal = Math.round(form.assignedStaff.reduce((t, id) => t + (Number(form.staffRates[id]) || 0), 0) * 100) / 100
+
+  const changedKeys = Object.keys(form).filter(k => {
+    if (k === 'staffRates') {
+      // only the rates of people on the team count
+      const pick = (o) => form.assignedStaff.map(id => o[id] ?? '')
+      return JSON.stringify(pick(form.staffRates)) !== JSON.stringify(pick(initial.staffRates))
+    }
+    return !sameValue(form[k], initial[k])
+  })
   const isDirty = changedKeys.length > 0
 
   const close = () => {
@@ -176,7 +210,12 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
       ...f,
       assignedStaff: f.assignedStaff.includes(id) ? f.assignedStaff.filter(x => x !== id) : [...f.assignedStaff, id],
     }))
-    if (errors.loginTime) setErrors(e => ({ ...e, loginTime: undefined }))
+    setErrors(e => ({ ...e, loginTime: undefined, staffRates: undefined }))
+  }
+
+  const setStaffRate = (id, value) => {
+    setForm(f => ({ ...f, staffRates: { ...f.staffRates, [id]: value } }))
+    if (errors.staffRates) setErrors(e => ({ ...e, staffRates: undefined }))
   }
 
   const validate = () => {
@@ -186,9 +225,13 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
     if (!form.endDate) e.endDate = 'End date is required'
     if (form.startDate && form.endDate && form.endDate < form.startDate) e.endDate = 'End date must be after start date'
     if (!form.daysCycle || Number(form.daysCycle) <= 0) e.daysCycle = 'Enter a valid days cycle'
-    if (form.projectType === 'monthly' && !(Number(form.expectedAmount) > 0)) e.expectedAmount = 'Expected amount is required'
-    if (form.projectType === 'hourly' && !(Number(form.defaultHourlyRate) > 0)) e.defaultHourlyRate = 'Hourly rate is required'
-    if (form.projectType === 'daily' && !(Number(form.defaultDailyRate) > 0)) e.defaultDailyRate = 'Daily rate is required'
+    if (staffMode) {
+      if (form.assignedStaff.some(id => !(Number(form.staffRates[id]) > 0))) e.staffRates = 'Enter a rate above 0 for every staff member'
+    } else {
+      if (form.projectType === 'monthly' && !(Number(form.expectedAmount) > 0)) e.expectedAmount = 'Expected amount is required'
+      if (form.projectType === 'hourly' && !(Number(form.defaultHourlyRate) > 0)) e.defaultHourlyRate = 'Hourly rate is required'
+      if (form.projectType === 'daily' && !(Number(form.defaultDailyRate) > 0)) e.defaultDailyRate = 'Daily rate is required'
+    }
     if (form.assignedStaff.length > 0 && !form.loginTime) e.loginTime = 'Set a login time for the assigned staff'
     if (form.projectScope === 'international' && form.amountsInForeignCurrency &&
         form.defaultFxRate !== '' && !(Number(form.defaultFxRate) > 0)) e.defaultFxRate = 'Enter a rate above 0'
@@ -208,12 +251,16 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
     // Send only what changed
     const payload = {}
     changedKeys.forEach(k => {
+      if (k === 'staffRates' || k === 'assignedStaff') return // sent together below
       const v = form[k]
       if (OPTIONAL_NUMBER_FIELDS.includes(k)) payload[k] = v === '' ? null : Number(v)
       else if (NUMBER_FIELDS.includes(k)) payload[k] = v === '' ? (k === 'lateWindowMinutes' ? 30 : 0) : Number(v)
       else if (typeof v === 'string') payload[k] = v.trim()
       else payload[k] = v
     })
+    if (changedKeys.some(k => TEAM_KEYS.includes(k)) && (staffMode || (project.staffRates || []).length > 0 || changedKeys.includes('assignedStaff'))) {
+      payload.staffRates = form.assignedStaff.map(id => ({ staffId: id, rate: Number(form.staffRates[id]) || 0 }))
+    }
 
     setSaving(true)
     setSaveError('')
@@ -235,12 +282,15 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
     }
   }
 
+  const rateUnit = form.projectType === 'hourly' ? '/hr' : form.projectType === 'daily' ? '/day' : '/month'
   const amountField = form.projectType === 'monthly' ? 'expectedAmount'
     : form.projectType === 'hourly' ? 'defaultHourlyRate' : 'defaultDailyRate'
   // Currency the amount is entered in
   const foreignForm = form.projectScope === 'international' && form.amountsInForeignCurrency
   const amtCur = foreignForm ? form.currency : '₹'
   const amtSym = foreignForm ? (CUR_SYMBOL[form.currency] || `${form.currency} `).trim() : '₹'
+  // Amount used for the GST / TDS preview: the team total, or the typed amount for projects without staff
+  const billAmount = staffMode ? teamTotal : (Number(form[amountField]) || 0)
   const amountLabel = form.projectType === 'monthly' ? 'Expected Amount / month'
     : form.projectType === 'hourly' ? 'Default Hourly Rate' : 'Default Daily Rate'
 
@@ -284,6 +334,21 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
         .epm-chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 6px 4px 10px; border-radius: 999px; background: #eef2ff; border: 1px solid #e0e7ff; color: #3730a3; font-size: 12px; font-weight: 500; }
         .epm-chip button { border: none; background: transparent; color: #6366f1; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
         .epm-list { border: 1px solid #ececec; border-radius: 10px; max-height: 190px; overflow-y: auto; }
+        .epm-total-box { display: flex; flex-direction: column; gap: 2px; border: 1px dashed #d1d5db; border-radius: 9px; padding: 7px 10px; background: #fafafa; }
+        .epm-total-box b { font-size: 14px; color: #18181b; font-variant-numeric: tabular-nums; }
+        .epm-total-box span { font-size: 11px; color: #6b7280; }
+        .epm-rates { border: 1px solid #ececec; border-radius: 10px; overflow: hidden; margin-bottom: 8px; }
+        .epm-rates.changed { border-color: #f59e0b; }
+        .epm-rate-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid #f4f4f5; }
+        .epm-rate-row:last-child { border-bottom: none; }
+        .epm-rate-name { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 500; color: #18181b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .epm-rate-input { display: inline-flex; align-items: center; gap: 4px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 0 8px; background: #fff; font-size: 12px; color: #9ca3af; }
+        .epm-rate-input:focus-within { border-color: #18181b; }
+        .epm-rate-input.err { border-color: #dc2626; background: #fef2f2; }
+        .epm-rate-input input { width: 80px; border: none; outline: none; padding: 6px 0; font: inherit; font-size: 12.5px; color: #18181b; text-align: right; background: transparent; }
+        .epm-rate-input .unit { font-size: 11px; }
+        .epm-rate-x { border: none; background: transparent; color: #9ca3af; cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; border-radius: 6px; }
+        .epm-rate-x:hover { color: #dc2626; background: #fef2f2; }
         .epm-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; cursor: pointer; border-bottom: 1px solid #f4f4f5; font-size: 12.5px; color: #18181b; }
         .epm-item:last-child { border-bottom: none; }
         .epm-item:hover { background: #fafafa; }
@@ -384,14 +449,24 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
                 </div>
               </div>
             )}
-            <div className="epm-field">
-              <label htmlFor="epm-amt">{amountLabel} ({amtCur}, before GST) <span className="epm-req">*</span></label>
-              <div className="epm-prefix">
-                <span>{amtSym}</span>
-                <input id="epm-amt" type="number" min="0" step="any" className={cls(amountField)} value={form[amountField]} onChange={e => set(amountField, e.target.value)} disabled={saving} style={amtSym.length > 1 ? { paddingLeft: 40 } : undefined} />
+            {staffMode ? (
+              <div className="epm-field">
+                <label>{amountLabel} ({amtCur}, before GST)</label>
+                <div className="epm-total-box">
+                  <b>{amtSym}{teamTotal.toLocaleString('en-IN')}</b>
+                  <span>total of {form.assignedStaff.length} staff rate{form.assignedStaff.length !== 1 ? 's' : ''} · set below</span>
+                </div>
               </div>
-              {errors[amountField] && <div className="epm-err">{errors[amountField]}</div>}
-            </div>
+            ) : (
+              <div className="epm-field">
+                <label htmlFor="epm-amt">{amountLabel} ({amtCur}, before GST) <span className="epm-req">*</span></label>
+                <div className="epm-prefix">
+                  <span>{amtSym}</span>
+                  <input id="epm-amt" type="number" min="0" step="any" className={cls(amountField)} value={form[amountField]} onChange={e => set(amountField, e.target.value)} disabled={saving} style={amtSym.length > 1 ? { paddingLeft: 40 } : undefined} />
+                </div>
+                {errors[amountField] && <div className="epm-err">{errors[amountField]}</div>}
+              </div>
+            )}
             {foreignForm && (
               <div className="epm-field">
                 <label htmlFor="epm-fx">Starting exchange rate (₹ for 1 {form.currency})</label>
@@ -415,18 +490,18 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
               </div>
             </div>
           </div>
-          {Number(form[amountField]) > 0 && (form.gstApplicable || Number(form.tdsPercent) > 0) && (() => {
+          {billAmount > 0 && (form.gstApplicable || Number(form.tdsPercent) > 0) && (() => {
             const fx = foreignForm ? Number(form.defaultFxRate) || 0 : 1
             if (foreignForm && !fx) {
               return <div className="epm-note">GST and TDS are worked out in ₹ using each month's exchange rate in the Project Tracker.</div>
             }
-            const b = (Number(form[amountField]) || 0) * fx
+            const b = billAmount * fx
             const g = form.gstApplicable ? b * 0.18 : 0
             const t = b * (Number(form.tdsPercent) || 0) / 100
             const r = (n) => '₹' + (Math.round(n * 100) / 100).toLocaleString('en-IN')
             return (
               <div className="epm-note">
-                For {r(b)}{foreignForm && <> ({amtSym}{Number(form[amountField])} × ₹{fx})</>}: {form.gstApplicable && <>+ GST {r(g)} </>}= Invoice <b>{r(b + g)}</b>
+                For {r(b)}{foreignForm && <> ({amtSym}{billAmount} × ₹{fx})</>}: {form.gstApplicable && <>+ GST {r(g)} </>}= Invoice <b>{r(b + g)}</b>
                 {t > 0 && <> · − TDS {form.tdsPercent}% {r(t)}</>} → To be received <b>{r(b + g - t)}</b>
               </div>
             )
@@ -463,20 +538,33 @@ const EditProjectForm = ({ project, staffList: staffFromParent, onClose, onSaved
           )}
 
           <div className="epm-field" style={{ marginTop: 12 }}>
-            <label>Assigned Staff ({form.assignedStaff.length})</label>
+            <label>Assigned Staff &amp; Rates ({form.assignedStaff.length}) · {amtSym} {rateUnit}, before GST</label>
             {form.assignedStaff.length > 0 && (
-              <div className="epm-chips">
+              <div className={`epm-rates${changedKeys.includes('staffRates') || changedKeys.includes('assignedStaff') ? ' changed' : ''}`}>
                 {form.assignedStaff.map(id => {
                   const s = staffList.find(x => String(x._id) === id) || { firstName: 'Staff' }
+                  const missing = errors.staffRates && !(Number(form.staffRates[id]) > 0)
                   return (
-                    <span key={id} className="epm-chip">
-                      {staffName(s)}
-                      <button type="button" aria-label={`Remove ${staffName(s)}`} onClick={() => toggleStaff(id)} disabled={saving}>×</button>
-                    </span>
+                    <div key={id} className="epm-rate-row">
+                      <span className="epm-rate-name">{staffName(s)}</span>
+                      <span className={`epm-rate-input${missing ? ' err' : ''}`}>
+                        <span>{amtSym}</span>
+                        <input
+                          type="number" min="0" step="any" placeholder="0"
+                          value={form.staffRates[id] ?? ''}
+                          onChange={e => setStaffRate(id, e.target.value)}
+                          disabled={saving}
+                          aria-label={`Rate for ${staffName(s)}`}
+                        />
+                        <span className="unit">{rateUnit}</span>
+                      </span>
+                      <button type="button" className="epm-rate-x" aria-label={`Remove ${staffName(s)}`} onClick={() => toggleStaff(id)} disabled={saving}>×</button>
+                    </div>
                   )
                 })}
               </div>
             )}
+            {errors.staffRates && <div className="epm-err" style={{ marginBottom: 8 }}>{errors.staffRates}</div>}
             {staffList.length > 5 && (
               <input className="epm-input" placeholder="Search staff…" value={staffSearch} onChange={e => setStaffSearch(e.target.value)} style={{ marginBottom: 8 }} />
             )}
@@ -529,7 +617,40 @@ const Projectmaster = () => {
   // New: single-month filter. null = no single month selected.
   const [month, setMonth]         = useState(null) // 0-11 calendar index
   const [editProject, setEditProject] = useState(null) // project being edited
+  const [deleteProject, setDeleteProject] = useState(null) // project waiting for delete confirmation
+  const [deleting, setDeleting]   = useState(false)
+  const [deleteError, setDeleteError] = useState('')
   const [toast, setToast]         = useState('')
+
+  // Delete a project (its monthly records and project attendance go with it)
+  const confirmDelete = async () => {
+    if (!deleteProject) return
+    setDeleting(true)
+    setDeleteError('')
+    try {
+      const res = await fetch(`${API_BASE}/project/delete/${deleteProject._id}`, { method: 'DELETE' })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) throw new Error(data.message || 'Failed to delete project')
+      // The Project Tracker caches projects in this tab — make it reload fresh data
+      try { sessionStorage.removeItem(PROJECT_CACHE_KEY) } catch (e) { /* ignore */ }
+      setProjects(prev => prev.filter(p => p._id !== deleteProject._id))
+      setToast(`${deleteProject.projectName} deleted`)
+      setTimeout(() => setToast(''), 2500)
+      setDeleteProject(null)
+    } catch (err) {
+      setDeleteError(err.message)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  // Close the delete popup with Esc
+  useEffect(() => {
+    if (!deleteProject) return
+    const onKey = (e) => { if (e.key === 'Escape' && !deleting) setDeleteProject(null) }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [deleteProject, deleting])
 
   // After editing: show the updated project straight away
   const handleProjectSaved = (updated) => {
@@ -711,6 +832,34 @@ const Projectmaster = () => {
         }
         .pm-add-btn:hover { background: #000; box-shadow: 0 4px 12px rgba(16,24,40,0.15); }
         .pm-add-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(24,24,27,0.2); }
+        .pj-del-btn {
+          display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;
+          width: 30px; height: 30px; margin-left: 6px; border-radius: 8px;
+          border: 1px solid #e5e7eb; background: #fff; color: #9ca3af; cursor: pointer; transition: all 0.13s;
+        }
+        .pj-del-btn:hover { background: #fef2f2; border-color: #fecaca; color: #dc2626; }
+        .pm-del-overlay {
+          position: fixed; inset: 0; background: rgba(17,24,39,0.45); backdrop-filter: blur(4px);
+          display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 1000;
+        }
+        .pm-del-box {
+          background: #fff; border-radius: 16px; width: 100%; max-width: 400px; padding: 24px;
+          border: 1px solid #ececec; box-shadow: 0 24px 60px rgba(16,24,40,0.22);
+        }
+        .pm-del-title { font-size: 16px; font-weight: 600; color: #18181b; }
+        .pm-del-name {
+          margin-top: 12px; padding: 9px 12px; border-radius: 9px; background: #fafafa; border: 1px solid #ececec;
+          font-size: 13.5px; font-weight: 500; color: #18181b;
+        }
+        .pm-del-text { font-size: 12.5px; color: #6b7280; line-height: 1.6; margin: 12px 0 18px; }
+        .pm-del-err { margin: -6px 0 14px; padding: 8px 11px; border-radius: 9px; background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; font-size: 12.5px; }
+        .pm-del-actions { display: flex; justify-content: flex-end; gap: 8px; }
+        .pm-del-confirm {
+          font-family: inherit; font-size: 12.5px; font-weight: 600; padding: 7px 14px; border-radius: 8px;
+          border: 1px solid #dc2626; background: #dc2626; color: #fff; cursor: pointer;
+        }
+        .pm-del-confirm:hover { background: #b91c1c; }
+        .pm-del-confirm:disabled { opacity: 0.6; cursor: not-allowed; }
         .pm-toast {
           position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
           background: #18181b; color: #fff; font-size: 13px; font-weight: 500;
@@ -887,12 +1036,23 @@ const Projectmaster = () => {
                         {active ? 'Active' : 'Inactive'}
                       </span>
                     </td>
-                    <td style={{ textAlign: 'right' }}>
+                    <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                       <button type="button" className="pj-edit-btn" onClick={() => setEditProject(p)}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
                         </svg>
                         Edit
+                      </button>
+                      <button
+                        type="button"
+                        className="pj-del-btn"
+                        title={`Delete ${p.projectName}`}
+                        aria-label={`Delete ${p.projectName}`}
+                        onClick={() => { setDeleteError(''); setDeleteProject(p) }}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/>
+                        </svg>
                       </button>
                     </td>
                   </tr>
@@ -909,6 +1069,25 @@ const Projectmaster = () => {
           onClose={() => setEditProject(null)}
           onSaved={handleProjectSaved}
         />
+      )}
+      {deleteProject && (
+        <div className="pm-del-overlay" onMouseDown={(e) => { if (e.target === e.currentTarget && !deleting) setDeleteProject(null) }}>
+          <div className="pm-del-box" role="dialog" aria-modal="true" aria-labelledby="pm-del-title">
+            <div className="pm-del-title" id="pm-del-title">Delete project?</div>
+            <div className="pm-del-name">{deleteProject.projectName}</div>
+            <p className="pm-del-text">
+              Its monthly billing and received amounts, and all project attendance for it, will be permanently removed.
+              This can't be undone.
+            </p>
+            {deleteError && <div className="pm-del-err">{deleteError}</div>}
+            <div className="pm-del-actions">
+              <button type="button" className="pj-edit-btn" onClick={() => setDeleteProject(null)} disabled={deleting}>Cancel</button>
+              <button type="button" className="pm-del-confirm" onClick={confirmDelete} disabled={deleting}>
+                {deleting ? 'Deleting…' : 'Delete project'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
       {toast && <div className="pm-toast">{toast}</div>}
     </>

@@ -6,10 +6,12 @@ import { useNavigate } from 'react-router-dom';
 //  Columns: Project · Gross Amount · GST 18% · TDS % · Invoice Amount ·
 //           TDS · To Be Received · Received · Deduction
 //
-//  Gross Amount
-//    monthly → the expected amount (not divided by days)
-//    daily   → daily rate × days worked
-//    hourly  → hourly rate × working days × 8 hours
+//  Gross Amount — worked out person by person from each staff member's rate
+//  and the days they worked (Attendance Tracker), then added up:
+//    monthly → rate × days worked ÷ working days
+//    daily   → rate × days worked
+//    hourly  → rate × 8 hours × days worked
+//  (Older projects without staff rates use the single project amount.)
 //  International  = amounts in the project's currency × that month's exchange rate (₹)
 //  GST            = 18% of gross (projects with GST on — domestic or international)
 //  Invoice Amount = gross + GST
@@ -83,17 +85,20 @@ function workingDaysIn(year, monthIndex, holidaySet) {
   return n;
 }
 
-// /attendance/month response → { workingDays, byProject: { projectId: { days, staff:Set } } }
+// /attendance/month response →
+//   { workingDays, byProject: { projectId: { days, staff:Set, byStaff: { staffId: days } } } }
 function summariseAttendance(data, year, monthIndex) {
   const holidaySet = new Set((data.holidays || []).map(h => Number(h.day)));
   const byProject = {};
   (data.projectAttendance || []).forEach(sheet => {
     const pid = String(sheet.projectId);
-    const entry = byProject[pid] || (byProject[pid] = { days: 0, staff: new Set() });
+    const sid = String(sheet.staffId);
+    const entry = byProject[pid] || (byProject[pid] = { days: 0, staff: new Set(), byStaff: {} });
     let personDays = 0;
     Object.values(sheet.days || {}).forEach(v => { personDays += DAY_VALUE[v && v.status] || 0; });
     entry.days += personDays;
-    if (Object.keys(sheet.days || {}).length) entry.staff.add(String(sheet.staffId));
+    entry.byStaff[sid] = (entry.byStaff[sid] || 0) + personDays;
+    if (Object.keys(sheet.days || {}).length) entry.staff.add(sid);
   });
   return { workingDays: workingDaysIn(year, monthIndex, holidaySet), byProject };
 }
@@ -111,14 +116,34 @@ function computeRow(p, monthIndex, year, att, over = {}) {
   const loaded = Boolean(att);
 
   // Staff on the project this month: assigned now + anyone with attendance on it
-  const stats = (att && att.byProject[String(p._id)]) || { days: 0, staff: new Set() };
+  const stats = (att && att.byProject[String(p._id)]) || { days: 0, staff: new Set(), byStaff: {} };
   const staffIds = new Set([...(p.assignedStaff || []).map(String), ...stats.staff]);
   const staffCount = staffIds.size;
   const days = round2(stats.days);                  // person-days worked
   const workingDays = att ? att.workingDays : 0;
 
   let rate = 0, hoursPerDay = HOURS_PER_DAY, gross = 0, fullMonth = false;
-  if (type === 'monthly') {
+  // Each person's line: { staffId, days, rate, amount } (projects with staff rates)
+  let staffLines = null;
+  const rateList = p.staffRates || [];
+  if (rateList.length > 0) {
+    // Everyone's own rate × their own days (people taken off the project keep their rate for past months)
+    const rateOf = new Map(rateList.map(r => [String(r.staffId), Number(r.rate) || 0]));
+    const ids = new Set([
+      ...rateList.filter(r => r.active !== false).map(r => String(r.staffId)),
+      ...Object.keys(stats.byStaff || {}).filter(id => (stats.byStaff[id] || 0) > 0),
+    ]);
+    staffLines = [...ids].map(id => {
+      const d = round2((stats.byStaff || {})[id] || 0);
+      const r = rateOf.get(id) || 0;
+      const amount = type === 'monthly'
+        ? (workingDays > 0 ? r * d / workingDays : 0)
+        : type === 'daily' ? r * d : r * hoursPerDay * d;
+      return { staffId: id, days: d, rate: r, amount: round2(amount) };
+    });
+    gross = staffLines.reduce((s, l) => s + l.amount, 0);
+    rate = round2(rateList.filter(r => r.active !== false).reduce((s, r) => s + (Number(r.rate) || 0), 0));
+  } else if (type === 'monthly') {
     const expected = Number(p.expectedAmount) || 0;
     if (staffCount === 0) {
       gross = expected;                              // nobody to take attendance from → full amount
@@ -152,7 +177,7 @@ function computeRow(p, monthIndex, year, att, over = {}) {
   return {
     type, domestic, gstOn, rate, days, hoursPerDay, tdsPercent,
     foreign, currency, fxRate, needsRate, grossForeign: grossForeign === null ? null : round2(grossForeign),
-    loaded, staffCount, workingDays, fullMonth,
+    loaded, staffCount, workingDays, fullMonth, staffLines,
     gross: round2(gross), gst: round2(gst), invoice: round2(invoice),
     tds: round2(tds), toReceive: round2(toReceive), received: round2(received),
     deduction: hasReceived ? round2(toReceive - received) : null,
@@ -176,6 +201,32 @@ const addMinutes = (hhmm, mins) => {
   return `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
 };
 const staffName = (s) => `${s.firstName || ''} ${s.lastName || ''}`.trim() || s.employeeId || 'Staff';
+
+// A project's current team as { staffId: "rate" } for editing.
+// Older projects without staff rates get their single amount split so the totals don't change:
+//   monthly → expected amount ÷ staff · daily / hourly → the old rate for each person
+const initialStaffRates = (p) => {
+  const list = p.staffRates || [];
+  if (list.length > 0) {
+    const out = {};
+    list.filter(r => r.active !== false).forEach(r => { out[String(r.staffId)] = String(round2(r.rate)); });
+    return out;
+  }
+  const ids = (p.assignedStaff || []).map(String);
+  const type = (p.projectType || 'monthly').toLowerCase();
+  const each = type === 'monthly'
+    ? (Number(p.expectedAmount) || 0) / (ids.length || 1)
+    : type === 'daily' ? Number(p.defaultDailyRate) || 0 : Number(p.defaultHourlyRate) || 0;
+  const out = {};
+  ids.forEach(id => { out[id] = each > 0 ? String(round2(each)) : ''; });
+  return out;
+};
+// "/month", "/day" or "/hr" for a project
+const rateUnit = (p) => ({ hourly: '/hr', daily: '/day' }[(p.projectType || 'monthly').toLowerCase()] || '/month');
+// Symbol the project's rates are entered in
+const rateSymbol = (p) => ((p.projectScope || 'domestic') === 'international' && p.amountsInForeignCurrency
+  ? (CURRENCY_SYMBOLS[p.currency] || `${p.currency} `).trim()
+  : '₹');
 
 function ProjectAvatar({ name = '' }) {
   const palette = ['#4f46e5','#0891b2','#7c3aed','#0d9488','#2563eb','#db2777','#ea580c','#059669'];
@@ -222,6 +273,7 @@ const ProjectTable = () => {
   const [teamLoginTime, setTeamLoginTime] = useState('');
   const [teamLateWindow, setTeamLateWindow] = useState('30');
   const [teamSelected, setTeamSelected] = useState([]);
+  const [teamRates, setTeamRates] = useState({}); // staffId → rate text
   const [teamSearch, setTeamSearch] = useState('');
   const [teamSaving, setTeamSaving] = useState(false);
   const [teamError, setTeamError] = useState('');
@@ -281,6 +333,7 @@ const ProjectTable = () => {
     setTeamLoginTime(project.loginTime || '');
     setTeamLateWindow(String(project.lateWindowMinutes ?? 30));
     setTeamSelected((project.assignedStaff || []).map(String));
+    setTeamRates(initialStaffRates(project));
     setTeamSearch('');
     setTeamError('');
   };
@@ -295,6 +348,10 @@ const ProjectTable = () => {
       setTeamError('Set a login time before assigning staff.');
       return;
     }
+    if (teamSelected.some(id => !(Number(teamRates[id]) > 0))) {
+      setTeamError('Enter a rate above 0 for every staff member.');
+      return;
+    }
     setTeamSaving(true);
     setTeamError('');
     try {
@@ -304,14 +361,19 @@ const ProjectTable = () => {
         body: JSON.stringify({
           loginTime: teamLoginTime,
           lateWindowMinutes: teamLateWindow === '' ? 30 : Number(teamLateWindow) || 0,
-          assignedStaff: teamSelected,
+          staffRates: teamSelected.map(id => ({ staffId: id, rate: Number(teamRates[id]) || 0 })),
         }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.message || 'Failed to save team');
       setProjects(prev => {
         const next = prev.map(p => (p._id === teamProject._id
-          ? { ...p, loginTime: data.loginTime, lateWindowMinutes: data.lateWindowMinutes, assignedStaff: data.assignedStaff }
+          ? {
+              ...p,
+              loginTime: data.loginTime, lateWindowMinutes: data.lateWindowMinutes,
+              assignedStaff: data.assignedStaff, staffRates: data.staffRates,
+              expectedAmount: data.expectedAmount, defaultDailyRate: data.defaultDailyRate, defaultHourlyRate: data.defaultHourlyRate,
+            }
           : p));
         sessionStorage.setItem(PROJECT_CACHE_KEY, JSON.stringify(next));
         return next;
@@ -622,6 +684,8 @@ const ProjectTable = () => {
         .pt-table th.pt-name { background: #fafafa; z-index: 3; }
         .pt-table tr:hover td.pt-name { background: #fcfcfd; }
         .pt-gross-sub { display: block; font-size: 10.5px; color: #9ca3af; margin-top: 3px; }
+        .pt-staff-lines { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+        .pt-staff-line { white-space: nowrap; }
         .pt-gross-edit { display: inline-flex; align-items: center; gap: 4px; justify-content: flex-end; margin-top: 4px; font-size: 10.5px; color: #6b7280; }
         .pt-inp {
           width: 58px; padding: 4px 6px; border: 1px solid #e5e7eb; border-radius: 7px; background: #fff;
@@ -741,6 +805,17 @@ const ProjectTable = () => {
           font-size: 12px; font-weight: 500;
         }
         .team-chip button { border: none; background: transparent; color: #6366f1; cursor: pointer; font-size: 14px; line-height: 1; padding: 0 2px; }
+        .team-rates { border: 1px solid #ececec; border-radius: 10px; overflow: hidden; margin-bottom: 12px; }
+        .team-rate-row { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid #f4f4f5; }
+        .team-rate-name { flex: 1; min-width: 0; font-size: 12.5px; font-weight: 500; color: #18181b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .team-rate-input { display: inline-flex; align-items: center; gap: 4px; border: 1px solid #e5e7eb; border-radius: 8px; padding: 0 8px; background: #fff; font-size: 12px; color: #9ca3af; }
+        .team-rate-input:focus-within { border-color: #18181b; }
+        .team-rate-input input { width: 76px; border: none; outline: none; padding: 6px 0; font: inherit; font-size: 12.5px; color: #18181b; text-align: right; background: transparent; }
+        .team-rate-input .unit { font-size: 11px; }
+        .team-rate-x { border: none; background: transparent; color: #9ca3af; cursor: pointer; font-size: 16px; line-height: 1; padding: 2px 4px; border-radius: 6px; }
+        .team-rate-x:hover { color: #dc2626; background: #fef2f2; }
+        .team-rate-total { display: flex; justify-content: space-between; padding: 8px 10px; background: #fafafa; font-size: 12px; color: #6b7280; }
+        .team-rate-total b { color: #18181b; font-variant-numeric: tabular-nums; }
         .team-search {
           width: 100%; padding: 8px 11px; border: 1px solid #ececec; border-radius: 9px;
           font-size: 12.5px; outline: none; margin-bottom: 8px; font-family: inherit;
@@ -881,6 +956,24 @@ const ProjectTable = () => {
                         <div style={{ fontWeight: 600 }}>
                           {!r.loaded ? '…' : r.needsRate ? <span style={{ color: '#d97706' }}>Set rate →</span> : fmt(r.gross)}
                         </div>
+                        {r.loaded && r.staffLines ? (
+                          <span className="pt-gross-sub pt-staff-lines" title="Each person's rate × the days they worked (from the Attendance Tracker)">
+                            {r.staffLines.length === 0 ? 'No staff assigned' : r.staffLines.map(l => {
+                              const money = (n) => (r.foreign ? fmtCur(n, r.currency) : fmt(n));
+                              const who = staffList.find(s => String(s._id) === l.staffId);
+                              const calc = r.type === 'monthly'
+                                ? `${money(l.rate)} × ${l.days} / ${r.workingDays}d`
+                                : r.type === 'daily'
+                                  ? `${l.days}d × ${money(l.rate)}`
+                                  : `${l.days}d × ${r.hoursPerDay}h × ${money(l.rate)}`;
+                              return (
+                                <span key={l.staffId} className="pt-staff-line">
+                                  {who ? staffName(who) : 'Staff'}: {calc}{r.foreign ? ` = ${fmtCur(l.amount, r.currency)}` : ''}
+                                </span>
+                              );
+                            })}
+                          </span>
+                        ) : (
                         <span className="pt-gross-sub" title="Days worked come from the project rows in the Attendance Tracker">
                           {(() => {
                             if (!r.loaded) return 'Loading attendance…';
@@ -898,6 +991,7 @@ const ProjectTable = () => {
                             return r.foreign && !r.fullMonth && r.staffCount > 0 ? `${line} = ${fmtCur(r.grossForeign, r.currency)}` : line;
                           })()}
                         </span>
+                        )}
                         {r.foreign && (
                           <span className="pt-gross-edit" title={`Exchange rate for ${MONTH_FULL[t.month]} ${t.year}`}>
                             × ₹{cellInput(p, t.month, t.year, 'fxRate', r.fxRate > 0 ? r.fxRate : '', { placeholder: 'rate', label: `₹ per 1 ${r.currency}` })} / {r.currency}
@@ -942,7 +1036,8 @@ const ProjectTable = () => {
       ))}
 
       <p className="pt-legend">
-        Days = project attendance (Present / Late = 1, Half Day = ½) · Gross: monthly = expected × days ÷ working days · daily = rate × days · hourly = rate × days × {HOURS_PER_DAY}h ·
+        Days = project attendance (Present / Late = 1, Half Day = ½) · Gross is added up person by person from each staff member's rate:
+        monthly = rate × days ÷ working days · daily = rate × days · hourly = rate × {HOURS_PER_DAY}h × days ·
         International: amount in its currency × the month's rate (₹) ·
         Invoice = gross + GST · To be received = gross + GST − TDS · Deduction = to be received − received
       </p>
@@ -995,16 +1090,34 @@ const ProjectTable = () => {
                 )}
 
                 <div style={{ fontSize: 12, fontWeight: 500, color: '#4b5563', marginBottom: 8 }}>
-                  Assigned staff ({teamSelected.length})
+                  Assigned staff &amp; rates ({teamSelected.length}) · {rateSymbol(teamProject)} {rateUnit(teamProject)}, before GST
                 </div>
                 {selectedStaff.length > 0 ? (
-                  <div className="team-chips">
-                    {selectedStaff.map(s => (
-                      <span key={s._id} className="team-chip">
-                        {staffName(s)}
-                        <button type="button" aria-label={`Remove ${staffName(s)}`} onClick={() => toggleTeamStaff(String(s._id))} disabled={teamSaving}>×</button>
-                      </span>
-                    ))}
+                  <div className="team-rates">
+                    {selectedStaff.map(s => {
+                      const id = String(s._id);
+                      return (
+                        <div key={id} className="team-rate-row">
+                          <span className="team-rate-name">{staffName(s)}</span>
+                          <span className="team-rate-input">
+                            <span>{rateSymbol(teamProject)}</span>
+                            <input
+                              type="number" min="0" step="any" placeholder="0"
+                              value={teamRates[id] ?? ''}
+                              onChange={e => setTeamRates(r => ({ ...r, [id]: e.target.value }))}
+                              disabled={teamSaving}
+                              aria-label={`Rate for ${staffName(s)}`}
+                            />
+                            <span className="unit">{rateUnit(teamProject)}</span>
+                          </span>
+                          <button type="button" className="team-rate-x" aria-label={`Remove ${staffName(s)}`} onClick={() => toggleTeamStaff(id)} disabled={teamSaving}>×</button>
+                        </div>
+                      );
+                    })}
+                    <div className="team-rate-total">
+                      <span>{(teamProject.projectType || 'monthly') === 'monthly' ? 'Expected amount' : 'Team rate'}</span>
+                      <b>{rateSymbol(teamProject)}{round2(teamSelected.reduce((t, id) => t + (Number(teamRates[id]) || 0), 0)).toLocaleString('en-IN')}{rateUnit(teamProject)}</b>
+                    </div>
                   </div>
                 ) : (
                   <div style={{ fontSize: 12, color: '#9ca3af', marginBottom: 12 }}>No one assigned yet. Pick staff below.</div>

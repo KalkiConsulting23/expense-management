@@ -161,6 +161,103 @@ router.patch('/project-mark', async (req, res) => {
   }
 })
 
+// Validate a list of day numbers for a bulk update → sorted unique integers 1–31, or null if invalid
+const parseDayList = (days) => {
+  if (!Array.isArray(days) || days.length === 0 || days.length > 31) return null
+  const list = [...new Set(days.map(Number))]
+  if (list.some(d => !Number.isInteger(d) || d < 1 || d > 31)) return null
+  return list.sort((a, b) => a - b)
+}
+
+// ─── SET many days at once for one staff member (office) ───
+// Body: { staffId, year, month, days: [1, 2, 5, ...], status }
+//   Same statuses as /mark; status === null clears those days.
+//   One read + one write, however many days are sent.
+router.patch('/mark-month', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    const { staffId, year, month, days, status } = req.body
+    const y = Number(year), m = Number(month)
+
+    if (!isValidId(staffId)) return res.status(400).json({ error: 'Invalid staffId' })
+    if (isNaN(y) || isNaN(m)) return res.status(400).json({ error: 'year and month are required' })
+    const dayList = parseDayList(days)
+    if (!dayList) return res.status(400).json({ error: 'days must be a list of day numbers (1–31)' })
+
+    const clearing = status === null || status === undefined || status === ''
+    const nextStatus = clearing ? null : normalizeStatus(status)
+    if (!clearing && !nextStatus) {
+      return res.status(400).json({ error: `status must be one of: ${ATTENDANCE_STATUSES.join(', ')}` })
+    }
+
+    const record = await Attendance.findOne({ userId, staffId, year: y, month: m })
+      || new Attendance({ userId, staffId, year: y, month: m, days: {} })
+
+    // Convert any old numeric values so the whole document saves cleanly
+    const current = normalizedDays(record.days)
+    dayList.forEach(d => {
+      if (clearing) delete current[String(d)]
+      else current[String(d)] = nextStatus
+    })
+    record.days = new Map(Object.entries(current))
+
+    const saved = await record.save()
+    res.json(toClient(saved))
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+})
+
+// ─── SET many project days at once for one staff member (admin) ───
+// Body: { staffId, projectId, year, month, days: [1, 2, 5, ...], status }
+//   Same statuses as /project-mark; status === null clears those days.
+//   A staff member's own login time is kept when the day stays present/late.
+router.patch('/project-mark-month', async (req, res) => {
+  try {
+    const { userId } = getAuth(req)
+    const { staffId, projectId, year, month, days, status } = req.body
+    const y = Number(year), m = Number(month)
+
+    if (!isValidId(staffId)) return res.status(400).json({ error: 'Invalid staffId' })
+    if (!isValidId(projectId)) return res.status(400).json({ error: 'Invalid projectId' })
+    if (isNaN(y) || isNaN(m)) return res.status(400).json({ error: 'year and month are required' })
+    const dayList = parseDayList(days)
+    if (!dayList) return res.status(400).json({ error: 'days must be a list of day numbers (1–31)' })
+
+    const clearing = status === null || status === undefined || status === ''
+    if (!clearing && !PROJECT_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `status must be one of: ${PROJECT_STATUSES.join(', ')}` })
+    }
+
+    const project = await Project.exists({ _id: projectId, userId })
+    if (!project) return res.status(404).json({ error: 'Project not found' })
+
+    const filter = { userId, staffId, projectId, year: y, month: m }
+    let saved
+    if (clearing) {
+      const unset = {}
+      dayList.forEach(d => { unset[`days.${d}`] = '' })
+      saved = await ProjectAttendance.findOneAndUpdate(filter, { $unset: unset }, { new: true })
+    } else {
+      const existing = await ProjectAttendance.findOne(filter).select('days')
+      const keepTime = ['present', 'late'].includes(status)
+      const set = {}
+      dayList.forEach(d => {
+        const prev = existing && existing.days && existing.days.get(String(d))
+        set[`days.${d}`] = { status, at: keepTime && prev && prev.at ? prev.at : null, by: 'admin' }
+      })
+      saved = await ProjectAttendance.findOneAndUpdate(
+        filter,
+        { $set: set },
+        { new: true, upsert: true, setDefaultsOnInsert: true, runValidators: true }
+      )
+    }
+    res.json(saved ? projectToClient(saved) : { ...filter, days: {} })
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+})
+
 // ─── ADD a company-wide holiday for one date ───
 // Body: { year, month, day, label? }
 router.post('/holiday', async (req, res) => {
